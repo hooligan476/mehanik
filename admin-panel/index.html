@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Mehanik | Admin Panel</title>
+  <link rel="stylesheet" href="css/style.css" defer/>
+  <link rel="stylesheet" href="css/users.css" defer/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="js/script.js" defer></script>
+  <script src="js/users.js" defer></script>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>Mehanik</h2>
+        <ul>
+          <li onclick="showPage('dashboard')">📊 Панель</li>
+          <li onclick="showPage('users')">👥 Пользователи</li>
+          <li onclick="showPage('cars')">🚗 Машины</li>
+          <li onclick="showPage('products')">🛠️ Товары</li>
+          <li onclick="showPage('moderation')">🧾 Модерация</li>
+        </ul>
+      </div>
+      <div class="content">
+        <div id="dashboard" class="page active">
+          <h1>Статистика</h1>
+          <canvas id="statsChart" width="400" height="200"></canvas>
+        </div>
+
+        <div id="users" class="page">
+            <h1>Пользователи</h1>
+            <table class="users-table" id="usersTable">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Имя</th>
+                  <th>Номер</th>
+                  <th>Товары</th>
+                  <th>IP</th>
+                  <th>Локация</th>
+                  <th>Адрес</th>
+                  <th>Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>001</td>
+                  <td>Ахмет Дурдыев</td>
+                  <td>+99365678900</td>
+                  <td>12</td>
+                  <td>192.168.1.45</td>
+                  <td>Aşgabat</td>
+                  <td>ул. Андалиб 15</td>
+                  <td><button onclick="deleteUserRow(this)">Удалить</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+        <div id="cars" class="page">
+          <h1>Марки и модели</h1>
+          <p>Здесь будет список марок и моделей авто.</p>
+        </div>
+      
+        <div id="products" class="page">
+          <h1>Список товаров</h1>
+          <p>Здесь будет список автозапчастей с возможностью редактирования, добавления и удаления.</p>
+        </div>
+      
+        <div id="moderation" class="page">
+          <h1>Модерация</h1>
+          <p>Здесь будут отображаться новые заявки или контент, ожидающий одобрения.</p>
+        </div>
+      </div>
+
+    <div id="userModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal()">&times;</span>
+
+        <div class="modal-header">
+        <img src="logo.png" alt="Логотип" class="modal-logo">
+        <h2>Информация о пользователе</h2>
+        </div>
+
+        <div class="modal-tabs">
+        <button class="tab active" onclick="openTab('infoTab')">Пользователь</button>
+        <button class="tab" onclick="openTab('productsTab')">Товары</button>
+        </div>
+
+        <div id="infoTab" class="tab-content active">
+        <form id="userForm">
+            <label>ID: <input type="text" id="inputId" readonly></label>
+            <label>Имя: <input type="text" id="inputName"></label>
+            <label>Телефон: <input type="text" id="inputPhone"></label>
+            <label>IP: <input type="text" id="inputIp" readonly></label>
+            <label>Локация: <input type="text" id="inputLocation"></label>
+            <label>Адрес: <input type="text" id="inputAddress"></label>
+            <button type="button" onclick="saveUserData()">💾 Сохранить</button>
+        </form>
+        </div>
+
+        <div id="productsTab" class="tab-content">
+        <ul id="userProducts"></ul>
+        </div>
+    </div>
+    </div>
+
+      
+</body>
+</html>

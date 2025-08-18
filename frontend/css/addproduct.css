@@ -1,0 +1,166 @@
+/* ====== СТИЛИ МОДАЛЬНОГО ОКНА ДОБАВЛЕНИЯ ПРОДУКТА ====== */
+
+.addProduct-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(0, 0, 0, 0.6);
+  z-index: 9999; /* Поверх всех элементов */
+}
+
+.addProduct-hidden {
+  display: none;
+}
+
+.addProduct-modal-content {
+  background-color: #fff;
+  padding: 20px;
+  border-radius: 10px;
+  width: 700px;
+  max-width: 90vw;
+  max-height: none; /* убираем ограничение по высоте */
+  overflow: visible; /* убираем прокрутку */
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  margin: 0 auto;
+  position: relative;
+  font-size: 14px;
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Заголовок */
+.addProduct-modal-content h2 {
+  margin-top: 0;
+  margin-bottom: 20px;
+  text-align: center;
+  color: #333;
+  font-size: 20px;
+}
+
+/* Кнопка закрытия */
+.addProduct-close-button {
+  position: absolute;
+  right: 15px;
+  top: 15px;
+  font-size: 22px;
+  color: #888;
+  cursor: pointer;
+  transition: color 0.2s ease-in-out;
+}
+
+.addProduct-close-button:hover {
+  color: #333;
+}
+
+/* Форма */
+#addProductForm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 20px;
+}
+
+#addProductForm label {
+  font-weight: 500;
+  color: #444;
+  font-size: 13px;
+}
+
+#addProductForm select,
+#addProductForm input[type="text"],
+#addProductForm input[type="number"],
+#addProductForm input[type="file"],
+#addProductForm textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+#addProductForm select:focus,
+#addProductForm input:focus,
+#addProductForm textarea:focus {
+  border-color: #007bff;
+  outline: none;
+}
+
+#addProductForm textarea {
+  resize: vertical;
+  min-height: 60px;
+  max-height: 150px;
+}
+
+#addProductForm input[type="file"] {
+  padding: 8px;
+  background-color: #f9f9f9;
+  border: 1px dashed #aaa;
+  cursor: pointer;
+}
+
+/* Кнопка Добавить */
+#addProductForm button[type="submit"] {
+  margin-top: 10px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+}
+
+#addProductForm button[type="submit"]:hover {
+  background-color: #0056b3;
+}
+
+/* Анимация */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.input-error {
+  border: 2px solid red !important;
+  background-color: #ffe5e5;
+}
+.price-input-wrapper {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.price-input-wrapper input {
+  width: 100%;
+  padding-right: 55px; /* увеличим немного отступ */
+  box-sizing: border-box;
+}
+
+.price-currency {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  color: #666;
+  font-size: 14px;
+  pointer-events: none;
+  user-select: none;
+}
+/* Убираем стрелки в Chrome, Safari, Edge */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+

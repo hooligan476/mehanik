@@ -1,0 +1,289 @@
+/* Базовые стили */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(to bottom, #f4f7fa, #e2ecf2);
+  color: #333;
+  line-height: 1.5;
+}
+
+/* Обёртка страницы */
+.wrapper {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Основная часть */
+.container {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  height: calc(100vh - 60px); /* только футер */
+}
+
+/* Sidebar */
+#sidebar {
+  width: 260px;
+  padding: 20px;
+  background: #f5f5f5;
+  border-right: 1px solid #ccc;
+  position: fixed;
+  top: 0;
+  bottom: 60px;
+  left: 0;
+  overflow-y: auto;
+  z-index: 999;
+}
+
+.logo {
+  font-size: 22px;
+  font-weight: bold;
+  color: #2c3e50;
+  margin-bottom: 20px;
+}
+
+#sidebar h2 {
+  margin-bottom: 10px;
+  font-size: 18px;
+}
+
+#sidebar label {
+  display: block;
+  margin-top: 12px;
+  font-weight: 600;
+}
+
+#sidebar select,
+.sidebar-search,
+#sidebar button {
+  width: 100%;
+  margin-top: 5px;
+  padding: 6px 8px;
+  font-size: 14px;
+  border-radius: 4px;
+  border: 1px solid #bbb;
+}
+
+.sidebar-search {
+  max-width: 300px;
+}
+
+.login-button {
+  background-color: #1abc9c;
+  color: white;
+  border: none;
+  margin-top: 15px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.login-button:hover {
+  background-color: #16a085;
+}
+
+/* Блок поиска и кнопки внизу сайдбара */
+.sidebar-bottom {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  right: 20px;
+}
+
+/* Основной блок с товарами */
+main#productList {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 15px;
+  align-content: flex-start;
+  margin-left: 260px;
+  margin-top: 0;
+  margin-bottom: 60px;
+}
+
+.product-wrapper {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.product-title {
+  font-size: 22px;
+  font-weight: bold;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 6px;
+}
+
+.product-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+/* Карточки товаров */
+.product-card {
+  width: calc(25% - 15px);
+  border: 1px solid #ccc;
+  padding: 10px;
+  background-color: white;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  transition: box-shadow 0.2s;
+  cursor: pointer;
+}
+
+.product-card:hover {
+  box-shadow: 0 0 8px #1abc9c;
+}
+
+.product-card img {
+  width: 100%;
+  height: auto;
+  margin-bottom: 10px;
+}
+
+.product-card h3 {
+  font-size: 16px;
+  margin-bottom: 5px;
+}
+
+.product-card p {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+/* Футер */
+footer {
+  background-color: #f2f2f2;
+  border-top: 1px solid #ddd;
+  text-align: center;
+  padding: 15px 20px;
+  font-size: 14px;
+  color: #555;
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  height: 60px;
+}
+
+footer a {
+  color: #0077cc;
+  text-decoration: none;
+}
+
+footer a:hover {
+  text-decoration: underline;
+}
+
+/* Адаптивность карточек */
+@media (max-width: 1200px) {
+  .product-card {
+    width: calc(33.33% - 15px);
+  }
+}
+
+@media (max-width: 800px) {
+  .product-card {
+    width: calc(50% - 15px);
+  }
+}
+
+@media (max-width: 500px) {
+  .product-card {
+    width: 100%;
+  }
+
+  .container {
+    flex-direction: column;
+    height: auto;
+  }
+
+  #sidebar {
+    position: relative;
+    width: 100%;
+    height: auto;
+    top: 0;
+    bottom: 0;
+  }
+
+  main#productList {
+    margin-left: 0;
+    margin-top: 0;
+    margin-bottom: 60px;
+  }
+
+  .sidebar-bottom {
+    position: static;
+    margin-top: 20px;
+  }
+}
+.add-button {
+  margin-top: 10px;
+  padding: 10px;
+  width: 100%;
+  background-color: #28a745;
+  color: white;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+  border-radius: 4px;
+  transition: background-color 0.3s;
+}
+
+.add-button:hover {
+  background-color: #218838;
+}
+/* Кнопка "Личный кабинет" */
+.sidebar-btn-profile {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  background-color: #27ae60;
+  color: white;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  font-weight: bold;
+  transition: background-color 0.3s ease;
+}
+
+.sidebar-btn-profile:hover {
+  background-color: #1e8449;
+}
+
+/* Кнопка "Товары" */
+.sidebar-btn-products {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  background-color: #e67e22;
+  color: white;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  font-weight: bold;
+  transition: background-color 0.3s ease;
+}
+
+.sidebar-btn-products:hover {
+  background-color: #ca6f1e;
+}
