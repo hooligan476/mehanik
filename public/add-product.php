@@ -11,4 +11,21 @@
     <input type="number" name="availability" placeholder="Наличие" value="1">
     <input type="number" step="0.01" name="price" placeholder="Цена" required>
 
-    <label>Бренд</label><sel
+    <label>Бренд</label><select name="brand_id" id="ap_brand"></select>
+    <label>Модель</label><select name="model_id" id="ap_model"></select>
+    <label>Годы</label>
+    <div class="row">
+      <input type="number" name="year_from" placeholder="от">
+      <input type="number" name="year_to" placeholder="до">
+    </div>
+    <label>Комплексная часть</label><select name="complex_part_id" id="ap_cpart"></select>
+    <label>Компонент</label><select name="component_id" id="ap_comp"></select>
+
+    <textarea name="description" placeholder="Описание"></textarea>
+    <input type="file" name="photo" accept="image/*">
+
+    <button type="submit">Сохранить</button>
+  </form>
+</div>
+<script src="/mehanik/assets/js/productList.js"></script>
+<script src="/mehanik/assets/js/main.js"></script>

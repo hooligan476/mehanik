@@ -1,4 +1,3 @@
 Options -Indexes
 RewriteEngine On
-# Разрешить CORS для api (если нужно)
 Header set Access-Control-Allow-Origin "*"

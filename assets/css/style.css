@@ -1,0 +1,22 @@
+body { font-family: system-ui, Arial, sans-serif; margin:0; }
+.topbar { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; background:#111; color:#fff; }
+.topbar a { color:#fff; margin-left:12px; text-decoration:none; }
+.layout { display:grid; grid-template-columns: 280px 1fr; gap:16px; padding:16px; }
+.sidebar label { display:block; margin-top:8px; font-size:14px; color:#333; }
+.sidebar input, .sidebar select { width:100%; padding:8px; margin-top:4px; }
+.products { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap:16px; }
+.card { border:1px solid #eee; border-radius:12px; overflow:hidden; background:#fff; box-shadow:0 2px 6px rgba(0,0,0,.04); }
+.card img { width:100%; height:160px; object-fit:cover; }
+.card-body { padding:12px; }
+.card .price { font-weight:700; margin-top:4px; }
+.card .meta { color:#666; font-size:12px; margin-top:4px; }
+.muted { color:#777; padding:16px; }
+.auth-card { max-width:360px; margin:60px auto; border:1px solid #eee; border-radius:12px; padding:16px; }
+.container { max-width:960px; margin: 20px auto; padding: 0 16px; }
+.table { width:100%; border-collapse: collapse; }
+.table th, .table td { border:1px solid #ddd; padding:8px; text-align:left; }
+.chat { max-width:720px; margin:20px auto; border:1px solid #eee; border-radius:12px; }
+.chat-window { height:420px; overflow:auto; padding:12px; background:#fafafa; }
+.chat-form { display:flex; gap:8px; padding:12px; }
+.msg { margin-bottom:6px; }
+.msg.user { text-align:right; }
