@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Тест авторизации</title>
+</head>
+<body>
+<h2>Тест логина</h2>
+
+<form id="testLoginForm" method="POST" action="http://localhost/mehanik/api/auth-login.php">
+  <label>
+    Email:
+    <input type="email" name="email" value="test@example.com" required>
+  </label>
+  <br><br>
+  <label>
+    Пароль:
+    <input type="password" name="password" value="123456" required>
+  </label>
+  <br><br>
+  <button type="submit">Войти</button>
+</form>
+
+<pre id="result"></pre>
+
+<script>
+const form = document.getElementById('testLoginForm');
+const result = document.getElementById('result');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(form);
+  const res = await fetch(form.action, { method: 'POST', body: fd, credentials: 'same-origin' });
+  const text = await res.text();
+  result.textContent = text;
+});
+</script>
+</body>
+</html>

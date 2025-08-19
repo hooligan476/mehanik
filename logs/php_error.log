@@ -30,3 +30,18 @@ Stack trace:
 #0 C:\xampp\htdocs\mehanik\public\register.php(29): require_once()
 #1 {main}
   thrown in C:\xampp\htdocs\mehanik\db.php on line 5
+[19-Aug-2025 21:48:46 Europe/Berlin] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'password' in 'field list' in C:\xampp\htdocs\mehanik\public\register.php:101
+Stack trace:
+#0 C:\xampp\htdocs\mehanik\public\register.php(101): mysqli->prepare('INSERT INTO use...')
+#1 {main}
+  thrown in C:\xampp\htdocs\mehanik\public\register.php on line 101
+[19-Aug-2025 21:49:07 Europe/Berlin] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'password' in 'field list' in C:\xampp\htdocs\mehanik\public\register.php:101
+Stack trace:
+#0 C:\xampp\htdocs\mehanik\public\register.php(101): mysqli->prepare('INSERT INTO use...')
+#1 {main}
+  thrown in C:\xampp\htdocs\mehanik\public\register.php on line 101
+[19-Aug-2025 22:00:56 Europe/Berlin] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'password' in 'field list' in C:\xampp\htdocs\mehanik\public\register.php:101
+Stack trace:
+#0 C:\xampp\htdocs\mehanik\public\register.php(101): mysqli->prepare('INSERT INTO use...')
+#1 {main}
+  thrown in C:\xampp\htdocs\mehanik\public\register.php on line 101
