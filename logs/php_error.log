@@ -1,0 +1,32 @@
+[19-Aug-2025 11:40:47 Europe/Berlin] register.php: $conn is not set. Проверь db.php / config.php
+[19-Aug-2025 11:43:42 Europe/Berlin] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'password' in 'field list' in C:\xampp\htdocs\mehanik\public\register.php:101
+Stack trace:
+#0 C:\xampp\htdocs\mehanik\public\register.php(101): mysqli->prepare('INSERT INTO use...')
+#1 {main}
+  thrown in C:\xampp\htdocs\mehanik\public\register.php on line 101
+[19-Aug-2025 11:44:37 Europe/Berlin] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'password' in 'field list' in C:\xampp\htdocs\mehanik\public\register.php:101
+Stack trace:
+#0 C:\xampp\htdocs\mehanik\public\register.php(101): mysqli->prepare('INSERT INTO use...')
+#1 {main}
+  thrown in C:\xampp\htdocs\mehanik\public\register.php on line 101
+[19-Aug-2025 11:44:40 Europe/Berlin] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'password' in 'field list' in C:\xampp\htdocs\mehanik\public\register.php:101
+Stack trace:
+#0 C:\xampp\htdocs\mehanik\public\register.php(101): mysqli->prepare('INSERT INTO use...')
+#1 {main}
+  thrown in C:\xampp\htdocs\mehanik\public\register.php on line 101
+[19-Aug-2025 11:53:13 Europe/Berlin] register.php: send mail failed: 'Ошибка при отправке письма: SMTP Error: Could not authenticate.'
+[19-Aug-2025 11:54:29 Europe/Berlin] register.php: send mail failed: 'Ошибка при отправке письма: SMTP Error: Could not authenticate.'
+[19-Aug-2025 12:06:50 Europe/Berlin] PHP Notice:  session_start(): Ignoring session_start() because a session is already active in C:\xampp\htdocs\mehanik\db.php on line 2
+[19-Aug-2025 12:06:50 Europe/Berlin] PHP Warning:  require_once(C:\xampp\htdocs\mehanik/../db.php): Failed to open stream: No such file or directory in C:\xampp\htdocs\mehanik\db.php on line 5
+[19-Aug-2025 12:06:50 Europe/Berlin] PHP Fatal error:  Uncaught Error: Failed opening required 'C:\xampp\htdocs\mehanik/../db.php' (include_path='C:\xampp\php\PEAR') in C:\xampp\htdocs\mehanik\db.php:5
+Stack trace:
+#0 C:\xampp\htdocs\mehanik\public\register.php(29): require_once()
+#1 {main}
+  thrown in C:\xampp\htdocs\mehanik\db.php on line 5
+[19-Aug-2025 12:06:52 Europe/Berlin] PHP Notice:  session_start(): Ignoring session_start() because a session is already active in C:\xampp\htdocs\mehanik\db.php on line 2
+[19-Aug-2025 12:06:52 Europe/Berlin] PHP Warning:  require_once(C:\xampp\htdocs\mehanik/../db.php): Failed to open stream: No such file or directory in C:\xampp\htdocs\mehanik\db.php on line 5
+[19-Aug-2025 12:06:52 Europe/Berlin] PHP Fatal error:  Uncaught Error: Failed opening required 'C:\xampp\htdocs\mehanik/../db.php' (include_path='C:\xampp\php\PEAR') in C:\xampp\htdocs\mehanik\db.php:5
+Stack trace:
+#0 C:\xampp\htdocs\mehanik\public\register.php(29): require_once()
+#1 {main}
+  thrown in C:\xampp\htdocs\mehanik\db.php on line 5

@@ -12,7 +12,7 @@ function sendVerificationMail($email, $name, $code) {
         $mail->isSMTP();
         $mail->Host       = 'smtp.gmail.com';
         $mail->SMTPAuth   = true;
-        $mail->Username   = 'garly6ka.tm95@gmail.çom'; // твой Gmail
+        $mail->Username   = 'garly6ka.tm95@gmail.com'; // твой Gmail
         $mail->Password   = 'hnnc jepl vxpf ebcj';    // новый пароль приложения
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
         $mail->Port       = 587;

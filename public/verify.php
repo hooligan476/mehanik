@@ -1,6 +1,6 @@
 <?php
 session_start();
-require __DIR__ . '/../config.php';
+require_once __DIR__ . '/../db.php';
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $email = $_SESSION['pending_email'] ?? null;
@@ -23,9 +23,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $update->bind_param("s", $email);
         if ($update->execute()) {
             unset($_SESSION['pending_email']);
-            echo "✅ Аккаунт подтвержден! Теперь можно <a href='login.php'>войти</a>.";
+            // Редирект на страницу логина
+            header("Location: login.php");
+            exit;
         } else {
-            echo "❌ Ошибка активации.";
+            echo "❌ Ошибка активации: " . $update->error;
         }
     } else {
         echo "❌ Неверный код подтверждения.";
