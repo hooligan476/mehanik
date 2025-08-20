@@ -8,8 +8,6 @@ header('Content-Type: application/json; charset=utf-8');
 $name = trim($_POST['name'] ?? '');
 $email = trim($_POST['email'] ?? '');
 $pass = $_POST['password'] ?? '';
-
-// Проверка на заполненность
 if (!$name || !$email || strlen($pass) < 6) {
     http_response_code(422);
     echo json_encode(['ok'=>false,'error'=>'Заполните поля (пароль ≥ 6)']);
