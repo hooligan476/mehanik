@@ -1,5 +1,4 @@
 <?php
-session_start();
 function require_auth() {
   if (empty($_SESSION['user'])) {
     header('Location: /mehanik/public/login.php');

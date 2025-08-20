@@ -1,4 +1,7 @@
-<?php require_once __DIR__.'/../middleware.php'; require_once __DIR__.'/../db.php';
+<?php
+session_start();
+require_once __DIR__.'/../middleware.php';
+require_once __DIR__.'/../db.php';
 $config = require __DIR__.'/../config.php';
 ?>
 
@@ -13,6 +16,11 @@ $config = require __DIR__.'/../config.php';
 <body>
 <header class="topbar">
   <div class="brand">Mehanik</div>
+
+  <?php if (!empty($_SESSION['user'])): ?>
+    <div class="user-info">Вы вошли как: <b><?= htmlspecialchars($_SESSION['user']['name']) ?></b></div>
+  <?php endif; ?>
+
   <nav>
     <?php if (!empty($_SESSION['user'])): ?>
       <a href="<?= $config['base_url'] ?>/add-product.php">Добавить товар</a>

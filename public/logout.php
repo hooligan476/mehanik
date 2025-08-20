@@ -1,3 +1,8 @@
-<?php require_once __DIR__.'/../middleware.php';
+<?php
+session_start();
+$_SESSION = [];
 session_destroy();
-header('Location: /mehanik/public/login.php');
+
+// Редирект на главную страницу
+header('Location: /mehanik/public/index.php');
+exit;
