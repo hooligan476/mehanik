@@ -5,3 +5,4 @@ Mehanik — локальный пакет для XAMPP/phpMyAdmin
 3) Импортировать mehanik.sql через http://localhost/phpmyadmin
 4) Открыть http://localhost/mehanik/public/
 Админ: admin@mehanik.local / Admin123!
+'hnnc jepl vxpf ebcj'  garly6ka.tm95@gmail.com

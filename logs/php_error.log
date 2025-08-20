@@ -30,18 +30,31 @@ Stack trace:
 #0 C:\xampp\htdocs\mehanik\public\register.php(29): require_once()
 #1 {main}
   thrown in C:\xampp\htdocs\mehanik\db.php on line 5
-[19-Aug-2025 21:48:46 Europe/Berlin] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'password' in 'field list' in C:\xampp\htdocs\mehanik\public\register.php:101
+[20-Aug-2025 06:47:18 Europe/Berlin] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'password' in 'field list' in C:\xampp\htdocs\mehanik\public\register.php:101
 Stack trace:
 #0 C:\xampp\htdocs\mehanik\public\register.php(101): mysqli->prepare('INSERT INTO use...')
 #1 {main}
   thrown in C:\xampp\htdocs\mehanik\public\register.php on line 101
-[19-Aug-2025 21:49:07 Europe/Berlin] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'password' in 'field list' in C:\xampp\htdocs\mehanik\public\register.php:101
+[20-Aug-2025 06:57:35 Europe/Berlin] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'verification_code' in 'field list' in C:\xampp\htdocs\mehanik\public\register.php:84
 Stack trace:
-#0 C:\xampp\htdocs\mehanik\public\register.php(101): mysqli->prepare('INSERT INTO use...')
+#0 C:\xampp\htdocs\mehanik\public\register.php(84): mysqli->prepare('INSERT INTO use...')
 #1 {main}
-  thrown in C:\xampp\htdocs\mehanik\public\register.php on line 101
-[19-Aug-2025 22:00:56 Europe/Berlin] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'password' in 'field list' in C:\xampp\htdocs\mehanik\public\register.php:101
+  thrown in C:\xampp\htdocs\mehanik\public\register.php on line 84
+[20-Aug-2025 07:13:24 Europe/Berlin] register.php: sendVerificationMail() function not found.
+[20-Aug-2025 07:13:24 Europe/Berlin] register.php: send mail failed: 'sendVerificationMail not available on server'
+[20-Aug-2025 07:23:03 Europe/Berlin] register.php: sendVerificationMail() function not found.
+[20-Aug-2025 07:23:03 Europe/Berlin] register.php: send mail failed: 'sendVerificationMail not available on server'
+[20-Aug-2025 07:28:22 Europe/Berlin] register.php: sendVerificationMail() function not found.
+[20-Aug-2025 07:28:22 Europe/Berlin] register.php: send mail failed: 'sendVerificationMail not available on server'
+[20-Aug-2025 07:34:48 Europe/Berlin] register.php: sendVerificationMail() function not found.
+[20-Aug-2025 07:34:48 Europe/Berlin] register.php: send mail failed: 'sendVerificationMail not available on server'
+[20-Aug-2025 07:38:15 Europe/Berlin] PHP Warning:  Undefined variable $stmt in C:\xampp\htdocs\mehanik\public\register.php on line 155
+[20-Aug-2025 07:38:15 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to a member function execute() on null in C:\xampp\htdocs\mehanik\public\register.php:155
 Stack trace:
-#0 C:\xampp\htdocs\mehanik\public\register.php(101): mysqli->prepare('INSERT INTO use...')
-#1 {main}
-  thrown in C:\xampp\htdocs\mehanik\public\register.php on line 101
+#0 {main}
+  thrown in C:\xampp\htdocs\mehanik\public\register.php on line 155
+[20-Aug-2025 07:38:18 Europe/Berlin] PHP Warning:  Undefined variable $stmt in C:\xampp\htdocs\mehanik\public\register.php on line 155
+[20-Aug-2025 07:38:18 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to a member function execute() on null in C:\xampp\htdocs\mehanik\public\register.php:155
+Stack trace:
+#0 {main}
+  thrown in C:\xampp\htdocs\mehanik\public\register.php on line 155
