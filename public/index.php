@@ -41,17 +41,22 @@ $config = require __DIR__.'/../config.php';
   <aside class="sidebar">
     <h3>Фильтр</h3>
     <label>Бренд</label>
-    <select id="brand"></select>
+    <select id="brand"><option value="">Все бренды</option></select>
+
     <label>Модель</label>
-    <select id="model"></select>
+    <select id="model"><option value="">Все модели</option></select>
+
     <label>Год (от)</label>
     <input type="number" id="year_from" placeholder="1998">
+
     <label>Год (до)</label>
     <input type="number" id="year_to" placeholder="2025">
+
     <label>Комплексная часть</label>
-    <select id="complex_part"></select>
+    <select id="complex_part"><option value="">Все комплексные части</option></select>
+
     <label>Компонент</label>
-    <select id="component"></select>
+    <select id="component"><option value="">Все компоненты</option></select>
 
     <label>Поиск (название/артикул/ID)</label>
     <input type="text" id="search" placeholder="например: 123 или тормоза">
@@ -60,6 +65,7 @@ $config = require __DIR__.'/../config.php';
   <section class="products" id="products"></section>
 </main>
 
+<!-- Скрипты -->
 <script src="/mehanik/assets/js/productList.js"></script>
 <script src="/mehanik/assets/js/main.js"></script>
 </body>

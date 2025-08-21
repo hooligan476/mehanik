@@ -5,9 +5,9 @@
 <meta charset="utf-8">
 <title>Вход</title>
 <style>
-body { font-family: Arial, sans-serif; margin:30px; }
-form { max-width:300px; }
-input { display:block; margin:8px 0; padding:8px; width:100%; }
+    body { font-family: Arial, sans-serif; margin:30px; }
+    form { max-width:300px; }
+    input { display:block; margin:8px 0; padding:8px; width:100%; }
 button { padding:8px 12px; }
 .msg { padding:10px; margin-bottom:15px; border-radius:5px; }
 .error { background:#ffe0e0; border:1px solid #d66; color:#b71c1c; }

@@ -1,6 +1,7 @@
 <?php require_once __DIR__.'/../../middleware.php'; require_admin(); require_once __DIR__.'/../../db.php'; ?> 
 <!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Админка — Чаты</title>
 <link rel="stylesheet" href="/mehanik/assets/css/style.css"></head><body>
+  <?php require_once __DIR__.'/header.php'; ?>
 <h2 style="padding:16px;">Чаты поддержки</h2>
 <?php $ch=$mysqli->query("SELECT c.id,u.email,c.status,c.created_at FROM chats c JOIN users u ON u.id=c.user_id ORDER BY c.id DESC"); ?>
 <table class="table">

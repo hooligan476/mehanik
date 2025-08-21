@@ -1,6 +1,7 @@
 <?php require_once __DIR__.'/../../middleware.php'; require_admin(); require_once __DIR__.'/../../db.php'; ?> 
 <!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Админка — Бренды/Модели</title>
 <link rel="stylesheet" href="/mehanik/assets/css/style.css"></head><body>
+  <?php require_once __DIR__.'/header.php'; ?>
 <div class="container">
   <h2>Бренды</h2>
   <form method="post">

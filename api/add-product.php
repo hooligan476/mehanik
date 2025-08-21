@@ -6,26 +6,29 @@ header('Content-Type: application/json');
 require_auth();
 $user_id = $_SESSION['user']['id'];
 
-$name = trim($_POST['name'] ?? '');
-$sku = trim($_POST['sku'] ?? '');
+// Получаем данные из формы
+$name         = trim($_POST['name'] ?? '');
+$sku          = trim($_POST['sku'] ?? '');
 $manufacturer = trim($_POST['manufacturer'] ?? '');
-$quality = $_POST['quality'] ?? 'New';
+$quality      = $_POST['quality'] ?? 'New';
 $availability = isset($_POST['availability']) ? (int)$_POST['availability'] : 0;
-$price = isset($_POST['price']) ? (float)$_POST['price'] : 0.0;
-$brand_id = !empty($_POST['brand_id']) ? (int)$_POST['brand_id'] : null;
-$model_id = !empty($_POST['model_id']) ? (int)$_POST['model_id'] : null;
-$year_from = $_POST['year_from'] !== '' ? (int)$_POST['year_from'] : null;
-$year_to = $_POST['year_to'] !== '' ? (int)$_POST['year_to'] : null;
-$cpart = !empty($_POST['complex_part_id']) ? (int)$_POST['complex_part_id'] : null;
-$comp = !empty($_POST['component_id']) ? (int)$_POST['component_id'] : null;
-$desc = trim($_POST['description'] ?? '');
+$price        = isset($_POST['price']) ? (float)$_POST['price'] : 0.0;
+$brand_id     = !empty($_POST['brand_id']) ? (int)$_POST['brand_id'] : null;
+$model_id     = !empty($_POST['model_id']) ? (int)$_POST['model_id'] : null;
+$year_from    = $_POST['year_from'] !== '' ? (int)$_POST['year_from'] : null;
+$year_to      = $_POST['year_to'] !== '' ? (int)$_POST['year_to'] : null;
+$cpart        = !empty($_POST['complex_part_id']) ? (int)$_POST['complex_part_id'] : null;
+$comp         = !empty($_POST['component_id']) ? (int)$_POST['component_id'] : null;
+$desc         = trim($_POST['description'] ?? '');
 
+// Проверки
 if (!$name || $price <= 0) {
   http_response_code(422);
   echo json_encode(['ok' => false, 'error' => 'Название и цена обязательны']);
   exit;
 }
 
+// Работа с фото
 $photoPath = null;
 if (!empty($_FILES['photo']['name'])) {
   $ext = pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION);
@@ -39,11 +42,13 @@ if (!empty($_FILES['photo']['name'])) {
   }
 }
 
+// Вставка
 $stmt = $mysqli->prepare("
   INSERT INTO products(
-    user_id, brand_id, model_id, year_from, year_to, complex_part_id, component_id,
-    sku, name, manufacturer, quality, availability, price, description, photo
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    user_id, brand_id, model_id, year_from, year_to,
+    complex_part_id, component_id, sku, name, manufacturer,
+    quality, rating, availability, price, description, photo, created_at
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())
 ");
 
 if (!$stmt) {
@@ -52,8 +57,10 @@ if (!$stmt) {
   exit;
 }
 
-$types = 'iiiiiiissssidss';
+// rating по умолчанию = 0.0
+$rating = 0.0;
 
+$types = 'iiiiiiissssiidss'; 
 $bind_ok = $stmt->bind_param(
   $types,
   $user_id,
@@ -67,6 +74,7 @@ $bind_ok = $stmt->bind_param(
   $name,
   $manufacturer,
   $quality,
+  $rating,
   $availability,
   $price,
   $desc,
