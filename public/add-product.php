@@ -15,20 +15,32 @@ require_once __DIR__ . '/../db.php';
 
   <div class="container">
     <h2>Добавление товара</h2>
+
     <form id="addProductForm" enctype="multipart/form-data" method="post" action="/mehanik/api/add-product.php">
       <input type="text" name="name" placeholder="Название" required>
 
-      <!-- SKU: генерируем по умолчанию, можно оставить пустым -->
-      <input type="text" id="skuField" name="sku" placeholder="ID/Артикул (необязательно)">
+      <!-- SKU: генерируется и нередактируемый -->
+      <label>Артикул</label>
+      <input type="text" id="skuField" name="sku" readonly>
 
+      <label>Производитель</label>
       <input type="text" name="manufacturer" placeholder="Производитель">
 
+      <!-- Состояние товара (как и раньше было quality) -->
+      <label>Состояние</label>
       <select name="quality">
         <option value="New">New</option>
         <option value="Used">Used</option>
       </select>
 
+      <!-- Новое поле: Качество (бывший rating) -->
+      <label>Качество (0.1–9.9)</label>
+      <input type="number" name="rating" step="0.1" min="0.1" max="9.9" value="5.0" required>
+
+      <label>Наличие</label>
       <input type="number" name="availability" placeholder="Наличие" value="1">
+
+      <label>Цена</label>
       <input type="number" step="0.01" name="price" placeholder="Цена" required>
 
       <!-- Бренд -->
@@ -36,7 +48,7 @@ require_once __DIR__ . '/../db.php';
       <select name="brand_id" id="ap_brand" required>
         <option value="">-- выберите бренд --</option>
         <?php
-          $brands = $mysqli->query("SELECT * FROM brands ORDER BY name");
+          $brands = $mysqli->query("SELECT id, name FROM brands ORDER BY name");
           while ($b = $brands->fetch_assoc()) {
             echo '<option value="'.$b['id'].'">'.htmlspecialchars($b['name']).'</option>';
           }
@@ -61,7 +73,7 @@ require_once __DIR__ . '/../db.php';
       <select name="complex_part_id" id="ap_cpart" required>
         <option value="">-- выберите часть --</option>
         <?php
-          $cparts = $mysqli->query("SELECT * FROM complex_parts ORDER BY name");
+          $cparts = $mysqli->query("SELECT id, name FROM complex_parts ORDER BY name");
           while ($c = $cparts->fetch_assoc()) {
             echo '<option value="'.$c['id'].'">'.htmlspecialchars($c['name']).'</option>';
           }
@@ -74,7 +86,10 @@ require_once __DIR__ . '/../db.php';
         <option value="">-- выберите компонент --</option>
       </select>
 
+      <label>Описание</label>
       <textarea name="description" placeholder="Описание"></textarea>
+
+      <label>Фото</label>
       <input type="file" name="photo" accept="image/*">
 
       <button type="submit">Сохранить</button>
@@ -82,12 +97,18 @@ require_once __DIR__ . '/../db.php';
   </div>
 
 <script>
-// === Автогенерация SKU при открытии страницы ===
-(function generateSKU() {
+// === Генерация SKU и защита от правок ===
+(function generateSKUOnce() {
   const field = document.getElementById('skuField');
+  // если пусто — генерим
   if (!field.value) {
-    field.value = "SKU-" + Math.random().toString(36).substring(2, 10).toUpperCase();
+    const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
+    const num  = String(Math.floor(Math.random()*1e9)).padStart(9, '0');
+    field.value = `SKU-${rand}-${num}`;
   }
+  // дубль-защита от изменения с клавиатуры
+  field.addEventListener('keydown', e => e.preventDefault());
+  field.addEventListener('beforeinput', e => e.preventDefault());
 })();
 
 // === загрузка моделей по бренду ===
@@ -98,7 +119,7 @@ document.getElementById('ap_brand').addEventListener('change', async function() 
   if (!brandId) return;
 
   try {
-    const res = await fetch(`/mehanik/api/get-models.php?brand_id=${brandId}`);
+    const res = await fetch(`/mehanik/api/get-models.php?brand_id=${encodeURIComponent(brandId)}`);
     const data = await res.json();
     data.forEach(m => {
       const opt = document.createElement('option');
@@ -119,7 +140,7 @@ document.getElementById('ap_cpart').addEventListener('change', async function() 
   if (!cpartId) return;
 
   try {
-    const res = await fetch(`/mehanik/api/get-components.php?complex_part_id=${cpartId}`);
+    const res = await fetch(`/mehanik/api/get-components.php?complex_part_id=${encodeURIComponent(cpartId)}`);
     const data = await res.json();
     data.forEach(c => {
       const opt = document.createElement('option');

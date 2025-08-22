@@ -8,9 +8,8 @@ $user_id = $_SESSION['user']['id'];
 
 // Получаем данные из формы
 $name         = trim($_POST['name'] ?? '');
-$sku          = trim($_POST['sku'] ?? '');
 $manufacturer = trim($_POST['manufacturer'] ?? '');
-$quality      = $_POST['quality'] ?? 'New';
+$quality      = isset($_POST['quality']) ? (float)$_POST['quality'] : 5.0; // от 0.1 до 9.9
 $availability = isset($_POST['availability']) ? (int)$_POST['availability'] : 0;
 $price        = isset($_POST['price']) ? (float)$_POST['price'] : 0.0;
 $brand_id     = !empty($_POST['brand_id']) ? (int)$_POST['brand_id'] : null;
@@ -28,11 +27,20 @@ if (!$name || $price <= 0) {
   exit;
 }
 
-// Работа с фото
+// === SKU (генерация, неменяемый) ===
+$sku = "SKU-" . strtoupper(bin2hex(random_bytes(4)));
+
+// === Фото (номер по порядку) ===
 $photoPath = null;
 if (!empty($_FILES['photo']['name'])) {
+  // Узнаем последний ID
+  $res = $mysqli->query("SELECT MAX(id) as max_id FROM products");
+  $row = $res->fetch_assoc();
+  $nextId = ($row['max_id'] ?? 0) + 1;
+
   $ext = pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION);
-  $fname = uniqid('p_') . '.' . $ext;
+  $fname = str_pad($nextId, 9, "0", STR_PAD_LEFT) . '.' . strtolower($ext);
+
   $dest = __DIR__ . '/../uploads/products/' . $fname;
   if (!is_dir(dirname($dest))) {
     @mkdir(dirname($dest), 0755, true);
@@ -42,13 +50,13 @@ if (!empty($_FILES['photo']['name'])) {
   }
 }
 
-// Вставка
+// === Вставка ===
 $stmt = $mysqli->prepare("
   INSERT INTO products(
     user_id, brand_id, model_id, year_from, year_to,
     complex_part_id, component_id, sku, name, manufacturer,
-    quality, rating, availability, price, description, photo, created_at
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())
+    quality, availability, price, description, photo, created_at
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())
 ");
 
 if (!$stmt) {
@@ -57,12 +65,9 @@ if (!$stmt) {
   exit;
 }
 
-// rating по умолчанию = 0.0
-$rating = 0.0;
-
-$types = 'iiiiiiissssiidss'; 
+$types = 'iiiiiiisssdi dss'; // поправлено под новые типы
 $bind_ok = $stmt->bind_param(
-  $types,
+  "iiiiiiisssdidss",
   $user_id,
   $brand_id,
   $model_id,
@@ -74,7 +79,6 @@ $bind_ok = $stmt->bind_param(
   $name,
   $manufacturer,
   $quality,
-  $rating,
   $availability,
   $price,
   $desc,
@@ -88,7 +92,7 @@ if (!$bind_ok) {
 }
 
 if ($stmt->execute()) {
-  echo json_encode(['ok' => true, 'id' => $stmt->insert_id]);
+  echo json_encode(['ok' => true, 'id' => $stmt->insert_id, 'sku' => $sku]);
 } else {
   http_response_code(500);
   echo json_encode(['ok' => false, 'error' => $stmt->error]);
