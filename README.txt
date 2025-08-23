@@ -8,3 +8,4 @@ Mehanik — локальный пакет для XAMPP/phpMyAdmin
 'hnnc jepl vxpf ebcj'  garly6ka.tm95@gmail.com
 
 обрезать фото и вставлять логотип сайта
+фиксим чат с техподдержкой
