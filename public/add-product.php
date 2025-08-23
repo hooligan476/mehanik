@@ -19,21 +19,21 @@ require_once __DIR__ . '/../db.php';
     <form id="addProductForm" enctype="multipart/form-data" method="post" action="/mehanik/api/add-product.php">
       <input type="text" name="name" placeholder="Название" required>
 
-      <!-- SKU: генерируется и нередактируемый -->
+      <!-- SKU: показываем как нередактируемый preview; реальное значение генерится на сервере -->
       <label>Артикул</label>
-      <input type="text" id="skuField" name="sku" readonly>
+      <input type="text" id="skuField" name="sku" readonly placeholder="будет сгенерирован автоматически">
 
       <label>Производитель</label>
       <input type="text" name="manufacturer" placeholder="Производитель">
 
-      <!-- Состояние товара (как и раньше было quality) -->
+      <!-- Состояние (строка New/Used) -->
       <label>Состояние</label>
       <select name="quality">
         <option value="New">New</option>
         <option value="Used">Used</option>
       </select>
 
-      <!-- Новое поле: Качество (бывший rating) -->
+      <!-- Качество (бывш. rating) -->
       <label>Качество (0.1–9.9)</label>
       <input type="number" name="rating" step="0.1" min="0.1" max="9.9" value="5.0" required>
 
@@ -92,26 +92,24 @@ require_once __DIR__ . '/../db.php';
       <label>Фото</label>
       <input type="file" name="photo" accept="image/*">
 
-      <button type="submit">Сохранить</button>
+      <button type="submit" id="submitBtn">Сохранить</button>
     </form>
   </div>
 
 <script>
-// === Генерация SKU и защита от правок ===
-(function generateSKUOnce() {
+// Покажем пользователю черновой SKU (для вида). На сервер не полагаемся.
+(function previewSKU() {
   const field = document.getElementById('skuField');
-  // если пусто — генерим
   if (!field.value) {
-    const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
+    const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
     const num  = String(Math.floor(Math.random()*1e9)).padStart(9, '0');
     field.value = `SKU-${rand}-${num}`;
   }
-  // дубль-защита от изменения с клавиатуры
   field.addEventListener('keydown', e => e.preventDefault());
   field.addEventListener('beforeinput', e => e.preventDefault());
 })();
 
-// === загрузка моделей по бренду ===
+// загрузка моделей по бренду
 document.getElementById('ap_brand').addEventListener('change', async function() {
   const brandId = this.value;
   const modelSelect = document.getElementById('ap_model');
@@ -132,7 +130,7 @@ document.getElementById('ap_brand').addEventListener('change', async function() 
   }
 });
 
-// === загрузка компонентов по комплексной части ===
+// загрузка компонентов по комплексной части
 document.getElementById('ap_cpart').addEventListener('change', async function() {
   const cpartId = this.value;
   const compSelect = document.getElementById('ap_comp');
@@ -150,6 +148,33 @@ document.getElementById('ap_cpart').addEventListener('change', async function() 
     });
   } catch(e) {
     console.error("Ошибка загрузки компонентов", e);
+  }
+});
+
+// Перехватываем submit: отправка через Fetch + редирект на страницу товара
+document.getElementById('addProductForm').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  try {
+    const fd = new FormData(this);
+    const res = await fetch(this.action, {
+      method: 'POST',
+      body: fd,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    });
+    const data = await res.json();
+    if (data && data.ok) {
+      // Успех — открываем карточку товара
+      window.location.href = `/mehanik/public/product.php?id=${data.id}`;
+    } else {
+      alert('Ошибка: ' + (data && data.error ? data.error : 'Неизвестная ошибка'));
+    }
+  } catch (err) {
+    console.error(err);
+    alert('Ошибка сети при сохранении товара');
+  } finally {
+    btn.disabled = false;
   }
 });
 </script>

@@ -1,73 +1,117 @@
 <?php
 require_once __DIR__ . '/../middleware.php';
 require_once __DIR__ . '/../db.php';
-header('Content-Type: application/json');
 
 require_auth();
-$user_id = $_SESSION['user']['id'];
+$user_id = $_SESSION['user']['id'] ?? 0;
 
-// Получаем данные из формы
+// Определим AJAX vs обычный POST
+$isAjax = (
+  (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
+  || (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false)
+);
+
+// ---------- Получаем данные ----------
 $name         = trim($_POST['name'] ?? '');
 $manufacturer = trim($_POST['manufacturer'] ?? '');
-$quality      = isset($_POST['quality']) ? (float)$_POST['quality'] : 5.0; // от 0.1 до 9.9
+
+// quality — строка (New/Used)
+$quality = $_POST['quality'] ?? 'New';
+$quality = in_array($quality, ['New','Used'], true) ? $quality : 'New';
+
+// rating — число 0.1–9.9
+$rating = isset($_POST['rating']) ? (float)$_POST['rating'] : 5.0;
+if ($rating < 0.1) $rating = 0.1;
+if ($rating > 9.9) $rating = 9.9;
+$rating = round($rating, 1);
+
 $availability = isset($_POST['availability']) ? (int)$_POST['availability'] : 0;
 $price        = isset($_POST['price']) ? (float)$_POST['price'] : 0.0;
-$brand_id     = !empty($_POST['brand_id']) ? (int)$_POST['brand_id'] : null;
-$model_id     = !empty($_POST['model_id']) ? (int)$_POST['model_id'] : null;
-$year_from    = $_POST['year_from'] !== '' ? (int)$_POST['year_from'] : null;
-$year_to      = $_POST['year_to'] !== '' ? (int)$_POST['year_to'] : null;
-$cpart        = !empty($_POST['complex_part_id']) ? (int)$_POST['complex_part_id'] : null;
-$comp         = !empty($_POST['component_id']) ? (int)$_POST['component_id'] : null;
+
+$brand_id     = ($_POST['brand_id']        ?? '') !== '' ? (int)$_POST['brand_id']        : null;
+$model_id     = ($_POST['model_id']        ?? '') !== '' ? (int)$_POST['model_id']        : null;
+$year_from    = ($_POST['year_from']       ?? '') !== '' ? (int)$_POST['year_from']       : null;
+$year_to      = ($_POST['year_to']         ?? '') !== '' ? (int)$_POST['year_to']         : null;
+$cpart        = ($_POST['complex_part_id'] ?? '') !== '' ? (int)$_POST['complex_part_id'] : null;
+$comp         = ($_POST['component_id']    ?? '') !== '' ? (int)$_POST['component_id']    : null;
+
 $desc         = trim($_POST['description'] ?? '');
 
-// Проверки
+// Валидация
 if (!$name || $price <= 0) {
-  http_response_code(422);
-  echo json_encode(['ok' => false, 'error' => 'Название и цена обязательны']);
+  if ($isAjax) {
+    header('Content-Type: application/json; charset=utf-8');
+    http_response_code(422);
+    echo json_encode(['ok' => false, 'error' => 'Название и положительная цена обязательны']);
+  } else {
+    header('Location: /mehanik/public/add-product.php?err=validation');
+  }
   exit;
 }
 
-// === SKU (генерация, неменяемый) ===
-$sku = "SKU-" . strtoupper(bin2hex(random_bytes(4)));
+// ---------- SKU ----------
+try {
+  $sku = 'SKU-' . strtoupper(bin2hex(random_bytes(4)));
+} catch (Throwable $e) {
+  $sku = 'SKU-' . strtoupper(dechex(mt_rand(0, 0x7FFFFFFF)));
+}
 
-// === Фото (номер по порядку) ===
+// ---------- Фото: 000000001.jpg ----------
 $photoPath = null;
-if (!empty($_FILES['photo']['name'])) {
-  // Узнаем последний ID
-  $res = $mysqli->query("SELECT MAX(id) as max_id FROM products");
-  $row = $res->fetch_assoc();
-  $nextId = ($row['max_id'] ?? 0) + 1;
-
-  $ext = pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION);
-  $fname = str_pad($nextId, 9, "0", STR_PAD_LEFT) . '.' . strtolower($ext);
-
-  $dest = __DIR__ . '/../uploads/products/' . $fname;
-  if (!is_dir(dirname($dest))) {
-    @mkdir(dirname($dest), 0755, true);
+if (!empty($_FILES['photo']['name']) && is_uploaded_file($_FILES['photo']['tmp_name'])) {
+  // Попытка взять AUTO_INCREMENT для products
+  $nextId = null;
+  if ($resAI = $mysqli->query("SELECT AUTO_INCREMENT AS ai FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products'")) {
+    if ($rowAI = $resAI->fetch_assoc()) {
+      $nextId = (int)$rowAI['ai'];
+    }
+    $resAI->free();
   }
+  if (!$nextId) {
+    $resMax = $mysqli->query("SELECT MAX(id) AS max_id FROM products");
+    $rowMax = $resMax ? $resMax->fetch_assoc() : ['max_id' => 0];
+    $nextId = (int)($rowMax['max_id'] ?? 0) + 1;
+  }
+
+  $ext = strtolower(pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION));
+  if ($ext === '') $ext = 'jpg';
+  $fname = str_pad($nextId, 9, '0', STR_PAD_LEFT) . '.' . $ext;
+
+  $destDir = __DIR__ . '/../uploads/products';
+  $dest = $destDir . '/' . $fname;
+
+  if (!is_dir($destDir)) {
+    @mkdir($destDir, 0755, true);
+  }
+
   if (move_uploaded_file($_FILES['photo']['tmp_name'], $dest)) {
     $photoPath = '/mehanik/uploads/products/' . $fname;
   }
 }
 
-// === Вставка ===
-$stmt = $mysqli->prepare("
+// ---------- INSERT ----------
+$sql = "
   INSERT INTO products(
     user_id, brand_id, model_id, year_from, year_to,
     complex_part_id, component_id, sku, name, manufacturer,
-    quality, availability, price, description, photo, created_at
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())
-");
-
+    quality, rating, availability, price, description, photo, created_at
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())
+";
+$stmt = $mysqli->prepare($sql);
 if (!$stmt) {
-  http_response_code(500);
-  echo json_encode(['ok' => false, 'error' => 'Prepare failed: ' . $mysqli->error]);
+  if ($isAjax) {
+    header('Content-Type: application/json; charset=utf-8');
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => 'Prepare failed: ' . $mysqli->error]);
+  } else {
+    header('Location: /mehanik/public/add-product.php?err=prepare');
+  }
   exit;
 }
 
-$types = 'iiiiiiisssdi dss'; // поправлено под новые типы
+$types = 'iiiiiiissssdidss';
 $bind_ok = $stmt->bind_param(
-  "iiiiiiisssdidss",
+  $types,
   $user_id,
   $brand_id,
   $model_id,
@@ -79,6 +123,7 @@ $bind_ok = $stmt->bind_param(
   $name,
   $manufacturer,
   $quality,
+  $rating,
   $availability,
   $price,
   $desc,
@@ -86,14 +131,33 @@ $bind_ok = $stmt->bind_param(
 );
 
 if (!$bind_ok) {
-  http_response_code(500);
-  echo json_encode(['ok' => false, 'error' => 'Bind failed: ' . $stmt->error]);
+  if ($isAjax) {
+    header('Content-Type: application/json; charset=utf-8');
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => 'Bind failed: ' . $stmt->error]);
+  } else {
+    header('Location: /mehanik/public/add-product.php?err=bind');
+  }
   exit;
 }
 
 if ($stmt->execute()) {
-  echo json_encode(['ok' => true, 'id' => $stmt->insert_id, 'sku' => $sku]);
+  $newId = $stmt->insert_id;
+  if ($isAjax) {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['ok' => true, 'id' => $newId, 'sku' => $sku]);
+  } else {
+    // PRG: обычная отправка формы -> редирект на страницу товара
+    header('Location: /mehanik/public/product.php?id=' . $newId);
+  }
+  exit;
 } else {
-  http_response_code(500);
-  echo json_encode(['ok' => false, 'error' => $stmt->error]);
+  if ($isAjax) {
+    header('Content-Type: application/json; charset=utf-8');
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => $stmt->error]);
+  } else {
+    header('Location: /mehanik/public/add-product.php?err=execute');
+  }
+  exit;
 }
