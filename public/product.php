@@ -60,8 +60,8 @@ include __DIR__ . '/header.php';
                         <li class="list-group-item"><strong>Комплексная часть:</strong> <?= htmlspecialchars($product['complex_part_name'] ?? '-') ?></li>
                         <li class="list-group-item"><strong>Компонент:</strong> <?= htmlspecialchars($product['component_name'] ?? '-') ?></li>
                         <li class="list-group-item"><strong>Производитель:</strong> <?= htmlspecialchars($product['manufacturer']) ?></li>
-                        <li class="list-group-item"><strong>Качество:</strong> <?= htmlspecialchars($product['quality']) ?></li>
-                        <li class="list-group-item"><strong>Рейтинг:</strong> ⭐ <?= number_format((float)$product['rating'], 1) ?> / 10</li>
+                        <li class="list-group-item"><strong>Состояние:</strong> <?= htmlspecialchars($product['quality']) ?></li>
+                        <li class="list-group-item"><strong>Качество:</strong> ⭐ <?= number_format((float)$product['rating'], 1) ?> / 10</li>
                         <li class="list-group-item"><strong>Наличие:</strong> <?= (int)$product['availability'] ?> шт.</li>
                         <li class="list-group-item"><strong>Цена:</strong> <span class="text-success fs-4"><?= number_format((float)$product['price'], 2) ?> TMT</span></li>
                         <li class="list-group-item"><strong>Дата добавления:</strong> <?= date('d.m.Y H:i', strtotime($product['created_at'])) ?></li>
@@ -74,7 +74,7 @@ include __DIR__ . '/header.php';
                         </div>
                     <?php endif; ?>
 
-                    <a href="/mehanik/index.php" class="btn btn-secondary mt-3">
+                    <a href="/mehanik/public/my-products.php" class="btn btn-secondary mt-3">
                         ⬅ Назад к списку
                     </a>
                 </div>

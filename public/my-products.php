@@ -34,10 +34,12 @@ include __DIR__ . '/header.php';
             </div>
             <div class="card-footer d-flex justify-content-between">
               <a href="/mehanik/public/edit-product.php?id=<?= $p['id'] ?>" class="btn btn-sm btn-warning">✏ Редактировать</a>
-              
-              <form method="POST" action="/mehanik/api/delete-product.php" onsubmit="return confirm('Удалить товар?');">
-                <input type="hidden" name="id" value="<?= $p['id'] ?>">
-                <button type="submit" class="btn btn-sm btn-danger">🗑 Удалить</button>
+
+                <form method="post" action="/mehanik/api/delete-product.php" onsubmit="return confirm('Удалить товар?');" style="display:inline;">
+                <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
+                <button type="submit" class="btn btn-danger">Удалить</button>
+              </form>
+
               </form>
             </div>
           </div>
