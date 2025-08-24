@@ -1,120 +1,188 @@
 <?php
-require_once __DIR__ . '/../db.php';
+require_once __DIR__.'/../db.php';
+require_once __DIR__.'/../config.php';
+session_start();
 
-// Получаем id из URL
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 if ($id <= 0) {
-    die("Неверный ID продукта");
+    http_response_code(404);
+    echo "Товар не найден.";
+    exit;
 }
 
-// Загружаем продукт
-$stmt = $mysqli->prepare("
-    SELECT p.*, 
-           b.name AS brand_name, 
-           m.name AS model_name, 
-           cp.name AS complex_part_name,
-           c.name AS component_name
-    FROM products p
-    LEFT JOIN brands b ON p.brand_id = b.id
-    LEFT JOIN models m ON p.model_id = m.id
-    LEFT JOIN complex_parts cp ON p.complex_part_id = cp.id
-    LEFT JOIN components c ON p.component_id = c.id
-    WHERE p.id = ?
-");
-$stmt->bind_param("i", $id);
+// Подтягиваем максимум связанной информации
+$sql = "
+  SELECT
+    p.*,
+    u.name  AS owner_name,
+    u.phone AS owner_phone,
+    u.email AS owner_email,
+    b.name  AS brand_name,
+    m.name  AS model_name,
+    cp.name AS complex_part_name,
+    c.name  AS component_name
+  FROM products p
+  LEFT JOIN users         u  ON u.id  = p.user_id
+  LEFT JOIN brands        b  ON b.id  = p.brand_id
+  LEFT JOIN models        m  ON m.id  = p.model_id
+  LEFT JOIN complex_parts cp ON cp.id = p.complex_part_id
+  LEFT JOIN components    c  ON c.id  = p.component_id
+  WHERE p.id = ?
+";
+$stmt = $mysqli->prepare($sql);
+$stmt->bind_param('i', $id);
 $stmt->execute();
-$product = $stmt->get_result()->fetch_assoc();
+$res = $stmt->get_result();
+$product = $res->fetch_assoc();
+$stmt->close();
 
 if (!$product) {
-    die("Продукт не найден");
+    http_response_code(404);
+    echo "Товар не найден.";
+    exit;
 }
 
-include __DIR__ . '/header.php';
+// Проверка доступа: если товар не одобрен, видеть может только владелец
+if ($product['status'] !== 'approved') {
+    if (!isset($_SESSION['user_id']) || $_SESSION['user_id'] != $product['user_id']) {
+        http_response_code(403);
+        echo "⛔ Этот товар недоступен.";
+        exit;
+    }
+}
+
+// Аккуратно собираем URL фото
+$photoRaw = $product['photo'] ?? '';
+if ($photoRaw) {
+    if (preg_match('~^https?://~i', $photoRaw) || str_starts_with($photoRaw, '/')) {
+        $photoUrl = $photoRaw;
+    } else {
+        $photoUrl = rtrim($config['base_url'], '/') . '/uploads/products/' . $photoRaw;
+    }
+} else {
+    $photoUrl = null;
+}
+
+// Статус модерации
+$status = $product['status'] ?? null;
+$rejectReason = $product['reject_reason'] ?? '';
 ?>
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title><?= htmlspecialchars($product['name']) ?> — <?= htmlspecialchars($config['site_name'] ?? 'Mehanik') ?></title>
+  <link rel="stylesheet" href="/mehanik/assets/css/style.css">
+  <style>
+    .product-wrap { display:grid; grid-template-columns: 1fr 1.2fr; gap:24px; align-items:start; }
+    @media (max-width: 900px){ .product-wrap { grid-template-columns: 1fr; } }
+    .card { background:#fff; border-radius:14px; box-shadow:0 6px 18px rgba(0,0,0,.08); overflow:hidden; }
+    .card-body { padding:20px; }
+    .photo { background:#f7f7f9; display:flex; align-items:center; justify-content:center; min-height:320px; }
+    .photo img { max-width:100%; max-height:520px; object-fit:contain; }
+    .status-msg { padding:12px 14px; border-radius:10px; font-weight:600; margin: 0 0 14px 0; }
+    .status-approved { background:#e7f8ea; color:#116b1d; border:1px solid #bfe9c6; }
+    .status-rejected { background:#ffeaea; color:#8f1a1a; border:1px solid #ffbcbc; }
+    .status-pending  { background:#fff6e6; color:#8a5600; border:1px solid #ffe1a6; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px; background:#f2f3f7; font-size:.9rem; margin-right:8px; }
+    .details { display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
+    .details .row { background:#f8f9fb; border-radius:10px; padding:10px 12px; }
+    .muted { color:#6b7280; }
+    .price { font-weight:700; font-size:1.4rem; }
+    .section-title { margin:18px 0 8px; font-size:1.05rem; font-weight:700; }
+    .desc { background:#fafbff; border:1px dashed #e7e9f3; border-radius:12px; padding:14px; }
+  </style>
+</head>
+<body>
+  <?php require_once __DIR__.'/header.php'; ?>
 
-<div class="container mt-5">
-    <div class="card shadow-lg border-0 rounded-4">
-        <div class="row g-0">
-            <!-- Фото -->
-            <div class="col-md-5 text-center bg-light d-flex align-items-center">
-                <?php if ($product['photo']): ?>
-                    <img src="<?= htmlspecialchars($product['photo']) ?>" class="img-fluid p-3 rounded" alt="<?= htmlspecialchars($product['name']) ?>">
-                <?php else: ?>
-                    <img src="/mehanik/assets/no-photo.png" class="img-fluid p-3 rounded" alt="Нет фото">
-                <?php endif; ?>
-            </div>
+  <div class="container" style="padding:22px;">
+    <h1 style="margin-bottom:10px;"><?= htmlspecialchars($product['name']) ?></h1>
 
-            <!-- Инфо -->
-            <div class="col-md-7">
-                <div class="card-body">
-                    <h2 class="card-title mb-3"><?= htmlspecialchars($product['name']) ?></h2>
-                    
-                    <ul class="list-group list-group-flush mb-3">
-                        <li class="list-group-item"><strong>Код (SKU):</strong> <?= htmlspecialchars($product['sku']) ?></li>
-                        <li class="list-group-item"><strong>Бренд:</strong> <?= htmlspecialchars($product['brand_name'] ?? '-') ?></li>
-                        <li class="list-group-item"><strong>Модель:</strong> <?= htmlspecialchars($product['model_name'] ?? '-') ?></li>
-                        <li class="list-group-item"><strong>Годы выпуска:</strong> 
-                            <?= $product['year_from'] ? (int)$product['year_from'] : '-' ?> 
-                            – <?= $product['year_to'] ? (int)$product['year_to'] : '-' ?>
-                        </li>
-                        <li class="list-group-item"><strong>Комплексная часть:</strong> <?= htmlspecialchars($product['complex_part_name'] ?? '-') ?></li>
-                        <li class="list-group-item"><strong>Компонент:</strong> <?= htmlspecialchars($product['component_name'] ?? '-') ?></li>
-                        <li class="list-group-item"><strong>Производитель:</strong> <?= htmlspecialchars($product['manufacturer']) ?></li>
-                        <li class="list-group-item"><strong>Состояние:</strong> <?= htmlspecialchars($product['quality']) ?></li>
-                        <li class="list-group-item"><strong>Качество:</strong> ⭐ <?= number_format((float)$product['rating'], 1) ?> / 10</li>
-                        <li class="list-group-item"><strong>Наличие:</strong> <?= (int)$product['availability'] ?> шт.</li>
-                        <li class="list-group-item"><strong>Цена:</strong> <span class="text-success fs-4"><?= number_format((float)$product['price'], 2) ?> TMT</span></li>
-                        <li class="list-group-item"><strong>Дата добавления:</strong> <?= date('d.m.Y H:i', strtotime($product['created_at'])) ?></li>
-                    </ul>
+    <!-- Статус модерации -->
+    <?php if ($status === 'approved'): ?>
+      <div class="status-msg status-approved">✅ Товар подтверждён администратором</div>
+    <?php elseif ($status === 'rejected'): ?>
+      <div class="status-msg status-rejected">
+        ❌ Товар отклонён администратором
+        <?php if (!empty($rejectReason)): ?>
+          <div class="muted" style="margin-top:6px;"><strong>Причина:</strong> <?= nl2br(htmlspecialchars($rejectReason)) ?></div>
+        <?php endif; ?>
+      </div>
+    <?php else: ?>
+      <div class="status-msg status-pending">⏳ Товар находится на модерации</div>
+    <?php endif; ?>
 
-                    <?php if (!empty($product['description'])): ?>
-                        <div class="mt-4">
-                            <h5>Описание</h5>
-                            <p class="border rounded p-3 bg-light"><?= nl2br(htmlspecialchars($product['description'])) ?></p>
-                        </div>
-                    <?php endif; ?>
-
-                    <a href="/mehanik/public/my-products.php" class="btn btn-secondary mt-3">
-                        ⬅ Назад к списку
-                    </a>
-                </div>
-            </div>
+    <div class="product-wrap">
+      <!-- Фото -->
+      <div class="card">
+        <div class="photo">
+          <?php if ($photoUrl): ?>
+            <img src="<?= htmlspecialchars($photoUrl) ?>" alt="<?= htmlspecialchars($product['name']) ?>">
+          <?php else: ?>
+            <img src="/mehanik/assets/no-photo.png" alt="Нет фото">
+          <?php endif; ?>
         </div>
-    </div>
+      </div>
 
-    <!-- Похожие товары -->
-    <h4 class="mt-5 mb-3">Похожие товары</h4>
-    <div class="row row-cols-1 row-cols-md-4 g-3">
-        <?php
-        $similar_stmt = $mysqli->prepare("
-            SELECT p.*, b.name AS brand_name, m.name AS model_name 
-            FROM products p
-            LEFT JOIN brands b ON p.brand_id = b.id
-            LEFT JOIN models m ON p.model_id = m.id
-            WHERE (p.model_id = ? OR p.brand_id = ?) AND p.id != ?
-            ORDER BY p.created_at DESC
-            LIMIT 4
-        ");
-        $similar_stmt->bind_param("iii", $product['model_id'], $product['brand_id'], $product['id']);
-        $similar_stmt->execute();
-        $similar_products = $similar_stmt->get_result();
-        while($sp = $similar_products->fetch_assoc()):
-        ?>
-            <div class="col">
-                <div class="card h-100 shadow-sm">
-                    <?php if ($sp['photo']): ?>
-                        <img src="<?= htmlspecialchars($sp['photo']) ?>" class="card-img-top" alt="<?= htmlspecialchars($sp['name']) ?>" style="height:180px;object-fit:cover;">
-                    <?php else: ?>
-                        <img src="/mehanik/assets/no-photo.png" class="card-img-top" alt="Нет фото" style="height:180px;object-fit:cover;">
-                    <?php endif; ?>
-                    <div class="card-body">
-                        <h6 class="card-title"><?= htmlspecialchars($sp['name']) ?></h6>
-                        <p class="mb-1"><strong>Цена:</strong> <?= number_format((float)$sp['price'],2) ?> TMT</p>
-                        <p class="mb-0"><strong>Наличие:</strong> <?= (int)$sp['availability'] ?></p>
-                        <a href="/mehanik/public/product.php?id=<?= $sp['id'] ?>" class="stretched-link"></a>
-                    </div>
-                </div>
+      <!-- Описание / Характеристики -->
+      <div class="card">
+        <div class="card-body">
+          <div style="margin-bottom:8px;">
+            <?php if (!empty($product['brand_name'])): ?>
+              <span class="pill"><?= htmlspecialchars($product['brand_name']) ?></span>
+            <?php endif; ?>
+            <?php if (!empty($product['model_name'])): ?>
+              <span class="pill"><?= htmlspecialchars($product['model_name']) ?></span>
+            <?php endif; ?>
+            <?php if (!empty($product['complex_part_name'])): ?>
+              <span class="pill"><?= htmlspecialchars($product['complex_part_name']) ?></span>
+            <?php endif; ?>
+            <?php if (!empty($product['component_name'])): ?>
+              <span class="pill"><?= htmlspecialchars($product['component_name']) ?></span>
+            <?php endif; ?>
+          </div>
+
+          <div class="details" style="margin-top:8px;">
+            <div class="row"><strong>SKU:</strong> <?= htmlspecialchars($product['sku'] ?? '') ?></div>
+            <div class="row"><strong>Производитель:</strong> <?= htmlspecialchars($product['manufacturer'] ?? '-') ?></div>
+            <div class="row"><strong>Состояние:</strong> <?= htmlspecialchars($product['quality'] ?? '-') ?></div>
+            <div class="row"><strong>Рейтинг:</strong> <?= number_format((float)($product['rating'] ?? 0),1) ?>/10</div>
+            <div class="row"><strong>Годы выпуска:</strong> <?= ($product['year_from'] ?: '—') ?> — <?= ($product['year_to'] ?: '—') ?></div>
+            <div class="row"><strong>Наличие:</strong> <?= (int)($product['availability'] ?? 0) ?> шт.</div>
+            <div class="row price"><strong>Цена:</strong> <?= number_format((float)($product['price'] ?? 0), 2) ?> TMT</div>
+            <div class="row"><strong>Добавлено:</strong> <?= !empty($product['created_at']) ? date('d.m.Y H:i', strtotime($product['created_at'])) : '-' ?></div>
+          </div>
+
+          <?php if (!empty($product['description'])): ?>
+            <div class="section-title">Описание</div>
+            <div class="desc"><?= nl2br(htmlspecialchars($product['description'])) ?></div>
+          <?php endif; ?>
+
+          <div class="section-title">Контакты продавца</div>
+          <div class="details">
+            <div class="row"><strong>Имя:</strong> <?= htmlspecialchars($product['owner_name'] ?? '-') ?></div>
+            <div class="row">
+              <?php
+                $phone = trim((string)($product['owner_phone'] ?? ''));
+                $email = trim((string)($product['owner_email'] ?? ''));
+              ?>
+              <?php if ($phone !== ''): ?>
+                <strong>Телефон:</strong> <a href="tel:<?= htmlspecialchars(preg_replace('~\D+~', '', $phone)) ?>"><?= htmlspecialchars($phone) ?></a>
+              <?php elseif ($email !== ''): ?>
+                <strong>E-mail:</strong> <a href="mailto:<?= htmlspecialchars($email) ?>"><?= htmlspecialchars($email) ?></a>
+              <?php else: ?>
+                <span class="muted">Контакты не указаны</span>
+              <?php endif; ?>
             </div>
-        <?php endwhile; ?>
+          </div>
+
+          <div style="margin-top:16px;">
+            <a class="btn" href="/mehanik/index.php">⬅ Назад к каталогу</a>
+          </div>
+        </div>
+      </div>
     </div>
-</div>
+  </div>
+</body>
+</html>

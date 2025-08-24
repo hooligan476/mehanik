@@ -20,6 +20,21 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
     }
 }
 
+// Обработка подтверждения/отклонения
+if (isset($_GET['action']) && in_array($_GET['action'], ['approve','reject']) && isset($_GET['id'])) {
+    $id = (int)$_GET['id'];
+    $status = $_GET['action'] === 'approve' ? 'approved' : 'rejected';
+
+    $stmt = $mysqli->prepare("UPDATE products SET status = ? WHERE id = ?");
+    if ($stmt) {
+        $stmt->bind_param('si', $status, $id);
+        $stmt->execute();
+        $stmt->close();
+    }
+    header('Location: ' . $config['base_url'] . '/admin/products.php' . ($user_id ? '?user_id=' . $user_id : ''));
+    exit;
+}
+
 // Формируем запрос: если есть user_id — фильтруем, иначе показываем все
 if ($user_id) {
     $sql = "SELECT p.*, u.name AS owner_name FROM products p LEFT JOIN users u ON u.id = p.user_id WHERE p.user_id = ? ORDER BY p.id DESC";
@@ -46,17 +61,19 @@ if ($stmt) {
 <!doctype html>
 <html lang="ru">
 <head>
-
   <meta charset="utf-8">
   <title>Админка — Товары</title>
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
   <style>
     .actions a { margin-right: 8px; }
     .small { font-size: 0.9em; color: #666; }
+    .status-approved { color: green; font-weight: bold; }
+    .status-rejected { color: red; font-weight: bold; }
+    .status-pending { color: orange; font-weight: bold; }
   </style>
 </head>
 <body>
-    <?php require_once __DIR__.'/header.php'; ?>
+  <?php require_once __DIR__.'/header.php'; ?>
   <h2 style="padding:16px;">Товары<?= $user_id ? ' пользователя #' . htmlspecialchars($user_id) : '' ?></h2>
   <p style="padding:0 16px 16px;"><a href="<?= htmlspecialchars($config['base_url'] . '/admin/users.php') ?>">← Назад к пользователям</a></p>
 
@@ -76,11 +93,12 @@ if ($stmt) {
       <th>Доступно</th>
       <th>Владелец</th>
       <th>Создано</th>
+      <th>Статус</th>
       <th>Действия</th>
     </tr>
 
     <?php if (count($products) === 0): ?>
-      <tr><td colspan="11" style="text-align:center;">Товары не найдены.</td></tr>
+      <tr><td colspan="12" style="text-align:center;">Товары не найдены.</td></tr>
     <?php else: ?>
       <?php foreach ($products as $p): ?>
         <tr>
@@ -94,9 +112,24 @@ if ($stmt) {
           <td><?= htmlspecialchars($p['availability'] ?? '') ?></td>
           <td><?= htmlspecialchars($p['owner_name'] ?? '') ?> (ID: <?= htmlspecialchars($p['user_id'] ?? '') ?>)</td>
           <td><?= htmlspecialchars($p['created_at'] ?? '') ?></td>
+          <td>
+            <?php if ($p['status'] === 'approved'): ?>
+              <span class="status-approved">Подтверждён</span>
+            <?php elseif ($p['status'] === 'rejected'): ?>
+              <span class="status-rejected">Отклонён</span>
+            <?php else: ?>
+              <span class="status-pending">На модерации</span>
+            <?php endif; ?>
+          </td>
           <td class="actions">
             <a href="<?= htmlspecialchars($config['base_url'] . '/product.php?id=' . $p['id']) ?>" target="_blank">Просмотр</a>
             <a href="<?= htmlspecialchars($config['base_url'] . '/admin/edit_product.php?id=' . $p['id']) ?>">Ред.</a>
+            <?php if ($p['status'] !== 'approved'): ?>
+              <a href="<?= htmlspecialchars($config['base_url'] . '/admin/products.php?action=approve&id=' . $p['id'] . ($user_id ? '&user_id=' . $user_id : '')) ?>">Подтвердить</a>
+            <?php endif; ?>
+            <?php if ($p['status'] !== 'rejected'): ?>
+              <a href="<?= htmlspecialchars($config['base_url'] . '/admin/products.php?action=reject&id=' . $p['id'] . ($user_id ? '&user_id=' . $user_id : '')) ?>">Отклонить</a>
+            <?php endif; ?>
             <a href="<?= htmlspecialchars($config['base_url'] . '/admin/products.php?user_id=' . ($user_id ?: '') . '&action=delete&id=' . $p['id']) ?>" onclick="return confirm('Удалить товар #<?= htmlspecialchars($p['id']) ?>?')">Удал.</a>
           </td>
         </tr>
