@@ -14,28 +14,12 @@ $config = require __DIR__.'/../config.php';
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">Mehanik</div>
 
-  <?php if (!empty($_SESSION['user'])): ?>
-    <div class="user-info">Вы вошли как: <b><?= htmlspecialchars($_SESSION['user']['name']) ?></b></div>
-  <?php endif; ?>
+<?php
+// подключаем вынесённую шапку (header.php находится в корне проекта mehanik)
+require_once __DIR__ . '/header.php';
 
-  <nav>
-    <?php if (!empty($_SESSION['user'])): ?>
-      <a href="<?= $config['base_url'] ?>/add-product.php">Добавить товар</a>
-      <a href="<?= $config['base_url'] ?>/my-products.php">Мои товары</a>
-      <a href="<?= $config['base_url'] ?>/chat.php">Поддержка</a>
-      <?php if ($_SESSION['user']['role']==='admin'): ?>
-        <a href="<?= $config['base_url'] ?>/admin/index.php">Админка</a>
-      <?php endif; ?>
-      <a href="<?= $config['base_url'] ?>/logout.php">Выйти</a>
-    <?php else: ?>
-      <a href="<?= $config['base_url'] ?>/login.php">Войти</a>
-      <a href="<?= $config['base_url'] ?>/register.php">Регистрация</a>
-    <?php endif; ?>
-  </nav>
-</header>
+?>
 
 <main class="layout">
   <aside class="sidebar">

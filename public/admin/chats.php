@@ -50,13 +50,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <h2 style="padding:16px;">Чаты поддержки</h2>
 
-<?php $ch=$mysqli->query("SELECT c.id,u.email,c.status,c.created_at FROM chats c JOIN users u ON u.id=c.user_id ORDER BY c.id DESC"); ?>
+<?php
+// исправленный запрос: вместо email используем phone
+$ch = $mysqli->query("
+    SELECT c.id, u.phone, c.status, c.created_at 
+    FROM chats c 
+    JOIN users u ON u.id = c.user_id 
+    ORDER BY c.id DESC
+");
+?>
 <table class="table">
-  <tr><th>ID</th><th>Пользователь</th><th>Статус</th><th>Создан</th><th>Действие</th></tr>
-  <?php while($row=$ch->fetch_assoc()): ?>
+  <tr>
+    <th>ID</th><th>Пользователь</th><th>Статус</th><th>Создан</th><th>Действие</th>
+  </tr>
+  <?php while($row = $ch->fetch_assoc()): ?>
     <tr>
       <td><?= $row['id'] ?></td>
-      <td><?= htmlspecialchars($row['email']) ?></td>
+      <td><?= htmlspecialchars($row['phone']) ?></td>
       <td><?= $row['status'] ?></td>
       <td><?= $row['created_at'] ?></td>
       <td>
@@ -80,18 +90,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <?php
 // просмотр чата (через GET ?reply=ID)
 if (!empty($_GET['reply'])) {
-  $chat_id=(int)$_GET['reply'];
-  echo '<h3 style="padding:16px;">Чат #'.$chat_id.'</h3>';
-  echo '<div style="padding:16px;">';
-  $msgs=$mysqli->query("SELECT sender,content,created_at FROM messages WHERE chat_id=$chat_id ORDER BY id ASC");
-  while($m=$msgs->fetch_assoc()){
-    echo '<div><b>'.htmlspecialchars($m['sender']).':</b> '.htmlspecialchars($m['content']).' <small>'.$m['created_at'].'</small></div>';
-  }
-  echo '<form method="post" style="margin-top:10px;">
-          <input type="hidden" name="chat_id" value="'.$chat_id.'">
-          <input type="text" name="content" placeholder="Ответ..." required>
-          <button name="send" value="1">Отправить</button>
-        </form></div>';
+    $chat_id = (int)$_GET['reply'];
+    echo '<h3 style="padding:16px;">Чат #'.$chat_id.'</h3>';
+    echo '<div style="padding:16px;">';
+    $msgs = $mysqli->query("SELECT sender, content, created_at FROM messages WHERE chat_id=$chat_id ORDER BY id ASC");
+    while($m = $msgs->fetch_assoc()){
+        echo '<div><b>'.htmlspecialchars($m['sender']).':</b> '.htmlspecialchars($m['content']).' <small>'.$m['created_at'].'</small></div>';
+    }
+    echo '<form method="post" style="margin-top:10px;">
+            <input type="hidden" name="chat_id" value="'.$chat_id.'">
+            <input type="text" name="content" placeholder="Ответ..." required>
+            <button name="send" value="1">Отправить</button>
+          </form></div>';
 }
 ?>
 
