@@ -16,7 +16,6 @@ $sql = "
     p.*,
     u.name  AS owner_name,
     u.phone AS owner_phone,
-    u.email AS owner_email,
     b.name  AS brand_name,
     m.name  AS model_name,
     cp.name AS complex_part_name,
@@ -165,12 +164,9 @@ $rejectReason = $product['reject_reason'] ?? '';
             <div class="row">
               <?php
                 $phone = trim((string)($product['owner_phone'] ?? ''));
-                $email = trim((string)($product['owner_email'] ?? ''));
               ?>
               <?php if ($phone !== ''): ?>
                 <strong>Телефон:</strong> <a href="tel:<?= htmlspecialchars(preg_replace('~\D+~', '', $phone)) ?>"><?= htmlspecialchars($phone) ?></a>
-              <?php elseif ($email !== ''): ?>
-                <strong>E-mail:</strong> <a href="mailto:<?= htmlspecialchars($email) ?>"><?= htmlspecialchars($email) ?></a>
               <?php else: ?>
                 <span class="muted">Контакты не указаны</span>
               <?php endif; ?>

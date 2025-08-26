@@ -17,71 +17,65 @@ require_once __DIR__ . '/../db.php';
     <h2>Добавление товара</h2>
 
     <form id="addProductForm" enctype="multipart/form-data" method="post" action="/mehanik/api/add-product.php">
+      <label>Название *</label>
       <input type="text" name="name" placeholder="Название" required>
-
-      <!-- SKU: показываем как нередактируемый preview; реальное значение генерится на сервере -->
-      <label>Артикул</label>
-      <input type="text" id="skuField" name="sku" readonly placeholder="будет сгенерирован автоматически">
 
       <label>Производитель</label>
       <input type="text" name="manufacturer" placeholder="Производитель">
 
-      <!-- Состояние (строка New/Used) -->
-      <label>Состояние</label>
-      <select name="quality">
+      <label>Состояние *</label>
+      <select name="quality" required>
         <option value="New">New</option>
         <option value="Used">Used</option>
       </select>
 
-      <!-- Качество (бывш. rating) -->
-      <label>Качество (0.1–9.9)</label>
+      <label>Качество (0.1–9.9) *</label>
       <input type="number" name="rating" step="0.1" min="0.1" max="9.9" value="5.0" required>
 
-      <label>Наличие</label>
-      <input type="number" name="availability" placeholder="Наличие" value="1">
+      <label>Наличие *</label>
+      <input type="number" name="availability" placeholder="Наличие" value="1" required>
 
-      <label>Цена</label>
+      <label>Цена *</label>
       <input type="number" step="0.01" name="price" placeholder="Цена" required>
 
-      <!-- Бренд -->
-      <label>Бренд</label>
+      <label>Бренд *</label>
       <select name="brand_id" id="ap_brand" required>
         <option value="">-- выберите бренд --</option>
         <?php
-          $brands = $mysqli->query("SELECT id, name FROM brands ORDER BY name");
-          while ($b = $brands->fetch_assoc()) {
-            echo '<option value="'.$b['id'].'">'.htmlspecialchars($b['name']).'</option>';
+          if (isset($mysqli)) {
+            $brands = $mysqli->query("SELECT id, name FROM brands ORDER BY name");
+            while ($b = $brands->fetch_assoc()) {
+              echo '<option value="'.$b['id'].'">'.htmlspecialchars($b['name']).'</option>';
+            }
           }
         ?>
       </select>
 
-      <!-- Модель -->
-      <label>Модель</label>
+      <label>Модель *</label>
       <select name="model_id" id="ap_model" required>
         <option value="">-- выберите модель --</option>
       </select>
 
-      <!-- Годы -->
-      <label>Годы</label>
+      <label>Годы выпуска</label>
       <div class="row">
         <input type="number" name="year_from" placeholder="от">
         <input type="number" name="year_to" placeholder="до">
       </div>
 
-      <!-- Комплексная часть -->
-      <label>Комплексная часть</label>
+      <label>Комплексная часть *</label>
       <select name="complex_part_id" id="ap_cpart" required>
         <option value="">-- выберите часть --</option>
         <?php
-          $cparts = $mysqli->query("SELECT id, name FROM complex_parts ORDER BY name");
-          while ($c = $cparts->fetch_assoc()) {
-            echo '<option value="'.$c['id'].'">'.htmlspecialchars($c['name']).'</option>';
+          if (isset($mysqli)) {
+            $cparts = $mysqli->query("SELECT id, name FROM complex_parts ORDER BY name");
+            while ($c = $cparts->fetch_assoc()) {
+              echo '<option value="'.$c['id'].'">'.htmlspecialchars($c['name']).'</option>';
+            }
           }
         ?>
       </select>
 
-      <!-- Компонент -->
-      <label>Компонент</label>
+      <label>Компонент *</label>
       <select name="component_id" id="ap_comp" required>
         <option value="">-- выберите компонент --</option>
       </select>
@@ -97,18 +91,6 @@ require_once __DIR__ . '/../db.php';
   </div>
 
 <script>
-// Покажем пользователю черновой SKU (для вида). На сервер не полагаемся.
-(function previewSKU() {
-  const field = document.getElementById('skuField');
-  if (!field.value) {
-    const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-    const num  = String(Math.floor(Math.random()*1e9)).padStart(9, '0');
-    field.value = `SKU-${rand}-${num}`;
-  }
-  field.addEventListener('keydown', e => e.preventDefault());
-  field.addEventListener('beforeinput', e => e.preventDefault());
-})();
-
 // загрузка моделей по бренду
 document.getElementById('ap_brand').addEventListener('change', async function() {
   const brandId = this.value;
@@ -151,11 +133,12 @@ document.getElementById('ap_cpart').addEventListener('change', async function() 
   }
 });
 
-// Перехватываем submit: отправка через Fetch + редирект на страницу товара
+// обработка формы
 document.getElementById('addProductForm').addEventListener('submit', async function(e) {
   e.preventDefault();
   const btn = document.getElementById('submitBtn');
   btn.disabled = true;
+
   try {
     const fd = new FormData(this);
     const res = await fetch(this.action, {
@@ -164,11 +147,11 @@ document.getElementById('addProductForm').addEventListener('submit', async funct
       headers: { 'X-Requested-With': 'XMLHttpRequest' }
     });
     const data = await res.json();
-    if (data && data.ok) {
-      // Успех — открываем карточку товара
+
+    if (data && data.ok && data.id) {
       window.location.href = `/mehanik/public/product.php?id=${data.id}`;
     } else {
-      alert('Ошибка: ' + (data && data.error ? data.error : 'Неизвестная ошибка'));
+      alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
     }
   } catch (err) {
     console.error(err);

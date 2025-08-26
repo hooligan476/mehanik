@@ -1,5 +1,5 @@
 <?php
-// public/delete-product.php
+// api/delete-product.php 
 require_once __DIR__ . '/../middleware.php';
 require_auth();
 require_once __DIR__ . '/../db.php';
@@ -42,12 +42,14 @@ $stmt->close();
 
 // === 3. Если удалено — чистим фото ===
 if ($deleted && $photoPath) {
-    // $photoPath в БД хранится как "/mehanik/uploads/products/000000123.jpg"
-    $absolutePath = __DIR__ . '/..' . str_replace('/mehanik', '', $photoPath);
+    // photo хранится как "/mehanik/uploads/products/000000123.jpg"
+    $fileName = basename($photoPath); // => "000000123.jpg"
+    $absolutePath = __DIR__ . '/../uploads/products/' . $fileName;
 
     if (is_file($absolutePath)) {
         @unlink($absolutePath);
     }
+
     header('Location: /mehanik/public/my-products.php?deleted=1');
     exit;
 }
