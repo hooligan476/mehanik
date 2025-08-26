@@ -81,6 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
 </head>
 <body>
+  <?php require_once __DIR__.'/header.php'; ?>
   <h2>Редактировать товар #<?= htmlspecialchars($id) ?></h2>
   <p><a href="<?= htmlspecialchars($config['base_url'].'/admin/products.php') ?>">← Назад к товарам</a></p>
 

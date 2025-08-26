@@ -1,6 +1,12 @@
 <?php require_once __DIR__.'/../middleware.php'; require_auth(); ?>
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Чат с поддержкой</title>
-<link rel="stylesheet" href="/mehanik/assets/css/style.css"></head><body>
+<!doctype html><html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <title>Чат с поддержкой</title>
+<link rel="stylesheet" href="/mehanik/assets/css/style.css">
+</head>
+<body>
+  <?php include __DIR__ . '/header.php'; ?>
 <div class="chat">
   <div id="chatWindow" class="chat-window"></div>
   <form id="chatForm" class="chat-form">

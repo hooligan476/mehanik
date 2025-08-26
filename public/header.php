@@ -1,78 +1,106 @@
 <?php
-// public/header.php
+// public/header.php — простой хедер без поиска и бургер-меню
 
-// Если сессия ещё не запущена — запускаем
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+if (session_status() === PHP_SESSION_NONE) session_start();
 
-// Проектный корень — папка выше public (например C:\xampp\htdocs\mehanik)
+// проектный корень (папка mehanik)
 $projectRoot = dirname(__DIR__);
 
-// Попытка подключить config.php и db.php из корня проекта
+// config и db (если есть)
 $configPath = $projectRoot . '/config.php';
-$dbPath = $projectRoot . '/db.php';
+$dbPath     = $projectRoot . '/db.php';
 
 if (file_exists($configPath)) {
     $config = require $configPath;
 } else {
-    // fallback
-    $config = ['base_url' => '/mehanik'];
+    $config = ['base_url' => '/mehanik/public'];
 }
 
-// Подключаем db.php если он есть. В твоём проекте db.php должен создать $pdo.
+// Подключаем db.php, если существует (создаёт $mysqli или $pdo)
 if (file_exists($dbPath)) {
     require_once $dbPath;
 }
 
-// Если в сессии есть id пользователя и есть $pdo — подтягиваем свежие данные из БД
-if (!empty($_SESSION['user']['id']) && isset($pdo)) {
-    try {
-        $stmt = $pdo->prepare("SELECT id, name, phone, role, created_at, verify_code, status FROM users WHERE id = :id LIMIT 1");
-        $stmt->execute([':id' => (int)$_SESSION['user']['id']]);
-        $fresh = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($fresh) {
-            $_SESSION['user'] = $fresh;
-        }
-    } catch (Exception $e) {
-        // silently ignore DB errors for the header
+// base URL
+$base = rtrim($config['base_url'] ?? '/mehanik/public', '/');
+
+// Подтягиваем свежие данные пользователя, если есть id в сессии
+$user = $_SESSION['user'] ?? null;
+if (!empty($user['id'])) {
+    $uid = (int)$user['id'];
+
+    if (isset($mysqli) && $mysqli instanceof mysqli) {
+        try {
+            if ($st = $mysqli->prepare("SELECT id,name,phone,role,created_at,verify_code,status,ip FROM users WHERE id = ? LIMIT 1")) {
+                $st->bind_param('i', $uid);
+                $st->execute();
+                $res = $st->get_result();
+                $fresh = $res ? $res->fetch_assoc() : null;
+                $st->close();
+                if ($fresh) {
+                    $_SESSION['user'] = $fresh;
+                    $user = $fresh;
+                }
+            }
+        } catch (Throwable $e) { /* ignore */ }
+    } elseif (isset($pdo) && $pdo instanceof PDO) {
+        try {
+            $st = $pdo->prepare("SELECT id,name,phone,role,created_at,verify_code,status,ip FROM users WHERE id = :id LIMIT 1");
+            $st->execute([':id' => $uid]);
+            $fresh = $st->fetch(PDO::FETCH_ASSOC);
+            if ($fresh) {
+                $_SESSION['user'] = $fresh;
+                $user = $fresh;
+            }
+        } catch (Throwable $e) { /* ignore */ }
     }
 }
 
-// Админский номер для приёма SMS — поменяй если нужно
-if (!defined('ADMIN_PHONE_FOR_VERIFY')) {
-    define('ADMIN_PHONE_FOR_VERIFY', '+99363722023');
-}
+// Admin phone for verification (fallback)
+if (!defined('ADMIN_PHONE_FOR_VERIFY')) define('ADMIN_PHONE_FOR_VERIFY', '+99363722023');
 
-$user = $_SESSION['user'] ?? null;
-$base = rtrim($config['base_url'] ?? '/mehanik', '/');
+// Путь к CSS
+$cssPath = htmlspecialchars($base . '/assets/css/header.css', ENT_QUOTES, 'UTF-8');
 ?>
-<header class="topbar">
-  <div class="brand">Mehanik</div>
+<link rel="stylesheet" href="<?= $cssPath ?>">
 
-  <?php if (!empty($user) && ($user['status'] ?? '') === 'active'): ?>
-    <div class="user-info">Вы вошли как: <b><?= htmlspecialchars($user['name']) ?></b></div>
-  <?php elseif (!empty($user) && ($user['status'] ?? '') === 'pending'): ?>
-    <div class="user-info"><b>ОЖИДАНИЕ ПОДТВЕРЖДЕНИЯ</b><br>
-      Для подтверждения отправьте с номера <strong><?= htmlspecialchars($user['phone']) ?></strong>
-      код <strong><?= htmlspecialchars($user['verify_code']) ?></strong> на <strong><?= ADMIN_PHONE_FOR_VERIFY ?></strong>
-    </div>
-  <?php elseif (!empty($user) && ($user['status'] ?? '') === 'rejected'): ?>
-    <div class="user-info"><b>Код подтверждения неверен.</b></div>
-  <?php endif; ?>
+<header class="topbar" role="banner">
+  <div class="wrap" style="display:flex;align-items:center;gap:12px;max-width:1100px;margin:0 auto;">
+    <a class="brand" href="<?= htmlspecialchars($base . '/index.php') ?>" style="font-weight:700;font-size:1.15rem;color:#fff;text-decoration:none;">Mehanik</a>
 
-  <nav>
-    <?php if (!empty($user)): ?>
-      <a href="<?= $base ?>/add-product.php">Добавить товар</a>
-      <a href="<?= $base ?>/my-products.php">Мои товары</a>
-      <a href="<?= $base ?>/chat.php">Поддержка</a>
-      <?php if (($user['role'] ?? '') === 'admin'): ?>
-        <a href="<?= $base ?>/admin/index.php">Админка</a>
+    <nav class="nav" aria-label="Главная навигация" style="display:flex;gap:10px;align-items:center;margin-left:16px;">
+      <?php if (!empty($user)): ?>
+        <a href="<?= htmlspecialchars($base . '/add-product.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Добавить товар</a>
+        <a href="<?= htmlspecialchars($base . '/my-products.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Мои товары</a>
+        <a href="<?= htmlspecialchars($base . '/chat.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Техподдержка чат</a>
+        <?php if (($user['role'] ?? '') === 'admin'): ?>
+          <a href="<?= htmlspecialchars($base . '/admin/index.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Админка</a>
+        <?php endif; ?>
+        <a href="<?= htmlspecialchars($base . '/logout.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Выйти</a>
+      <?php else: ?>
+        <a href="<?= htmlspecialchars($base . '/login.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Войти</a>
+        <a href="<?= htmlspecialchars($base . '/register.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Регистрация</a>
       <?php endif; ?>
-      <a href="<?= $base ?>/logout.php">Выйти</a>
-    <?php else: ?>
-      <a href="<?= $base ?>/login.php">Войти</a>
-      <a href="<?= $base ?>/register.php">Регистрация</a>
-    <?php endif; ?>
-  </nav>
+    </nav>
+
+    <div class="user-block" aria-live="polite" style="margin-left:auto;color:#fff;text-align:right;">
+      <?php if (!empty($user)): ?>
+        <?php $status = $user['status'] ?? 'pending'; ?>
+        <?php if ($status === 'pending'): ?>
+          <div style="font-weight:700;">ОЖИДАНИЕ ПОДТВЕРЖДЕНИЯ</div>
+          <div style="font-size:.9rem;">Отправьте с номера <strong><?= htmlspecialchars($user['phone']) ?></strong> код <strong><?= htmlspecialchars($user['verify_code'] ?? '-') ?></strong></div>
+          <div style="font-size:.85rem;margin-top:6px;">Отправьте SMS на номер <strong><?= ADMIN_PHONE_FOR_VERIFY ?></strong></div>
+        <?php elseif ($status === 'active' || $status === 'approved'): ?>
+          <div><strong><?= htmlspecialchars($user['name'] ?? $user['phone']) ?></strong></div>
+          <div style="font-size:.85rem;color:#e6f2ff;"><?= htmlspecialchars($user['phone'] ?? '') ?></div>
+        <?php elseif ($status === 'rejected'): ?>
+          <div style="color:#ffd2d2;font-weight:700;">Профиль отклонён</div>
+        <?php else: ?>
+          <div><?= htmlspecialchars($user['name'] ?? $user['phone']) ?></div>
+        <?php endif; ?>
+      <?php else: ?>
+        <div>Гость</div>
+      <?php endif; ?>
+    </div>
+  </div>
 </header>

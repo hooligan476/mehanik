@@ -15,11 +15,7 @@ $config = require __DIR__.'/../config.php';
 </head>
 <body>
 
-<?php
-// подключаем вынесённую шапку (header.php находится в корне проекта mehanik)
-require_once __DIR__ . '/header.php';
-
-?>
+<?php require_once __DIR__ . '/header.php';?>
 
 <main class="layout">
   <aside class="sidebar">

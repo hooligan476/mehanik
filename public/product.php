@@ -146,7 +146,7 @@ $rejectReason = $product['reject_reason'] ?? '';
             <div class="row"><strong>SKU:</strong> <?= htmlspecialchars($product['sku'] ?? '') ?></div>
             <div class="row"><strong>Производитель:</strong> <?= htmlspecialchars($product['manufacturer'] ?? '-') ?></div>
             <div class="row"><strong>Состояние:</strong> <?= htmlspecialchars($product['quality'] ?? '-') ?></div>
-            <div class="row"><strong>Рейтинг:</strong> <?= number_format((float)($product['rating'] ?? 0),1) ?>/10</div>
+            <div class="row"><strong>Качество:</strong> <?= number_format((float)($product['rating'] ?? 0),1) ?>/10</div>
             <div class="row"><strong>Годы выпуска:</strong> <?= ($product['year_from'] ?: '—') ?> — <?= ($product['year_to'] ?: '—') ?></div>
             <div class="row"><strong>Наличие:</strong> <?= (int)($product['availability'] ?? 0) ?> шт.</div>
             <div class="row price"><strong>Цена:</strong> <?= number_format((float)($product['price'] ?? 0), 2) ?> TMT</div>

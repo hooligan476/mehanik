@@ -66,13 +66,8 @@ th { background:#f4f4f4; }
 </style>
 </head>
 <body>
+    <?php require_once __DIR__.'/header.php'; ?>
 <h2>Админ — Пользователи</h2>
-
-<p>
-  <a href="<?= $basePublic ?>/index.php">Вернуться на сайт</a> |
-  <a href="<?= $basePublic ?>/admin/index.php">Админ главная</a> |
-  <a href="<?= $basePublic ?>/logout.php">Выйти</a>
-</p>
 
 <?php if ($msg): ?><div style="color:green;"><?=htmlspecialchars($msg)?></div><?php endif; ?>
 <?php if ($err): ?><div style="color:red;"><?=htmlspecialchars($err)?></div><?php endif; ?>
