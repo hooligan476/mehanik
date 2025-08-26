@@ -174,7 +174,7 @@ $rejectReason = $product['reject_reason'] ?? '';
           </div>
 
           <div style="margin-top:16px;">
-            <a class="btn" href="/mehanik/index.php">⬅ Назад к каталогу</a>
+            <a class="btn" href="/mehanik/public/index.php">⬅ Назад к каталогу</a>
           </div>
         </div>
       </div>

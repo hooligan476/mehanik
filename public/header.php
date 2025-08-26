@@ -88,8 +88,8 @@ $cssPath = htmlspecialchars($base . '/assets/css/header.css', ENT_QUOTES, 'UTF-8
         <?php $status = $user['status'] ?? 'pending'; ?>
         <?php if ($status === 'pending'): ?>
           <div style="font-weight:700;">ОЖИДАНИЕ ПОДТВЕРЖДЕНИЯ</div>
-          <div style="font-size:.9rem;">Отправьте с номера <strong><?= htmlspecialchars($user['phone']) ?></strong> код <strong><?= htmlspecialchars($user['verify_code'] ?? '-') ?></strong></div>
-          <div style="font-size:.85rem;margin-top:6px;">Отправьте SMS на номер <strong><?= ADMIN_PHONE_FOR_VERIFY ?></strong></div>
+          <div style="font-size:.9rem;">Отправьте SMS с номера <strong><?= htmlspecialchars($user['phone']) ?></strong> код <strong><?= htmlspecialchars($user['verify_code'] ?? '-') ?></strong></div>
+          <div style="font-size:.85rem;margin-top:6px;">на номер <strong><?= ADMIN_PHONE_FOR_VERIFY ?></strong></div>
         <?php elseif ($status === 'active' || $status === 'approved'): ?>
           <div><strong><?= htmlspecialchars($user['name'] ?? $user['phone']) ?></strong></div>
           <div style="font-size:.85rem;color:#e6f2ff;"><?= htmlspecialchars($user['phone'] ?? '') ?></div>
