@@ -40,13 +40,17 @@ $res = $stmt->get_result();
               <p class="card-text text-muted">Статус: <?= htmlspecialchars($p['status']) ?></p>
             </div>
             <div class="card-footer d-flex justify-content-between">
-              <a href="/mehanik/public/edit-product.php?id=<?= $p['id'] ?>" class="btn btn-sm btn-warning">✏ Редактировать</a>
+  <div>
+    <a href="/mehanik/public/product.php?id=<?= $p['id'] ?>" class="btn btn-sm btn-primary">👁 Просмотр</a>
+    <a href="/mehanik/public/edit-product.php?id=<?= $p['id'] ?>" class="btn btn-sm btn-warning">✏ Редактировать</a>
+  </div>
+  
+  <form method="post" action="/mehanik/api/delete-product.php" onsubmit="return confirm('Удалить товар?');" style="display:inline;">
+    <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
+    <button type="submit" class="btn btn-danger">Удалить</button>
+  </form>
+</div>
 
-              <form method="post" action="/mehanik/api/delete-product.php" onsubmit="return confirm('Удалить товар?');" style="display:inline;">
-                <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
-                <button type="submit" class="btn btn-danger">Удалить</button>
-              </form>
-            </div>
           </div>
         </div>
       <?php endwhile; ?>

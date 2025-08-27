@@ -16,7 +16,7 @@ $sql = "SELECT p.*, b.name AS brand_name, m.name AS model_name
         FROM products p
         LEFT JOIN brands b ON b.id = p.brand_id
         LEFT JOIN models m ON m.id = p.model_id
-        WHERE 1";
+        WHERE p.status = 'approved'";
 
 $params = [];
 $types = "";
@@ -27,16 +27,20 @@ if ($filters['year_from']) { $sql .= " AND p.year_from >= ?"; $params[] = $filte
 if ($filters['year_to']) { $sql .= " AND p.year_to <= ?"; $params[] = $filters['year_to']; $types .= "i"; }
 if ($filters['complex_part_id']) { $sql .= " AND p.complex_part_id = ?"; $params[] = $filters['complex_part_id']; $types .= "i"; }
 if ($filters['component_id']) { $sql .= " AND p.component_id = ?"; $params[] = $filters['component_id']; $types .= "i"; }
-if ($filters['search']) { $sql .= " AND (p.name LIKE ? OR p.sku LIKE ? OR p.id = ?)"; $params[] = "%".$filters['search']."%"; $params[] = "%".$filters['search']."%"; $params[] = (int)$filters['search']; $types .= "ssi"; }
+if ($filters['search']) { 
+    $sql .= " AND (p.name LIKE ? OR p.sku LIKE ? OR p.id = ?)";
+    $params[] = "%".$filters['search']."%"; 
+    $params[] = "%".$filters['search']."%"; 
+    $params[] = (int)$filters['search']; 
+    $types .= "ssi"; 
+}
 
 $sql .= " ORDER BY p.id DESC";
 
 $stmt = $mysqli->prepare($sql);
-
 if ($params) {
     $stmt->bind_param($types, ...$params);
 }
-
 $stmt->execute();
 $res = $stmt->get_result();
 $products = $res->fetch_all(MYSQLI_ASSOC);
