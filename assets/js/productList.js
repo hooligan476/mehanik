@@ -22,11 +22,11 @@
     const photo = buildPhotoUrl(p.photo);
     const imgHtml = `<div class="card-photo"><img src="${escapeHtml(photo)}" alt="${escapeHtml(p.name)}"></div>`;
     const price = (p.price || p.price === 0) ? Number(p.price).toFixed(2) : '0.00';
-    const availability = p.availability ?? 0;
     const brandModel = [p.brand_name, p.model_name].filter(Boolean).join(' ');
     const sku = p.sku ? ` · ${escapeHtml(p.sku)}` : '';
-    const desc = p.description ? escapeHtml(String(p.description)).slice(0, 140) + (p.description.length > 140 ? '…' : '') : '';
     const productUrl = `${base}/public/product.php?id=${encodeURIComponent(p.id)}`;
+
+    // УБРАЛИ ПОЛЕ ОПИСАНИЯ (pc-desc) как просил
 
     return `
       <article class="card product-card">
@@ -38,7 +38,6 @@
             <span class="pc-sku">ID: ${escapeHtml(String(p.id))}${sku}</span>
           </div>
           <div class="pc-sub">${escapeHtml(brandModel)}</div>
-          <p class="pc-desc">${desc}</p>
           <div class="pc-bottom">
             <a class="btn btn-sm" href="${productUrl}">Подробнее</a>
           </div>
@@ -117,16 +116,35 @@
     }
   }
 
+  // Функция-помощник: собирает непустые параметры из объекта filters
+  function buildQueryFromFilters(filters) {
+    const params = new URLSearchParams();
+    if (!filters) return params; // пустой
+    // если передали URLSearchParams — скопируем непустые
+    if (filters instanceof URLSearchParams) {
+      for (const [k, v] of filters.entries()) {
+        if (v !== null && v !== undefined && String(v).trim() !== '') params.append(k, v);
+      }
+      return params;
+    }
+    // объект
+    for (const k of Object.keys(filters)) {
+      const v = filters[k];
+      if (v !== null && v !== undefined && String(v).trim() !== '') {
+        params.append(k, String(v).trim());
+      }
+    }
+    return params;
+  }
+
   // Загружает товары + lookups. filters - объект {brand, model, ...} или URLSearchParams
   async function loadProducts(filters = {}) {
     const container = document.getElementById('products');
     if (!container) return null;
 
-    let qs;
-    if (filters instanceof URLSearchParams) qs = filters.toString();
-    else qs = new URLSearchParams(filters).toString();
-
     try {
+      const params = buildQueryFromFilters(filters);
+      const qs = params.toString();
       const url = '/mehanik/api/products.php' + (qs ? ('?' + qs) : '');
       const res = await fetch(url);
       if (!res.ok) throw new Error('network');
@@ -152,7 +170,7 @@
       return data;
     } catch (err) {
       console.error('Ошибка loadProducts:', err);
-      container.innerHTML = `<div class="muted">Ошибка загрузки товаров</div>`;
+      if (container) container.innerHTML = `<div class="muted">Ошибка загрузки товаров</div>`;
       return null;
     }
   }

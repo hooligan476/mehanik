@@ -54,6 +54,10 @@ $basePublic = '/mehanik/public';
 <title>Админ - Пользователи</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
+*{
+    margin:0px;
+    padding:0px;
+}
 table { border-collapse: collapse; width:100%; }
 th, td { border:1px solid #ddd; padding:8px; text-align:left; }
 th { background:#f4f4f4; }

@@ -11,30 +11,19 @@ $config = require __DIR__.'/../config.php';
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mehanik — Каталог</title>
 
-  <!-- header styles (navbar) -->
   <link rel="stylesheet" href="/mehanik/assets/css/header.css">
-  <!-- main site styles (cards, layout, sidebar) -->
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
 
   <style>
-    /* Доп. стили конкретно для каталога (если нет в style.css) */
     .layout { display: grid; grid-template-columns: 260px 1fr; gap: 20px; padding: 18px; max-width:1200px; margin: 0 auto; }
     .sidebar { background:#fafafa; padding:14px; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,.04); }
     .sidebar h3 { margin-top:0; }
-    .sidebar label { display:block; margin-top:10px; font-weight:600; font-size:0.95rem; }
+    .sidebar label { display:block; margin-top:10px; font-weight:600; font-size:.95rem; }
     .sidebar select, .sidebar input { width:100%; padding:8px 10px; margin-top:6px; border:1px solid #ddd; border-radius:6px; box-sizing:border-box; }
     .products { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px,1fr)); gap:16px; }
     .muted { color:#6b7280; padding: 8px; }
-
-    /* если карточки ещё не определены в style.css — базовые правила */
-    .product-card { background:#fff; border-radius:10px; overflow:hidden; box-shadow:0 6px 18px rgba(0,0,0,.05); display:flex; flex-direction:column; }
-    .product-card .card-photo { height:160px; display:flex; align-items:center; justify-content:center; background:#f6f7fb; }
-    .product-card .card-photo img { max-width:100%; max-height:100%; object-fit:contain; }
-    .product-card .card-body { padding:12px; display:flex; flex-direction:column; gap:8px; flex:1; }
-    .pc-title { margin:0; font-size:1rem; font-weight:700; }
-    .pc-meta { display:flex; justify-content:space-between; font-weight:700; }
-    .pc-desc { color:#374151; font-size:0.9rem; margin:8px 0 0; flex:1; }
-    .btn { display:inline-block; background:#0b57a4; color:#fff; padding:8px 12px; border-radius:8px; text-decoration:none; font-weight:600; }
+    .btn { display:inline-block; background:#0b57a4; color:#fff; padding:8px 12px; border-radius:8px; text-decoration:none; font-weight:600; cursor:pointer; border:0; }
+    .btn-ghost { background:#6b7280; }
     @media (max-width:900px) {
       .layout { grid-template-columns: 1fr; padding:12px; }
       .sidebar { order:2; }
@@ -72,8 +61,8 @@ $config = require __DIR__.'/../config.php';
     <input type="text" id="search" name="search" placeholder="например: 123 или тормоза">
 
     <div style="margin-top:10px; display:flex; gap:8px;">
-      <button id="clearFilters" class="btn" style="background:#6b7280;">Сбросить</button>
-      <button id="applyFilters" class="btn" style="background:#0b57a4;">Применить</button>
+      <button id="clearFilters" class="btn btn-ghost">Сбросить</button>
+      <!-- Кнопка "Применить" убрана — фильтры применяются автоматически -->
     </div>
   </aside>
 
@@ -85,64 +74,100 @@ $config = require __DIR__.'/../config.php';
 <!-- Скрипты: productList.js должен быть подключён первым -->
 <script src="/mehanik/assets/js/productList.js"></script>
 
-<!-- Заборная обёртка для совместимости: main.js ожидает функцию loadLookups() -->
 <script>
-  // Если определён productList.loadProducts — используем его для подгрузки lookups
-  window.loadLookups = async function() {
-    if (window.productList && typeof window.productList.loadProducts === 'function') {
-      // вызов без параметров вернёт lookups и отобразит первые товары
-      return await window.productList.loadProducts();
-    }
-    return null;
-  };
+/* Автозагрузка lookups и автоприменение фильтров
+   Работает либо через runFilter() (если он определён в main.js),
+   либо через productList.loadProducts(filters).
+*/
+(function(){
+  // простая debounce реализация, не зависим от main.js
+  function debounce(fn, ms = 300) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(()=>fn(...args), ms); };
+  }
 
-  // Вспомогательная функция: собирает текущие фильтры из DOM и возвращает объект
-  window.collectFilters = function() {
-    const get = id => document.getElementById(id) ? document.getElementById(id).value : '';
-    return {
-      brand: get('brand'),
-      model: get('model'),
-      year_from: get('year_from'),
-      year_to: get('year_to'),
-      complex_part: get('complex_part'),
-      component: get('component'),
-      q: get('search')
+  // собирает только непустые фильтры
+  function collectFilters() {
+    const getVal = id => {
+      const el = document.getElementById(id);
+      return el ? String(el.value).trim() : '';
     };
-  };
+    return {
+      brand: getVal('brand'),
+      model: getVal('model'),
+      year_from: getVal('year_from'),
+      year_to: getVal('year_to'),
+      complex_part: getVal('complex_part'),
+      component: getVal('component'),
+      q: getVal('search')
+    };
+  }
 
-  // Подключаем кнопки Clear/Apply, чтобы пользователю удобнее было
-  document.addEventListener('DOMContentLoaded', () => {
+  // применить фильтр: предпочитаем runFilter, иначе productList.loadProducts
+  async function applyFilters() {
+    const filters = collectFilters();
+    if (typeof runFilter === 'function') {
+      // runFilter ожидает данные из DOM сам — просто вызовем
+      try { await runFilter(); } catch(e){ console.warn('runFilter error', e); }
+    } else if (window.productList && typeof productList.loadProducts === 'function') {
+      try { await productList.loadProducts(filters); } catch(e){ console.warn('productList.loadProducts error', e); }
+    } else {
+      console.warn('Нет runFilter и нет productList.loadProducts');
+    }
+  }
+
+  // инициализация при загрузке
+  document.addEventListener('DOMContentLoaded', async function(){
+    // 1) Сначала попытаемся вызвать loadLookups() (если определена) — она подгружает lookups и товары
+    if (typeof loadLookups === 'function') {
+      try {
+        await loadLookups();
+      } catch (e) {
+        console.warn('loadLookups failed', e);
+      }
+    } else if (window.productList && typeof productList.loadProducts === 'function') {
+      // вызываем без фильтров — покажет все товары и подгрузит lookups
+      try { await productList.loadProducts(); } catch(e){ console.warn('productList.loadProducts() init failed', e); }
+    }
+
+    // 2) Затем явный вызов applyFilters чтобы убедиться, что отображение синхронизировано
+    await applyFilters();
+
+    // 3) навешиваем listeners — изменения селектов и полей будут автоматически применять фильтры
+    const idsChange = ['brand','model','year_from','year_to','complex_part','component'];
+    idsChange.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('change', () => {
+        applyFilters();
+      });
+    });
+
+    // Поиск с debounce
+    const search = document.getElementById('search');
+    if (search) {
+      search.addEventListener('input', debounce(()=>applyFilters(), 300));
+    }
+
+    // Сброс фильтров
     const clearBtn = document.getElementById('clearFilters');
-    const applyBtn = document.getElementById('applyFilters');
-
     if (clearBtn) {
       clearBtn.addEventListener('click', (e) => {
         e.preventDefault();
         ['brand','model','year_from','year_to','complex_part','component','search'].forEach(id=>{
           const el = document.getElementById(id);
-          if (el) {
-            if (el.tagName.toLowerCase() === 'select') el.selectedIndex = 0;
-            else el.value = '';
-          }
+          if (!el) return;
+          if (el.tagName.toLowerCase() === 'select') el.selectedIndex = 0;
+          else el.value = '';
         });
-        // триггерим фильтр
-        if (typeof runFilter === 'function') runFilter();
-        else if (window.productList && window.productList.loadProducts) productList.loadProducts(collectFilters());
-      });
-    }
-
-    if (applyBtn) {
-      applyBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        if (typeof runFilter === 'function') runFilter();
-        else if (window.productList && window.productList.loadProducts) productList.loadProducts(collectFilters());
+        applyFilters();
       });
     }
   });
+})();
 </script>
 
-<!-- main.js (в нём определён runFilter() и обработчики) -->
- 
+<!-- main.js (он установит свои слушатели и runFilter, если есть) -->
 <script src="/mehanik/assets/js/main.js"></script>
 </body>
 </html>
