@@ -1,4 +1,6 @@
-// /mehanik/assets/js/chat.js
+// assets/js/chat.js
+// Лёгкий, надёжный polling-клиент для /mehanik/api/chat.php
+
 (function () {
   'use strict';
 
@@ -6,138 +8,149 @@
   const win = document.getElementById('chatWindow');
   const form = document.getElementById('chatForm');
   const input = document.getElementById('message');
-  const POLL_MS = 3000;
+  const sendBtn = document.getElementById('sendBtn') || (form ? form.querySelector('button[type="submit"]') : null);
+  const closeBtn = document.getElementById('closeChatBtn');
+  const openBtn = document.getElementById('openChatBtn');
 
-  // session keys
-  const KEY_HTML = 'mehanik_chat_html';
-  const KEY_LAST = 'mehanik_chat_last_id';
-
-  // state
-  let lastId = parseInt(sessionStorage.getItem(KEY_LAST) || '0', 10) || 0;
-  let sending = false;
-  let poller = null;
+  let lastId = 0;
+  let polling = null;
+  const POLL_MS = 2500;
 
   function esc(s) {
     return String(s || '').replace(/[&<>"']/g, function (m) {
-      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]);
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m];
     });
   }
 
-  function saveCache() {
-    try {
-      sessionStorage.setItem(KEY_HTML, win.innerHTML);
-      sessionStorage.setItem(KEY_LAST, String(lastId || 0));
-    } catch (e) {
-      // ignore storage errors
-      // console.warn('sessionStorage set error', e);
-    }
-  }
-
-  function formatMsgHtml(m) {
-    const senderClass = esc(m.sender || 'user');
-    const content = esc(m.content || '');
+  function fmtMsg(m) {
+    const cls = (m.sender === 'user') ? 'user' : 'support';
     const time = esc(m.created_at || '');
-    return `<div class="msg ${senderClass}"><b>${senderClass}:</b> ${content} <span>${time}</span></div>`;
+    const content = esc(m.content || '');
+    return `<div class="msg ${cls}"><div class="bubble">${content}<div class="meta">${time}</div></div></div>`;
   }
 
-  function appendMessage(m) {
-    if (!m || typeof m.id === 'undefined') return;
-    if (Number(m.id) <= Number(lastId)) return; // уже есть
-    // добавляем
-    win.insertAdjacentHTML('beforeend', formatMsgHtml(m));
-    lastId = Number(m.id);
-    saveCache();
-    // автоскрол в конец
-    win.scrollTop = win.scrollHeight;
-  }
-
-  async function loadAll() {
+  async function load() {
     try {
-      const res = await fetch(API, { method: 'GET', credentials: 'same-origin' });
+      const res = await fetch(API + '?last_id=' + encodeURIComponent(lastId), { method: 'GET', credentials: 'same-origin' });
       if (!res.ok) throw new Error('network');
       const j = await res.json();
-      if (!j || !Array.isArray(j.messages)) return;
-      // если в sessionStorage есть HTML — используем его немедленно, но затем применим дельту
-      // На случай первой загрузки, если нет кеша — рендерим всё
-      if (!sessionStorage.getItem(KEY_HTML)) {
-        win.innerHTML = j.messages.map(formatMsgHtml).join('');
-        if (j.messages.length) lastId = Number(j.messages[j.messages.length - 1].id || lastId);
-        saveCache();
-        win.scrollTop = win.scrollHeight;
-        return;
+      if (!j.ok) {
+        // backward compatibility: some endpoints may not set ok, handle like previous script
       }
-      // иначе пройдёмся по сообщениям и добавим только новые (id > lastId)
-      j.messages.forEach(m => appendMessage(m));
+      if (Array.isArray(j.messages) && j.messages.length > 0) {
+        // append new messages
+        j.messages.forEach(m => {
+          // skip duplicates
+          if (!m.id || Number(m.id) <= lastId) return;
+          win.insertAdjacentHTML('beforeend', fmtMsg(m));
+          lastId = Number(m.id);
+        });
+        win.scrollTop = win.scrollHeight;
+      }
     } catch (e) {
-      console.error('chat load error', e);
+      // console.warn('chat load error', e);
     }
   }
 
   async function sendMessage(text) {
-    if (!text || sending) return;
-    sending = true;
+    if (!text) return;
+    if (sendBtn) sendBtn.disabled = true;
     try {
       const fd = new FormData();
       fd.append('action', 'send');
       fd.append('content', text);
       const res = await fetch(API, { method: 'POST', body: fd, credentials: 'same-origin' });
       if (!res.ok) throw new Error('network');
-      // мы не требуем от API полноценного ответа, но загрузим новые сообщения после отправки
-      await loadAll();
+      const j = await res.json();
+      if (j.ok) {
+        // загрузим новые сообщения (сервер вернёт отправленное сообщение)
+        await load();
+      } else {
+        alert('Ошибка отправки: ' + (j.error || 'unknown'));
+      }
     } catch (e) {
-      console.error('sendMessage error', e);
-      alert('Ошибка отправки сообщения (проверьте соединение).');
+      alert('Ошибка сети при отправке сообщения');
+      console.error(e);
     } finally {
-      sending = false;
+      if (sendBtn) sendBtn.disabled = false;
     }
   }
 
-  // инициализация UI, handlers
-  function initUI() {
-    // попробуем восстановить HTML из sessionStorage для мгновенного отображения
+  async function closeChatServer() {
     try {
-      const cached = sessionStorage.getItem(KEY_HTML);
-      if (cached && win.innerHTML.trim() === '') {
-        win.innerHTML = cached;
-        // можно попытаться восстановить lastId тоже
-        const sLast = sessionStorage.getItem(KEY_LAST);
-        if (sLast) lastId = parseInt(sLast, 10) || lastId;
-        // прокручиваем вниз
-        win.scrollTop = win.scrollHeight;
-      }
+      const fd = new FormData();
+      fd.append('action', 'close');
+      const res = await fetch(API, { method: 'POST', body: fd, credentials: 'same-origin' });
+      if (!res.ok) throw new Error('network');
+      const j = await res.json();
+      return j;
     } catch (e) {
-      // ignore
-    }
-
-    if (form) {
-      form.addEventListener('submit', async (ev) => {
-        ev.preventDefault();
-        const v = input.value.trim();
-        if (!v) return;
-        input.value = '';
-        input.focus();
-        await sendMessage(v);
-      });
+      console.error('close chat error', e);
+      return { ok: false, error: 'network' };
     }
   }
 
   function startPolling() {
-    if (poller) clearInterval(poller);
-    poller = setInterval(loadAll, POLL_MS);
+    if (polling) clearInterval(polling);
+    polling = setInterval(load, POLL_MS);
   }
 
-  // Run on DOM ready
-  document.addEventListener('DOMContentLoaded', () => {
-    initUI();
-    // ensure immediate load to sync with server (and fill missed messages)
-    loadAll();
-    startPolling();
-  }, false);
+  function stopPolling() {
+    if (polling) clearInterval(polling);
+    polling = null;
+  }
 
-  // expose helpers for debugging if needed
-  window.__mehanik_chat = {
-    reload: loadAll,
-    send: sendMessage,
-    clearCache: function(){ sessionStorage.removeItem(KEY_HTML); sessionStorage.removeItem(KEY_LAST); lastId = 0; win.innerHTML=''; }
-  };
+  // UI handlers
+  document.addEventListener('DOMContentLoaded', function () {
+    if (!win) return;
+
+    // initial load
+    lastId = 0;
+    win.innerHTML = ''; // clean
+    load().then(() => {
+      win.scrollTop = win.scrollHeight;
+    });
+    startPolling();
+
+    if (form) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        const v = input.value.trim();
+        if (!v) return;
+        input.value = '';
+        sendMessage(v);
+        input.focus();
+      });
+    }
+
+    if (closeBtn) {
+      closeBtn.addEventListener('click', async function () {
+        const goHome = confirm('Закрыть чат?\n\nОК — перейти на главную\nОтмена — скрыть чат на этой странице');
+        if (goHome) {
+          // Закрыть чат серверно, затем перейти на главную
+          await closeChatServer();
+          window.location.href = '/mehanik/public/index.php';
+        } else {
+          // просто скрываем контейнер и показываем кнопку "Открыть чат"
+          const container = document.getElementById('chatContainer');
+          if (container) container.style.display = 'none';
+          if (openBtn) openBtn.style.display = 'block';
+          stopPolling();
+        }
+      });
+    }
+
+    if (openBtn) {
+      openBtn.addEventListener('click', function () {
+        const container = document.getElementById('chatContainer');
+        if (container) container.style.display = 'flex';
+        openBtn.style.display = 'none';
+        // reload messages and resume polling
+        lastId = 0;
+        win.innerHTML = '';
+        load();
+        startPolling();
+      });
+    }
+  }, false);
 })();

@@ -44,6 +44,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <meta charset="utf-8">
   <title>Админка — Чаты</title>
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
+  <style>
+    .chat-table {
+        width: 95%;
+        margin: 20px auto;
+        border-collapse: collapse;
+        background: #fff;
+        box-shadow: 0 2px 6px rgba(0,0,0,.1);
+    }
+    .chat-table th, .chat-table td {
+        padding: 10px 14px;
+        border-bottom: 1px solid #eee;
+        text-align: left;
+    }
+    .chat-table th {
+        background: #f9f9f9;
+    }
+    .btn {
+        padding: 6px 12px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        margin: 2px;
+    }
+    .btn-open { background:#3498db; color:#fff; }
+    .btn-close { background:#e67e22; color:#fff; }
+    .btn-delete { background:#e74c3c; color:#fff; }
+    .chat-box {
+        width: 95%;
+        margin: 20px auto;
+        background:#fff;
+        border-radius:8px;
+        box-shadow: 0 2px 6px rgba(0,0,0,.1);
+        padding:16px;
+    }
+    .message {
+        padding:8px 12px;
+        margin:6px 0;
+        border-radius:6px;
+    }
+    .message.support { background:#ecf5ff; }
+    .message.user { background:#fef9e7; }
+    .message small { color:#888; font-size:12px; }
+    .reply-form {
+        margin-top:12px;
+        display:flex;
+        gap:8px;
+    }
+    .reply-form input[type=text] {
+        flex:1;
+        padding:8px;
+        border-radius:6px;
+        border:1px solid #ccc;
+    }
+    .reply-form button {
+        padding:8px 14px;
+        border:none;
+        border-radius:6px;
+        background:#2ecc71;
+        color:#fff;
+        cursor:pointer;
+    }
+  </style>
 </head>
 <body>
 <?php require_once __DIR__.'/header.php'; ?>
@@ -51,7 +113,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <h2 style="padding:16px;">Чаты поддержки</h2>
 
 <?php
-// исправленный запрос: вместо email используем phone
 $ch = $mysqli->query("
     SELECT c.id, u.phone, c.status, c.created_at 
     FROM chats c 
@@ -59,7 +120,7 @@ $ch = $mysqli->query("
     ORDER BY c.id DESC
 ");
 ?>
-<table class="table">
+<table class="chat-table">
   <tr>
     <th>ID</th><th>Пользователь</th><th>Статус</th><th>Создан</th><th>Действие</th>
   </tr>
@@ -72,15 +133,15 @@ $ch = $mysqli->query("
       <td>
         <form method="post" style="display:inline">
           <input type="hidden" name="chat_id" value="<?= $row['id'] ?>">
-          <button name="reply" value="1">Открыть</button>
+          <button class="btn btn-open" name="reply" value="1">Открыть</button>
         </form>
         <form method="post" style="display:inline">
           <input type="hidden" name="chat_id" value="<?= $row['id'] ?>">
-          <button name="close" value="1">Закрыть</button>
+          <button class="btn btn-close" name="close" value="1">Закрыть</button>
         </form>
         <form method="post" style="display:inline" onsubmit="return confirm('Удалить чат вместе с сообщениями?');">
           <input type="hidden" name="chat_id" value="<?= $row['id'] ?>">
-          <button name="delete" value="1">Удалить</button>
+          <button class="btn btn-delete" name="delete" value="1">Удалить</button>
         </form>
       </td>
     </tr>
@@ -88,20 +149,23 @@ $ch = $mysqli->query("
 </table>
 
 <?php
-// просмотр чата (через GET ?reply=ID)
+// просмотр чата
 if (!empty($_GET['reply'])) {
     $chat_id = (int)$_GET['reply'];
-    echo '<h3 style="padding:16px;">Чат #'.$chat_id.'</h3>';
-    echo '<div style="padding:16px;">';
+    echo '<div class="chat-box">';
+    echo '<h3>Чат #'.$chat_id.'</h3>';
     $msgs = $mysqli->query("SELECT sender, content, created_at FROM messages WHERE chat_id=$chat_id ORDER BY id ASC");
     while($m = $msgs->fetch_assoc()){
-        echo '<div><b>'.htmlspecialchars($m['sender']).':</b> '.htmlspecialchars($m['content']).' <small>'.$m['created_at'].'</small></div>';
+        $cls = $m['sender']==='support' ? 'support' : 'user';
+        echo '<div class="message '.$cls.'"><b>'.htmlspecialchars($m['sender']).':</b> '
+            .htmlspecialchars($m['content']).'<br><small>'.$m['created_at'].'</small></div>';
     }
-    echo '<form method="post" style="margin-top:10px;">
+    echo '<form method="post" class="reply-form">
             <input type="hidden" name="chat_id" value="'.$chat_id.'">
             <input type="text" name="content" placeholder="Ответ..." required>
             <button name="send" value="1">Отправить</button>
-          </form></div>';
+          </form>';
+    echo '</div>';
 }
 ?>
 

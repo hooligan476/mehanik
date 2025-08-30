@@ -10,8 +10,62 @@ require_once __DIR__.'/../../db.php';
   <title>Админка — Бренды/Модели/Части</title>
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
   <style>
-    form.inline { display:inline; margin-left:5px; }
-    ul { margin:5px 0 10px 20px; }
+    body { background:#f5f6fa; font-family:Arial,sans-serif; }
+    .container {
+        max-width:1100px;
+        margin:20px auto;
+        background:#fff;
+        border-radius:10px;
+        padding:20px 30px;
+        box-shadow:0 2px 6px rgba(0,0,0,.1);
+    }
+    h2 { margin-top:25px; margin-bottom:15px; }
+    form.inline { display:inline-flex; gap:6px; margin:3px 0; }
+    input[type=text] {
+        padding:6px 10px;
+        border:1px solid #ccc;
+        border-radius:6px;
+    }
+    button {
+        padding:6px 12px;
+        border:none;
+        border-radius:6px;
+        cursor:pointer;
+    }
+    button[value=add_brand],
+    button[value=add_part],
+    button[value=add_model],
+    button[value=add_component] {
+        background:#2ecc71; color:#fff;
+    }
+    button[value=edit_brand],
+    button[value=edit_part],
+    button[value=edit_model],
+    button[value=edit_component] {
+        background:#3498db; color:#fff;
+    }
+    button[value=delete_brand],
+    button[value=delete_part],
+    button[value=delete_model],
+    button[value=delete_component] {
+        background:#e74c3c; color:#fff;
+    }
+    ul {
+        list-style:none;
+        margin:8px 0 12px 15px;
+        padding:0;
+    }
+    ul li {
+        margin:6px 0;
+        padding:8px;
+        background:#fafafa;
+        border:1px solid #eee;
+        border-radius:6px;
+    }
+    ul li ul li {
+        background:#fff;
+        margin:4px 0;
+    }
   </style>
 </head>
 <body>
@@ -20,7 +74,7 @@ require_once __DIR__.'/../../db.php';
 
   <h2>Бренды и модели</h2>
   <!-- Форма добавления бренда -->
-  <form method="post">
+  <form method="post" style="margin-bottom:10px; display:flex; gap:8px;">
     <input type="text" name="brand" placeholder="Новый бренд">
     <button name="action" value="add_brand">Добавить бренд</button>
   </form>
@@ -88,7 +142,7 @@ require_once __DIR__.'/../../db.php';
           $stmt->bind_param('i', $_POST['id']);
           $stmt->execute();
       }
-      header("Location: cars.php"); // чтобы не было повторной отправки
+      header("Location: cars.php");
       exit;
   }
 
@@ -131,8 +185,7 @@ require_once __DIR__.'/../../db.php';
   </ul>
 
   <h2>Комплексные части</h2>
-  <!-- Форма добавления complex_part -->
-  <form method="post">
+  <form method="post" style="margin-bottom:10px; display:flex; gap:8px;">
     <input type="text" name="part" placeholder="Новая часть">
     <button name="action" value="add_part">Добавить часть</button>
   </form>
