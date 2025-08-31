@@ -83,27 +83,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $targetFile = $uploadDir . $fileName;
 
                 if (move_uploaded_file($file['tmp_name'], $targetFile)) {
-                    // удаляем старый файл если он находится в папке uploads/products
+                    // удаляем старый файл
                     if (!empty($photoPath)) {
-                        // пример в БД хранится либо '/mehanik/uploads/products/xxx' либо относительное имя
                         $old = $photoPath;
-                        // нормализуем путь к файлу
                         if (strpos($old, $publicPrefix) === 0) {
                             $oldRel = substr($old, strlen($publicPrefix));
                             $oldAbs = $uploadDir . $oldRel;
                         } elseif (strpos($old, '/') === 0) {
-                            // абсолютный путь начиная с корня сайта — попробуем убрать ведущий слэш и найти
                             $oldAbs = __DIR__ . '/..' . $old;
                         } else {
-                            // может быть имя файла
                             $oldAbs = $uploadDir . $old;
                         }
                         if (!empty($oldAbs) && is_file($oldAbs)) {
                             @unlink($oldAbs);
                         }
                     }
-
-                    // записываем публичный путь
                     $photoPath = $publicPrefix . $fileName;
                 } else {
                     $errors[] = 'Не удалось сохранить файл на сервере.';
@@ -112,27 +106,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Если нет ошибок — обновляем запись
+    // Если нет ошибок — обновляем запись + сбрасываем статус на pending
     if (empty($errors)) {
         $update = $mysqli->prepare("
             UPDATE products 
-            SET name = ?, manufacturer = ?, quality = ?, rating = ?, availability = ?, price = ?, description = ?, photo = ?
+            SET name = ?, manufacturer = ?, quality = ?, rating = ?, availability = ?, price = ?, description = ?, photo = ?, status = 'pending'
             WHERE id = ?
         ");
         if (!$update) {
             $errors[] = 'Ошибка подготовки запроса: ' . $mysqli->error;
         } else {
-            // Типы: s s s d i d s s i  => "sssdidssi"
-            $r = (float)$rating;
-            $a = (int)$availability;
-            $p = (float)$price;
-            $update->bind_param("sssdidssi",
+            $update->bind_param(
+                "sssdidssi",
                 $name,
                 $manufacturer,
                 $quality,
-                $r,
-                $a,
-                $p,
+                $rating,
+                $availability,
+                $price,
                 $description,
                 $photoPath,
                 $id

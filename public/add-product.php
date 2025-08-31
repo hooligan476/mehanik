@@ -120,7 +120,12 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
       </select>
 
       <label for="p_description">Описание</label>
-      <textarea id="p_description" name="description" placeholder="Описание"></textarea>
+      <textarea id="p_description" name="description" placeholder="Описание товара
+Например:
+Колодки хорошие
+Подходит на любую модель тойоты,
+замена бесплатная.
+      "></textarea>
 
       <label for="p_photo">Фото</label>
       <input id="p_photo" type="file" name="photo" accept="image/*">
