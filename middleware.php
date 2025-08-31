@@ -7,6 +7,50 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 /**
+ * Попытка обновить last_seen для текущего пользователя.
+ * Не ломает выполнение, если база недоступна или файл db.php отсутствует.
+ * Поддерживаются как mysqli ($mysqli), так и PDO ($pdo).
+ */
+if (!empty($_SESSION['user']['id'])) {
+    $userId = (int)$_SESSION['user']['id'];
+
+    // Путь к db.php (обычно находится рядом с middleware.php)
+    $dbFile = __DIR__ . '/db.php';
+
+    if (file_exists($dbFile)) {
+        // require_once — не перезагрузит файл, если он уже был подключён ранее
+        try {
+            require_once $dbFile;
+        } catch (Throwable $e) {
+            // Подавляем любые ошибки при подключении db.php, чтобы middleware не ломался
+        }
+
+        // Если в проекте используется mysqli (обычно $mysqli в db.php)
+        if (isset($mysqli) && $mysqli instanceof mysqli) {
+            try {
+                $stmt = $mysqli->prepare("UPDATE users SET last_seen = NOW() WHERE id = ?");
+                if ($stmt) {
+                    $stmt->bind_param('i', $userId);
+                    $stmt->execute();
+                    $stmt->close();
+                }
+            } catch (Throwable $e) {
+                // подавляем ошибки — важнее не прерывать выполнение приложения
+            }
+        }
+        // Если в проекте используется PDO (в редких случаях)
+        elseif (isset($pdo) && $pdo instanceof PDO) {
+            try {
+                $st = $pdo->prepare("UPDATE users SET last_seen = NOW() WHERE id = ?");
+                $st->execute([$userId]);
+            } catch (Throwable $e) {
+                // подавляем ошибки
+            }
+        }
+    }
+}
+
+/**
  * Проверка, что пользователь залогинен.
  * Если не залогинен — редирект на страницу логина.
  */
