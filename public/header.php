@@ -1,5 +1,5 @@
 <?php
-// public/header.php — простой хедер без поиска и бургер-меню
+// public/header.php — хедер с кнопкой "Автосервисы / Услуги"
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 
@@ -69,6 +69,9 @@ $cssPath = htmlspecialchars($base . '/assets/css/header.css', ENT_QUOTES, 'UTF-8
     <a class="brand" href="<?= htmlspecialchars($base . '/index.php') ?>" style="font-weight:700;font-size:1.15rem;color:#fff;text-decoration:none;">Mehanik</a>
 
     <nav class="nav" aria-label="Главная навигация" style="display:flex;gap:10px;align-items:center;margin-left:16px;">
+      <!-- Кнопка для автосервисов -->
+      <a href="<?= htmlspecialchars($base . '/services.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Автосервисы / Услуги</a>
+
       <?php if (!empty($user)): ?>
         <a href="<?= htmlspecialchars($base . '/add-product.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Добавить товар</a>
         <a href="<?= htmlspecialchars($base . '/my-products.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Мои товары</a>
