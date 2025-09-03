@@ -41,8 +41,11 @@ $error = $_GET['err'] ?? '';
     .prices{margin-top:12px;border:1px dashed var(--muted);padding:14px;border-radius:10px;background:#fbfcfe}
     .prices-rows{display:flex;flex-direction:column;gap:10px;margin-top:12px}
     .price-row{display:flex;gap:10px;align-items:center}
-    .price-row .p-name{flex:1;padding:10px;border-radius:10px;border:1px solid var(--muted);background:#fff}
-    .price-row .p-price{width:160px;padding:10px;border-radius:10px;border:1px solid var(--muted);background:#fff;text-align:right}
+    .price-row .p-name{flex:1;padding:10px;border-radius:10px;border:1px solid var(--muted);background:#fff;min-height:40px;display:flex;align-items:center}
+    .price-row .p-price{width:160px;padding:10px;border-radius:10px;border:1px solid var(--muted);background:#fff;text-align:right;min-height:40px;display:flex;align-items:center;justify-content:flex-end}
+    .p-actions{display:flex;gap:8px}
+    .small-btn{padding:8px 10px;border-radius:10px;border:0;cursor:pointer;font-weight:700;background:#eef6ff;color:var(--accent)}
+    .small-btn.del{background:#fff5f5;color:#b91c1c;border:1px solid #ffd6d6}
     .form-foot{margin-top:18px;display:flex;gap:8px;align-items:center;justify-content:flex-end}
     @media(max-width:760px){.row{flex-direction:column}.price-row{flex-direction:column;align-items:stretch}.price-row .p-price{width:100%;text-align:left}.form-foot{flex-direction:column;align-items:stretch}}
   </style>
@@ -133,46 +136,184 @@ map.on('click', function(e){
   document.getElementById('longitude').value = e.latlng.lng;
 });
 
-/* Prices widget (как раньше) */
+/* Prices widget */
 (function(){
   const rows = document.getElementById('pricesRows');
   const addBtn = document.getElementById('addPriceBtn');
 
-  function createRow(n='', p=''){
-    const r=document.createElement('div'); r.className='price-row';
-    const name=document.createElement('div'); name.className='p-name'; name.textContent=n||'—';
-    const price=document.createElement('div'); price.className='p-price'; price.textContent=p||'—';
-    const actions=document.createElement('div'); actions.className='p-actions';
-    const e=document.createElement('button'); e.type='button'; e.className='small-btn edit'; e.textContent='Исправить';
-    const d=document.createElement('button'); d.type='button'; d.className='small-btn delete'; d.textContent='Удалить';
-    actions.appendChild(e); actions.appendChild(d);
-    r.appendChild(name); r.appendChild(price); r.appendChild(actions);
-    const hin=document.createElement('input'); hin.type='hidden'; hin.name='prices[name][]'; hin.value=n;
-    const hip=document.createElement('input'); hip.type='hidden'; hip.name='prices[price][]'; hip.value=p;
-    r.appendChild(hin); r.appendChild(hip);
+  // Create DOM for a row. If editable===true, show inputs immediately.
+  function createRow(n = '', p = '', editable = false) {
+    const r = document.createElement('div');
+    r.className = 'price-row';
 
-    e.onclick = function(){
-      if(r.dataset.editing==='1') return;
-      r.dataset.editing='1';
-      const ni=document.createElement('input'); ni.type='text'; ni.className='p-name'; ni.value=hin.value; ni.style.padding='10px';
-      const pi=document.createElement('input'); pi.type='text'; pi.className='p-price'; pi.value=hip.value; pi.style.padding='10px';
-      r.replaceChild(ni, name); r.replaceChild(pi, price);
-      e.textContent='Сохранить'; d.textContent='Отмена';
-      e.onclick = function(){
-        if(ni.value.trim()===''){ alert('Введите название услуги'); ni.focus(); return; }
-        name.textContent = ni.value; price.textContent = pi.value || '—';
-        hin.value = ni.value; hip.value = pi.value;
-        r.replaceChild(name, ni); r.replaceChild(price, pi);
-        e.textContent='Исправить'; d.textContent='Удалить'; r.dataset.editing='0';
-        e.onclick = null; d.onclick = null;
+    // containers for display (either divs or inputs)
+    const nameWrap = document.createElement('div');
+    nameWrap.className = 'p-name';
+    const priceWrap = document.createElement('div');
+    priceWrap.className = 'p-price';
+
+    // hidden inputs to be submitted
+    const hin = document.createElement('input');
+    hin.type = 'hidden';
+    hin.name = 'prices[name][]';
+    hin.value = n;
+
+    const hip = document.createElement('input');
+    hip.type = 'hidden';
+    hip.name = 'prices[price][]';
+    hip.value = p;
+
+    // action buttons
+    const actions = document.createElement('div');
+    actions.className = 'p-actions';
+    const btnEdit = document.createElement('button');
+    btnEdit.type = 'button';
+    btnEdit.className = 'small-btn';
+    btnEdit.textContent = 'Исправить';
+    const btnDel = document.createElement('button');
+    btnDel.type = 'button';
+    btnDel.className = 'small-btn del';
+    btnDel.textContent = 'Удалить';
+    actions.appendChild(btnEdit);
+    actions.appendChild(btnDel);
+
+    // helper to make inputs
+    function makeInputs(initialName, initialPrice) {
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'p-name';
+      nameInput.placeholder = 'Услуга';
+      nameInput.value = initialName || '';
+
+      const priceInput = document.createElement('input');
+      priceInput.type = 'text';
+      priceInput.className = 'p-price';
+      priceInput.placeholder = 'Цена';
+      priceInput.value = initialPrice || '';
+
+      return { nameInput, priceInput };
+    }
+
+    // default non-edit view
+    const nameText = document.createElement('div');
+    nameText.textContent = n || '—';
+    const priceText = document.createElement('div');
+    priceText.textContent = p || '—';
+
+    // append initial nodes (we'll replace if editable)
+    nameWrap.appendChild(nameText);
+    priceWrap.appendChild(priceText);
+    r.appendChild(nameWrap);
+    r.appendChild(priceWrap);
+    r.appendChild(actions);
+    r.appendChild(hin);
+    r.appendChild(hip);
+
+    // edit flow
+    function startEdit() {
+      if (r.dataset.editing === '1') return;
+      r.dataset.editing = '1';
+      const currentName = hin.value || '';
+      const currentPrice = hip.value || '';
+      const { nameInput, priceInput } = makeInputs(currentName, currentPrice);
+
+      // replace display with inputs
+      r.replaceChild(nameInput, nameWrap);
+      r.replaceChild(priceInput, priceWrap);
+
+      btnEdit.textContent = 'Сохранить';
+      btnDel.textContent = 'Отмена';
+      btnDel.classList.remove('del');
+
+      // save handler
+      const save = function() {
+        const newName = nameInput.value.trim();
+        const newPrice = priceInput.value.trim();
+        if (newName === '') { alert('Введите название услуги'); nameInput.focus(); return; }
+        // restore text nodes
+        nameText.textContent = newName;
+        priceText.textContent = newPrice !== '' ? newPrice : '—';
+        hin.value = newName;
+        hip.value = newPrice;
+        r.replaceChild(nameWrap, nameInput);
+        r.replaceChild(priceWrap, priceInput);
+        btnEdit.textContent = 'Исправить';
+        btnDel.textContent = 'Удалить';
+        btnDel.classList.add('del');
+        r.dataset.editing = '0';
+        // rebind handlers to original functions
+        btnEdit.onclick = startEdit;
+        btnDel.onclick = delOrCancel;
       };
-      d.onclick = function(){ r.replaceChild(name, ni); r.replaceChild(price, pi); e.textContent='Исправить'; d.textContent='Удалить'; r.dataset.editing='0'; e.onclick=null; d.onclick=null; };
-    };
-    d.onclick = function(){ if(confirm('Удалить услугу?')) r.remove(); };
+
+      // cancel handler
+      const cancel = function() {
+        r.replaceChild(nameWrap, nameInput);
+        r.replaceChild(priceWrap, priceInput);
+        btnEdit.textContent = 'Исправить';
+        btnDel.textContent = 'Удалить';
+        btnDel.classList.add('del');
+        r.dataset.editing = '0';
+        btnEdit.onclick = startEdit;
+        btnDel.onclick = delOrCancel;
+      };
+
+      // temporarily override handlers
+      btnEdit.onclick = save;
+      btnDel.onclick = cancel;
+    }
+
+    // delete or cancel depending on state
+    function delOrCancel() {
+      if (r.dataset.editing === '1') return; // should be handled by cancel above
+      if (!confirm('Удалить услугу?')) return;
+      r.remove();
+    }
+
+    // initial binding
+    btnEdit.onclick = startEdit;
+    btnDel.onclick = delOrCancel;
+
+    // if editable requested at creation - start editing immediately
+    if (editable || (!n && !p)) {
+      // replace after a tick so the element exists in DOM if caller wants to focus
+      setTimeout(startEdit, 10);
+    }
+
     return r;
   }
 
-  addBtn.addEventListener('click', ()=> rows.appendChild(createRow('','')));
+  addBtn.addEventListener('click', function(){
+    rows.appendChild(createRow('', '', true));
+    // scroll last into view
+    const last = rows.lastElementChild;
+    if (last) last.scrollIntoView({behavior:'smooth', block:'center'});
+  });
+
+  // on load - add one empty editable row to prompt user
+  document.addEventListener('DOMContentLoaded', function(){
+    if (rows.children.length === 0) rows.appendChild(createRow('', '', true));
+  });
+
+  // ensure editing rows are saved before submit
+  const form = document.getElementById('serviceForm');
+  form.addEventListener('submit', function(e){
+    // find any row still in editing mode -> try to save by triggering Save button
+    const editing = rows.querySelector('[data-editing="1"]');
+    if (editing) {
+      const saveBtn = editing.querySelector('.p-actions .small-btn');
+      if (saveBtn) {
+        // try to trigger its click (which when editing is bound to 'Сохранить' logic)
+        saveBtn.click();
+        // if still editing (because validation failed), prevent submit
+        if (editing.dataset.editing === '1') {
+          e.preventDefault();
+          return;
+        }
+      }
+    }
+    // ok to submit - hidden inputs already present
+  });
 })();
 </script>
 

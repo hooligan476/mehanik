@@ -21,67 +21,49 @@ $uploadsFsRoot  = realpath(__DIR__ . '/../uploads') ?: (__DIR__ . '/../uploads')
 $uploadsUrlRoot = '/mehanik/uploads';
 
 /**
- * Возвращает корректный [URL, FS-path] для файла, найденного по разным вариантам значения,
- * принимает значение из БД (basename, relative path like "uploads/services/1/logo.jpg" или полный URL)
- *
- * - preferredSubdir: 'services' по умолчанию
- * - uploadsFsRoot: filesystem root for "uploads" folder
- * - uploadsUrlRoot: public URL root for "uploads" folder
- *
- * Возвращает массив [publicUrl, fsPathCandidate]
+ * Возвращает корректный [URL, FS-path] для файла...
+ * (функция оставлена без изменений)
  */
 function find_upload_url(string $value, string $preferredSubdir = 'services', string $uploadsFsRoot = '', string $uploadsUrlRoot = ''): array {
     $fname = trim($value);
     if ($fname === '') return ['', ''];
 
-    // if it's already a filesystem path and exists, return immediate mapping
     if (is_file($fname)) {
-        // try to produce public URL by finding "uploads" segment in path
         $pos = mb_stripos($fname, DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR);
         if ($pos !== false) {
-            $sub = substr($fname, $pos + 1); // drop leading DS
+            $sub = substr($fname, $pos + 1);
             $url = rtrim($uploadsUrlRoot, '/') . '/' . str_replace(DIRECTORY_SEPARATOR, '/', rawurlencode(basename($sub)));
-            // best effort: prefer full relative (if contains preferredSubdir)
             if (mb_stripos($sub, $preferredSubdir) !== false) {
-                // build url preserving path after 'uploads/'
                 $afterUploads = substr($sub, mb_stripos($sub, 'uploads/') + strlen('uploads/'));
                 $url = rtrim($uploadsUrlRoot, '/') . '/'. str_replace('%2F','/', rawurlencode($afterUploads));
             }
             return [$url, $fname];
         }
-        // fallback
         return ['', $fname];
     }
 
-    // if it's a full URL, extract path part
     $pathOnly = $fname;
     if (preg_match('#^https?://#i', $fname)) {
         $p = parse_url($fname, PHP_URL_PATH);
         if ($p !== null) $pathOnly = $p;
     }
 
-    // Normalize separators and remove leading slashes
     $pathOnly = str_replace('\\', '/', $pathOnly);
     $pathOnly = ltrim($pathOnly, '/');
 
-    // Try to find 'uploads' segment in the path - common case: "mehanik/uploads/services/1/logo.jpg" or "uploads/services/1/logo.jpg"
     $uploadsPos = stripos($pathOnly, 'uploads/');
     $candidatesFs = [];
 
     if ($uploadsPos !== false) {
-        $fromUploads = substr($pathOnly, $uploadsPos + strlen('uploads/')); // e.g. "services/1/logo.jpg"
-        // candidate: uploadsFsRoot + / + fromUploads
+        $fromUploads = substr($pathOnly, $uploadsPos + strlen('uploads/'));
         $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . $fromUploads;
-        // candidate: uploadsFsRoot + / + preferredSubdir + / + basename
         $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . trim($preferredSubdir, '/') . '/' . basename($fromUploads);
     }
 
-    // also try common simple locations:
-    $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . trim($preferredSubdir, '/') . '/' . basename($pathOnly); // uploads/services/logo.jpg
-    $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . basename($pathOnly); // uploads/logo.jpg
-    $candidatesFs[] = $pathOnly; // maybe already relative to project root
+    $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . trim($preferredSubdir, '/') . '/' . basename($pathOnly);
+    $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . basename($pathOnly);
+    $candidatesFs[] = $pathOnly;
 
-    // Ensure uniqueness and normalize separators
     $checked = [];
     foreach ($candidatesFs as $c) {
         $cNorm = str_replace(['//','\\\\'], ['/','/'], $c);
@@ -90,14 +72,12 @@ function find_upload_url(string $value, string $preferredSubdir = 'services', st
 
     foreach ($checked as $fs) {
         if (is_file($fs)) {
-            // build public URL from path after uploads root if possible
             $normalizedFs = str_replace('\\', '/', $fs);
             $uploadsRootNorm = str_replace('\\', '/', rtrim($uploadsFsRoot, '/'));
             if (stripos($normalizedFs, $uploadsRootNorm) !== false) {
                 $rel = ltrim(substr($normalizedFs, strlen($uploadsRootNorm)), '/');
                 $url = rtrim($uploadsUrlRoot, '/') . '/' . str_replace('%2F','/', rawurlencode($rel));
             } else {
-                // fallback: if fs contains preferredSubdir, build URL with preferredSubdir/basename
                 if (stripos($normalizedFs, '/'.$preferredSubdir.'/') !== false) {
                     $url = rtrim($uploadsUrlRoot, '/') . '/' . $preferredSubdir . '/' . rawurlencode(basename($normalizedFs));
                 } else {
@@ -108,8 +88,6 @@ function find_upload_url(string $value, string $preferredSubdir = 'services', st
         }
     }
 
-    // If we didn't find file on disk, attempt to build a reasonable URL using original value.
-    // If original contains "uploads/" use that part; otherwise assume preferredSubdir/basename
     if (stripos($pathOnly, 'uploads/') !== false) {
         $after = substr($pathOnly, stripos($pathOnly, 'uploads/') + strlen('uploads/'));
         $url = rtrim($uploadsUrlRoot, '/') . '/' . str_replace('%2F','/', rawurlencode($after));
@@ -180,7 +158,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upser
 
     if ($comment !== '' && $userName !== '') {
         if ($userId > 0 && $reviewsHasUserId) {
-            // есть ли уже отзыв от этого пользователя
             $rid = 0;
             if ($st = $mysqli->prepare("SELECT id FROM service_reviews WHERE service_id = ? AND user_id = ? LIMIT 1")) {
                 $st->bind_param("ii", $id, $userId);
@@ -326,15 +303,17 @@ if ($id > 0) {
     .avg-num{ font-size:1.6rem; font-weight:800; color:var(--accent); }
     .avg-meta{ color:var(--muted); font-size:.95rem; }
 
-    .review-card{ background:#fff; border-radius:10px; padding:12px; border:1px solid #eef3f8; }
+    .review-card{ background:#fff; border-radius:10px; padding:12px; border:1px solid #eef3f8; margin-bottom:10px; }
     .review-meta{ display:flex; align-items:center; gap:8px; }
     .review-name{ font-weight:700; }
     .review-time{ color:var(--muted); font-size:.88rem; margin-left:6px; }
-    .review-comment{ margin-top:8px; color:#333; }
-
+    .review-comment{ margin-top:8px; color:#333; white-space:pre-wrap; }
     .btn{ background:var(--accent); color:#fff; padding:10px 14px; border-radius:10px; border:0; cursor:pointer; font-weight:700; }
     .btn-ghost{ background:transparent; color:var(--accent); border:1px solid #dbeeff; padding:10px 14px; border-radius:10px; font-weight:700; }
     .btn-small{ padding:6px 8px; border-radius:8px; background:#fff; border:1px solid #eef3f8; cursor:pointer; }
+
+    .inline-editor{ margin-top:8px; display:flex; flex-direction:column; gap:8px; }
+    .inline-editor textarea{ width:100%; min-height:80px; padding:8px; border-radius:8px; border:1px solid #e6eef7; box-sizing:border-box; }
 
     .lb-overlay{ position:fixed; inset:0; background:rgba(0,0,0,.8); display:none; align-items:center; justify-content:center; z-index:1200; padding:20px; }
     .lb-overlay.active{ display:flex; }
@@ -366,7 +345,6 @@ if ($id > 0) {
         <?php endif; ?>
 
         <h1 class="title"><?= htmlspecialchars($service['name']) ?></h1>
-        <!-- УБРАНО краткое описание под названием по просьбе -->
 
         <div class="contact-list">
           <?php if (!empty($service['contact_name'])): ?><div><strong>Контакт:</strong> <?= htmlspecialchars($service['contact_name']) ?></div><?php endif; ?>
@@ -478,23 +456,32 @@ if ($id > 0) {
                   <div style="font-weight:700; margin-left:8px;"><?= number_format($rRating,1) ?></div>
                 <?php endif; ?>
 
-                <?php if ($isOwner): ?>
-                  <div style="margin-left:auto; display:flex; gap:8px;">
-                    <button class="btn-small" onclick="startEdit(<?= $rId ?>, <?= json_encode($rUserName) ?>, <?= json_encode($r['comment']) ?>)">Изменить</button>
+                <div style="margin-left:auto; display:flex; gap:8px;">
+                  <?php if ($userId>0): ?>
+                    <!-- Ответить доступен всем залогиненным -->
+                    <button class="btn-small" onclick="startReply(<?= $rId ?>)">Ответить</button>
+                  <?php endif; ?>
+
+                  <?php if ($isOwner): ?>
+                    <!-- Изменить доступен только владельцу/админу (фронтенд/инлайн) -->
+                    <button class="btn-small" onclick="startEditInline(<?= $rId ?>)">Изменить</button>
                     <form method="post" style="display:inline-block;margin:0;">
                       <input type="hidden" name="action" value="delete_review">
                       <input type="hidden" name="review_id" value="<?= $rId ?>">
                       <button type="submit" class="btn-small" onclick="return confirm('Удалить отзыв?')">Удалить</button>
                     </form>
-                  </div>
-                <?php endif; ?>
+                  <?php endif; ?>
+                </div>
               </div>
 
               <div class="review-comment"><?= nl2br(htmlspecialchars($r['comment'])) ?></div>
+
+              <!-- контейнер для inline-редактора (вставляем сюда textarea при редактировании) -->
+              <div class="inline-editor" data-review-id="<?= $rId ?>" style="display:none;"></div>
             </div>
           <?php endforeach; endif; ?>
 
-          <div class="review-card" style="margin-top:12px;">
+          <div class="review-card" style="margin-top:12px;" id="mainReviewFormCard">
             <h3 style="margin:0 0 8px 0;">Оставить отзыв</h3>
             <form id="reviewForm" method="post" action="service.php?id=<?= $id ?>#reviews">
               <?php if ($userId <= 0): ?>
@@ -510,6 +497,11 @@ if ($id > 0) {
                 <label>Комментарий</label>
                 <textarea id="comment" name="comment" class="input" rows="5" required placeholder="Поделитесь впечатлением..."></textarea>
               </div>
+
+              <!-- вспомогательное поле: если захотите редактировать конкретный отзыв по id -->
+              <input type="hidden" id="editing_review_id" name="editing_review_id" value="">
+              <!-- reply target (frontend only for now) -->
+              <input type="hidden" id="reply_to" name="reply_to" value="">
 
               <div style="margin-top:8px; display:flex; gap:8px; justify-content:flex-end;">
                 <input type="hidden" name="action" value="upsert_review">
@@ -538,19 +530,146 @@ if ($id > 0) {
 <?php else: ?>
   const map = L.map('map').setView([37.95, 58.38], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-<?php endif; ?>
+<?php endif; ?> 
 
 // Lightbox
 function openLightbox(src){ const lb=document.getElementById('lb'); const img=document.getElementById('lbImg'); img.src=src; lb.classList.add('active'); }
 function closeLightbox(e){ if (!e || e.target.id==='lb' || (e.target.classList && e.target.classList.contains('lb-close'))) { const lb=document.getElementById('lb'); lb.classList.remove('active'); document.getElementById('lbImg').src=''; } }
 
-// Review edit helpers
-function startEdit(id, userName, comment){
-  const f=document.getElementById('reviewForm'); const c=document.getElementById('comment'); const n=document.getElementById('user_name');
-  if(c) c.value = comment || ''; if(n && userName) n.value = userName || '';
-  f.scrollIntoView({behavior:'smooth', block:'center'}); if(c) c.focus();
+// Inline edit: открывает textarea в карточке отзыва, можно сохранить или отменить.
+// Сохранение выполняется стандартным POST с action=upsert_review и редиректом на страницу.
+// (Сервер по текущей реализации обновляет отзывы залогиненного пользователя.)
+function startEditInline(id){
+  try {
+    const card = document.getElementById('review-' + id);
+    if (!card) return;
+    const container = card.querySelector('.inline-editor');
+    if (!container) return;
+
+    // если редактор уже открыт — ничего не делаем
+    if (container.dataset.mode === 'edit') return;
+
+    // достаём текущие значения
+    const commentNode = card.querySelector('.review-comment');
+    const nameNode = card.querySelector('.review-name');
+    const currentComment = commentNode ? commentNode.innerText.trim() : '';
+    const currentName = nameNode ? nameNode.innerText.trim() : '';
+
+    // очистим контейнер и покажем
+    container.style.display = 'block';
+    container.dataset.mode = 'edit';
+    container.innerHTML = '';
+
+    // textarea
+    const ta = document.createElement('textarea');
+    ta.className = 'input';
+    ta.rows = 5;
+    ta.value = currentComment;
+    container.appendChild(ta);
+
+    // кнопки
+    const btns = document.createElement('div');
+    btns.style.display = 'flex';
+    btns.style.justifyContent = 'flex-end';
+    btns.style.gap = '8px';
+    btns.style.marginTop = '6px';
+
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'btn';
+    saveBtn.textContent = 'Сохранить';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'btn-ghost';
+    cancelBtn.textContent = 'Отмена';
+
+    btns.appendChild(cancelBtn);
+    btns.appendChild(saveBtn);
+    container.appendChild(btns);
+
+    // focus
+    ta.focus();
+
+    // Save handler: создаём временную форму и отправляем
+    saveBtn.addEventListener('click', function(){
+      const commentVal = ta.value.trim();
+      if (commentVal === '') { alert('Комментарий не может быть пустым'); ta.focus(); return; }
+
+      // build form
+      const f = document.createElement('form');
+      f.method = 'post';
+      f.action = window.location.pathname + window.location.search + '#reviews';
+      // action
+      const a = document.createElement('input'); a.type='hidden'; a.name='action'; a.value='upsert_review'; f.appendChild(a);
+      // comment
+      const c = document.createElement('input'); c.type='hidden'; c.name='comment'; c.value = commentVal; f.appendChild(c);
+      // user_name (if exists in DOM main form or nameNode)
+      let userName = '';
+      const mainNameInput = document.getElementById('user_name');
+      if (mainNameInput && mainNameInput.value) userName = mainNameInput.value;
+      else if (currentName) userName = currentName;
+      const un = document.createElement('input'); un.type='hidden'; un.name='user_name'; un.value = userName; f.appendChild(un);
+
+      // optional: include editing_review_id (server currently ignores, but left for future)
+      const eid = document.createElement('input'); eid.type='hidden'; eid.name='editing_review_id'; eid.value = id; f.appendChild(eid);
+
+      document.body.appendChild(f);
+      f.submit();
+    });
+
+    cancelBtn.addEventListener('click', function(){
+      container.innerHTML = '';
+      container.style.display = 'none';
+      container.dataset.mode = '';
+    });
+
+  } catch (e) {
+    console.error('startEditInline error', e);
+  }
 }
-function resetReviewForm(){ document.getElementById('reviewForm').reset(); }
+
+// Reply: заполняет основную форму префиксом @UserName и скроллит к форме.
+function startReply(id){
+  try {
+    const card = document.getElementById('review-' + id);
+    if (!card) return;
+    const nameNode = card.querySelector('.review-name');
+    const userNameText = nameNode ? nameNode.innerText.trim() : '';
+    const mainForm = document.getElementById('reviewForm');
+    const commentEl = document.getElementById('comment');
+    const nameEl = document.getElementById('user_name');
+    const replyToEl = document.getElementById('reply_to');
+
+    if (nameEl && userNameText && !nameEl.value) {
+      // если имя не заполнено — проставляем ( у залогиненных оно обычно скрыто )
+      nameEl.value = userNameText;
+    }
+
+    if (commentEl) {
+      const prefix = userNameText ? ('@' + userNameText + ' ') : '';
+      // если уже есть префикс, не дублируем
+      if (!commentEl.value.startsWith(prefix)) commentEl.value = prefix + commentEl.value;
+    }
+
+    if (replyToEl) replyToEl.value = id;
+
+    // скроллим к форме и фокусируем
+    if (mainForm) mainForm.scrollIntoView({behavior:'smooth', block:'center'});
+    if (commentEl) commentEl.focus();
+  } catch (e) {
+    console.error('startReply error', e);
+  }
+}
+
+function resetReviewForm(){
+  const f=document.getElementById('reviewForm');
+  if (!f) return;
+  f.reset();
+  const editIdEl = document.getElementById('editing_review_id');
+  if (editIdEl) editIdEl.value = '';
+  const replyToEl = document.getElementById('reply_to');
+  if (replyToEl) replyToEl.value = '';
+}
 </script>
 
 <script src="/mehanik/assets/js/main.js"></script>
