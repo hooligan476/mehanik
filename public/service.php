@@ -1,101 +1,292 @@
 <?php
-// public/service.php
+// public/service.php — фиксы звёзд, логотипа/фото и убрано описание под названием
 session_start();
 require_once __DIR__ . '/../db.php';
 $config = file_exists(__DIR__ . '/../config.php') ? require __DIR__ . '/../config.php' : ['base_url'=>'/mehanik'];
 
-// id сервиса
 $id = (int)($_GET['id'] ?? 0);
 $service = null;
 $photos = [];
+$prices = [];
 $avgRating = 0.0;
 $reviewsCount = 0;
 $reviews = [];
-$owner = null; // ['id'=>..,'name'=>..,'phone'=>..]
 
-// Обработка POST — добавление отзыва
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_review' && $id > 0) {
-    $userName = trim($_POST['user_name'] ?? '');
-    // если пользователь залогинен, используем его имя из сессии
-    if (!empty($_SESSION['user']['name'])) {
-        $userName = $_SESSION['user']['name'];
+$user = $_SESSION['user'] ?? null;
+$userId = (int)($user['id'] ?? 0);
+$isAdmin = isset($user['role']) && $user['role'] === 'admin';
+
+/** FS/URL helpers */
+$uploadsFsRoot  = realpath(__DIR__ . '/../uploads') ?: (__DIR__ . '/../uploads');
+$uploadsUrlRoot = '/mehanik/uploads';
+
+/**
+ * Возвращает корректный [URL, FS-path] для файла, найденного по разным вариантам значения,
+ * принимает значение из БД (basename, relative path like "uploads/services/1/logo.jpg" или полный URL)
+ *
+ * - preferredSubdir: 'services' по умолчанию
+ * - uploadsFsRoot: filesystem root for "uploads" folder
+ * - uploadsUrlRoot: public URL root for "uploads" folder
+ *
+ * Возвращает массив [publicUrl, fsPathCandidate]
+ */
+function find_upload_url(string $value, string $preferredSubdir = 'services', string $uploadsFsRoot = '', string $uploadsUrlRoot = ''): array {
+    $fname = trim($value);
+    if ($fname === '') return ['', ''];
+
+    // if it's already a filesystem path and exists, return immediate mapping
+    if (is_file($fname)) {
+        // try to produce public URL by finding "uploads" segment in path
+        $pos = mb_stripos($fname, DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR);
+        if ($pos !== false) {
+            $sub = substr($fname, $pos + 1); // drop leading DS
+            $url = rtrim($uploadsUrlRoot, '/') . '/' . str_replace(DIRECTORY_SEPARATOR, '/', rawurlencode(basename($sub)));
+            // best effort: prefer full relative (if contains preferredSubdir)
+            if (mb_stripos($sub, $preferredSubdir) !== false) {
+                // build url preserving path after 'uploads/'
+                $afterUploads = substr($sub, mb_stripos($sub, 'uploads/') + strlen('uploads/'));
+                $url = rtrim($uploadsUrlRoot, '/') . '/'. str_replace('%2F','/', rawurlencode($afterUploads));
+            }
+            return [$url, $fname];
+        }
+        // fallback
+        return ['', $fname];
     }
-    $comment = trim($_POST['comment'] ?? '');
-    // рейтинг: приводим к float, ограничиваем диапазон 0.1 - 5.0
-    $rating = isset($_POST['rating']) ? floatval($_POST['rating']) : 0.0;
-    if ($rating < 0.1) $rating = 0.1;
-    if ($rating > 5.0) $rating = 5.0;
 
-    // Валидация: нужно имя/комментарий/рейтинг в разумных пределах
-    if ($id > 0 && $userName !== '' && $comment !== '') {
-        if ($stmt = $mysqli->prepare("INSERT INTO service_reviews (service_id, user_name, rating, comment, created_at) VALUES (?, ?, ?, ?, NOW())")) {
-            $stmt->bind_param("isds", $id, $userName, $rating, $comment);
-            $stmt->execute();
-            $stmt->close();
+    // if it's a full URL, extract path part
+    $pathOnly = $fname;
+    if (preg_match('#^https?://#i', $fname)) {
+        $p = parse_url($fname, PHP_URL_PATH);
+        if ($p !== null) $pathOnly = $p;
+    }
+
+    // Normalize separators and remove leading slashes
+    $pathOnly = str_replace('\\', '/', $pathOnly);
+    $pathOnly = ltrim($pathOnly, '/');
+
+    // Try to find 'uploads' segment in the path - common case: "mehanik/uploads/services/1/logo.jpg" or "uploads/services/1/logo.jpg"
+    $uploadsPos = stripos($pathOnly, 'uploads/');
+    $candidatesFs = [];
+
+    if ($uploadsPos !== false) {
+        $fromUploads = substr($pathOnly, $uploadsPos + strlen('uploads/')); // e.g. "services/1/logo.jpg"
+        // candidate: uploadsFsRoot + / + fromUploads
+        $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . $fromUploads;
+        // candidate: uploadsFsRoot + / + preferredSubdir + / + basename
+        $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . trim($preferredSubdir, '/') . '/' . basename($fromUploads);
+    }
+
+    // also try common simple locations:
+    $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . trim($preferredSubdir, '/') . '/' . basename($pathOnly); // uploads/services/logo.jpg
+    $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . basename($pathOnly); // uploads/logo.jpg
+    $candidatesFs[] = $pathOnly; // maybe already relative to project root
+
+    // Ensure uniqueness and normalize separators
+    $checked = [];
+    foreach ($candidatesFs as $c) {
+        $cNorm = str_replace(['//','\\\\'], ['/','/'], $c);
+        if (!in_array($cNorm, $checked, true)) $checked[] = $cNorm;
+    }
+
+    foreach ($checked as $fs) {
+        if (is_file($fs)) {
+            // build public URL from path after uploads root if possible
+            $normalizedFs = str_replace('\\', '/', $fs);
+            $uploadsRootNorm = str_replace('\\', '/', rtrim($uploadsFsRoot, '/'));
+            if (stripos($normalizedFs, $uploadsRootNorm) !== false) {
+                $rel = ltrim(substr($normalizedFs, strlen($uploadsRootNorm)), '/');
+                $url = rtrim($uploadsUrlRoot, '/') . '/' . str_replace('%2F','/', rawurlencode($rel));
+            } else {
+                // fallback: if fs contains preferredSubdir, build URL with preferredSubdir/basename
+                if (stripos($normalizedFs, '/'.$preferredSubdir.'/') !== false) {
+                    $url = rtrim($uploadsUrlRoot, '/') . '/' . $preferredSubdir . '/' . rawurlencode(basename($normalizedFs));
+                } else {
+                    $url = rtrim($uploadsUrlRoot, '/') . '/' . $preferredSubdir . '/' . rawurlencode(basename($normalizedFs));
+                }
+            }
+            return [$url, $fs];
         }
     }
-    // Перенаправляем на ту же страницу (чтобы избежать повторной отправки формы)
-    header("Location: service.php?id=" . $id . "#reviews");
-    exit;
-}
 
-// Получаем сервис (видимый только approved/active)
-if ($id > 0) {
-    if ($stmt = $mysqli->prepare("
-        SELECT id, user_id, name, description, logo, phone, email, address, latitude, longitude
-        FROM services
-        WHERE id = ? AND (status = 'approved' OR status = 'active')
-    ")) {
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $res = $stmt->get_result();
-        $service = $res->fetch_assoc();
-        $stmt->close();
+    // If we didn't find file on disk, attempt to build a reasonable URL using original value.
+    // If original contains "uploads/" use that part; otherwise assume preferredSubdir/basename
+    if (stripos($pathOnly, 'uploads/') !== false) {
+        $after = substr($pathOnly, stripos($pathOnly, 'uploads/') + strlen('uploads/'));
+        $url = rtrim($uploadsUrlRoot, '/') . '/' . str_replace('%2F','/', rawurlencode($after));
+        $fallbackFs = rtrim($uploadsFsRoot, '/') . '/' . $after;
+        return [$url, $fallbackFs];
     }
 
-    if ($service) {
-        // получить владельца по user_id (если есть)
-        $uid = isset($service['user_id']) ? (int)$service['user_id'] : 0;
-        if ($uid > 0) {
-            if ($st = $mysqli->prepare("SELECT id, name, phone FROM users WHERE id = ? LIMIT 1")) {
-                $st->bind_param("i", $uid);
+    $fallbackUrl = rtrim($uploadsUrlRoot, '/') . '/' . trim($preferredSubdir, '/') . '/' . rawurlencode(basename($pathOnly));
+    $fallbackFs = rtrim($uploadsFsRoot, '/') . '/' . trim($preferredSubdir, '/') . '/' . basename($pathOnly);
+    return [$fallbackUrl, $fallbackFs];
+}
+
+// --------- утилиты БД (наличие колонок/таблиц) ----------
+function column_exists($mysqli, $table, $col) {
+    $table_q = $mysqli->real_escape_string($table);
+    $col_q = $mysqli->real_escape_string($col);
+    $res = $mysqli->query("SHOW COLUMNS FROM `{$table_q}` LIKE '{$col_q}'");
+    return ($res && $res->num_rows > 0);
+}
+
+$haveRatingsTable = ($mysqli->query("SHOW TABLES LIKE 'service_ratings'")->num_rows > 0);
+if (!$haveRatingsTable) {
+    @ $mysqli->query("
+        CREATE TABLE IF NOT EXISTS service_ratings (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          service_id INT NOT NULL,
+          user_id INT NOT NULL,
+          rating DECIMAL(3,1) NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+          UNIQUE KEY uniq_service_user (service_id, user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ");
+    $haveRatingsTable = true;
+}
+$reviewsHasUpdatedAt = column_exists($mysqli, 'service_reviews', 'updated_at');
+$reviewsHasUserId    = column_exists($mysqli, 'service_reviews', 'user_id');
+if (!$reviewsHasUserId) {
+    @ $mysqli->query("ALTER TABLE service_reviews ADD COLUMN user_id INT NULL");
+    $reviewsHasUserId = true;
+}
+
+// ---------------- Handlers ----------------
+
+// поставить/обновить оценку
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'rate' && $id > 0) {
+    if ($userId > 0 && $haveRatingsTable) {
+        $rating = isset($_POST['rating']) ? (float)$_POST['rating'] : null;
+        if ($rating !== null) {
+            $rating = max(0.1, min(5.0, round($rating,1)));
+            if ($st = $mysqli->prepare("INSERT INTO service_ratings (service_id, user_id, rating, created_at, updated_at)
+                                        VALUES (?, ?, ?, NOW(), NOW())
+                                        ON DUPLICATE KEY UPDATE rating=VALUES(rating), updated_at=NOW()")) {
+                $st->bind_param("iid", $id, $userId, $rating);
                 $st->execute();
-                $r = $st->get_result();
-                $owner = $r ? $r->fetch_assoc() : null;
                 $st->close();
             }
         }
+    }
+    header("Location: service.php?id={$id}#reviews"); exit;
+}
 
-        // фото
-        if ($stmt = $mysqli->prepare("SELECT photo FROM service_photos WHERE service_id = ? ORDER BY id ASC")) {
-            $stmt->bind_param("i", $id);
-            $stmt->execute();
-            $res = $stmt->get_result();
-            $photos = $res->fetch_all(MYSQLI_ASSOC);
-            $stmt->close();
-        }
+// добавить/обновить отзыв (текст)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upsert_review' && $id > 0) {
+    $comment  = trim($_POST['comment'] ?? '');
+    $userName = trim($_POST['user_name'] ?? '');
+    if ($userId > 0 && !empty($user['name'])) $userName = $user['name'];
 
-        // средний рейтинг и количество отзывов
-        if ($stmt = $mysqli->prepare("SELECT AVG(rating) AS avg_rating, COUNT(*) AS cnt FROM service_reviews WHERE service_id = ?")) {
-            $stmt->bind_param("i", $id);
-            $stmt->execute();
-            $res = $stmt->get_result();
-            $row = $res->fetch_assoc();
-            if ($row) {
-                $avgRating = $row['avg_rating'] !== null ? round(floatval($row['avg_rating']), 1) : 0.0;
-                $reviewsCount = (int)$row['cnt'];
+    if ($comment !== '' && $userName !== '') {
+        if ($userId > 0 && $reviewsHasUserId) {
+            // есть ли уже отзыв от этого пользователя
+            $rid = 0;
+            if ($st = $mysqli->prepare("SELECT id FROM service_reviews WHERE service_id = ? AND user_id = ? LIMIT 1")) {
+                $st->bind_param("ii", $id, $userId);
+                $st->execute();
+                $row = $st->get_result()->fetch_assoc();
+                $st->close();
+                if ($row) $rid = (int)$row['id'];
             }
-            $stmt->close();
+            if ($rid > 0) {
+                $sql = $reviewsHasUpdatedAt
+                    ? "UPDATE service_reviews SET comment=?, user_name=?, updated_at=NOW() WHERE id=? AND service_id=? LIMIT 1"
+                    : "UPDATE service_reviews SET comment=?, user_name=? WHERE id=? AND service_id=? LIMIT 1";
+                if ($u = $mysqli->prepare($sql)) {
+                    $u->bind_param("ssii", $comment, $userName, $rid, $id);
+                    $u->execute();
+                    $u->close();
+                }
+            } else {
+                if ($ins = $mysqli->prepare("INSERT INTO service_reviews (service_id, user_id, user_name, comment, created_at) VALUES (?,?,?,?,NOW())")) {
+                    $ins->bind_param("iiss", $id, $userId, $userName, $comment);
+                    $ins->execute();
+                    $ins->close();
+                }
+            }
+        } else {
+            if ($ins = $mysqli->prepare("INSERT INTO service_reviews (service_id, user_name, comment, created_at) VALUES (?,?,?,NOW())")) {
+                $ins->bind_param("iss", $id, $userName, $comment);
+                $ins->execute();
+                $ins->close();
+            }
         }
+    }
+    header("Location: service.php?id={$id}#reviews"); exit;
+}
 
-        // список отзывов (последние сверху)
-        if ($stmt = $mysqli->prepare("SELECT id, user_name, rating, comment, created_at FROM service_reviews WHERE service_id = ? ORDER BY created_at DESC")) {
-            $stmt->bind_param("i", $id);
-            $stmt->execute();
-            $res = $stmt->get_result();
-            $reviews = $res->fetch_all(MYSQLI_ASSOC);
-            $stmt->close();
+// удалить отзыв
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_review' && $id > 0) {
+    $rid = (int)($_POST['review_id'] ?? 0);
+    if ($rid > 0) {
+        $canDelete = $isAdmin;
+        if (!$canDelete) {
+            if ($st = $mysqli->prepare("SELECT user_id, user_name FROM service_reviews WHERE id=? AND service_id=? LIMIT 1")) {
+                $st->bind_param("ii", $rid, $id);
+                $st->execute();
+                $row = $st->get_result()->fetch_assoc();
+                $st->close();
+                if ($row) {
+                    $rvUserId = (int)($row['user_id'] ?? 0);
+                    $rvName   = $row['user_name'] ?? '';
+                    if ($rvUserId>0 && $userId>0 && $rvUserId===$userId) $canDelete = true;
+                    elseif ($rvUserId===0 && $userId>0 && !empty($user['name']) && $rvName===$user['name']) $canDelete = true;
+                }
+            }
         }
+        if ($canDelete) {
+            if ($del = $mysqli->prepare("DELETE FROM service_reviews WHERE id=? AND service_id=? LIMIT 1")) {
+                $del->bind_param("ii", $rid, $id);
+                $del->execute();
+                $del->close();
+            }
+        }
+    }
+    header("Location: service.php?id={$id}#reviews"); exit;
+}
+
+// ---------------- Fetch service and related data ----------------
+if ($id > 0) {
+    if ($st = $mysqli->prepare("SELECT id, user_id, name, description, logo, contact_name, phone, email, address, latitude, longitude
+                                FROM services WHERE id=? AND (status='approved' OR status='active')")) {
+        $st->bind_param("i", $id);
+        $st->execute();
+        $service = $st->get_result()->fetch_assoc();
+        $st->close();
+    }
+
+    if ($service) {
+        if ($st = $mysqli->prepare("SELECT id, photo FROM service_photos WHERE service_id=? ORDER BY id ASC")) {
+            $st->bind_param("i", $id);
+            $st->execute();
+            $photos = $st->get_result()->fetch_all(MYSQLI_ASSOC);
+            $st->close();
+        }
+        if ($st = $mysqli->prepare("SELECT id, name, price FROM service_prices WHERE service_id=? ORDER BY id ASC")) {
+            $st->bind_param("i", $id);
+            $st->execute();
+            $prices = $st->get_result()->fetch_all(MYSQLI_ASSOC);
+            $st->close();
+        }
+        if ($haveRatingsTable) {
+            if ($st = $mysqli->prepare("SELECT AVG(rating) AS avg_rating FROM service_ratings WHERE service_id=?")) {
+                $st->bind_param("i", $id);
+                $st->execute();
+                $r = $st->get_result()->fetch_assoc();
+                if ($r) $avgRating = $r['avg_rating'] !== null ? round((float)$r['avg_rating'], 1) : 0.0;
+                $st->close();
+            }
+        }
+        $cols = "id, service_id, user_id, user_name, rating, comment, created_at";
+        if ($reviewsHasUpdatedAt) $cols .= ", updated_at";
+        if ($st = $mysqli->prepare("SELECT $cols FROM service_reviews WHERE service_id=? ORDER BY created_at DESC")) {
+            $st->bind_param("i", $id);
+            $st->execute();
+            $reviews = $st->get_result()->fetch_all(MYSQLI_ASSOC);
+            $st->close();
+        }
+        $reviewsCount = count($reviews);
     }
 }
 ?>
@@ -109,172 +300,257 @@ if ($id > 0) {
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
   <style>
-    /* Локальные стили страницы сервиса */
-    .svc-wrap { max-width:900px; margin:18px auto; padding:0 16px; color:#222; }
-    .svc-top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
-    .svc-logo { width:150px; height:150px; object-fit:cover; border-radius:10px; border:1px solid #ddd; }
-    .svc-info { flex:1; }
-    .stars-outer{ color:#ddd; font-size:1.15rem; line-height:1; position:relative; display:inline-block; }
-    .stars-inner{ color:gold; position:absolute; left:0; top:0; white-space:nowrap; overflow:hidden; }
-    .stars-outer span { letter-spacing:2px; } /* 10 stars if string contains 10 stars */
-    .rating-inline { display:flex; align-items:center; gap:8px; margin-left:8px; }
-    .photos-grid { display:grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap:12px; margin-bottom:18px; }
-    .reviews { margin-top:18px; }
-    .review { border-top:1px solid #eee; padding:12px 0; }
-    .review:first-child { border-top:0; }
-    .review .meta { font-weight:700; font-size:.95rem; }
-    .review .time { color:#888; font-size:.85rem; margin-left:8px; }
-    .review .comment { margin-top:6px; color:#333; }
-    .add-review { margin-top:18px; border:1px solid #eee; padding:12px; border-radius:8px; background:#fafafa; }
-    .add-review label { display:block; margin-top:8px; font-weight:600; }
-    .add-review textarea { width:100%; min-height:100px; padding:8px; border-radius:6px; border:1px solid #ddd; }
-    .add-review input[type="text"] { width:100%; padding:8px; border-radius:6px; border:1px solid #ddd; }
-    .add-review .submit { margin-top:10px; padding:10px 14px; background:#0b57a4;color:#fff;border-radius:8px;border:0; cursor:pointer; font-weight:700; }
-    .rating-slider { display:flex; align-items:center; gap:10px; margin-top:8px; }
-    .rating-value { min-width:40px; font-weight:700; }
-    .owner-block { margin-top:8px; padding:10px; border-radius:8px; background:#f7fbff; border:1px solid #e6f4ff; color:#073763; }
-    @media(max-width:760px){ .svc-top{flex-direction:column; align-items:flex-start;} .svc-logo{width:100%;height:220px;} }
+    :root{ --accent:#0b57a4; --muted:#6b7280; --card:#fff; --radius:12px; }
+    body{ background:#f6f8fb; color:#222; }
+    .container{ max-width:1100px; margin:20px auto; padding:16px; }
+    .svc-grid{ display:grid; grid-template-columns:320px 1fr; gap:20px; align-items:start; }
+    .card{ background:var(--card); border-radius:var(--radius); padding:16px; box-shadow:0 8px 30px rgba(12,20,30,.04); border:1px solid #eef3f8; }
+
+    .logo{ width:100%; height:180px; object-fit:cover; border-radius:10px; border:1px solid #e6eef7; background:#fff; }
+    h1.title{ margin:12px 0 0; font-size:1.35rem; color:var(--accent); }
+
+    .contact-list{ margin-top:12px; display:flex; flex-direction:column; gap:8px; font-size:.95rem; }
+    .prices{ margin-top:12px; border-top:1px dashed #eef3f8; padding-top:10px; }
+    .price-row{ display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed #f5f8fb; }
+
+    .map-card{ height:260px; border-radius:10px; overflow:hidden; border:1px solid #e6eef7; }
+
+    .photos-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:12px; margin-top:12px; }
+    .thumb{ width:100%; height:110px; overflow:hidden; border-radius:8px; border:1px solid #eee; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+    .thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+
+    /* Рейтинг: ровные звёзды */
+    .stars{ position:relative; display:inline-block; font-size:20px; line-height:1; letter-spacing:2px; }
+    .stars::before{ content:'★★★★★'; color:#e5e7eb; }
+    .stars::after{ content:'★★★★★'; color:#fbbf24; position:absolute; left:0; top:0; white-space:nowrap; overflow:hidden; width:var(--percent,0%); }
+    .avg-num{ font-size:1.6rem; font-weight:800; color:var(--accent); }
+    .avg-meta{ color:var(--muted); font-size:.95rem; }
+
+    .review-card{ background:#fff; border-radius:10px; padding:12px; border:1px solid #eef3f8; }
+    .review-meta{ display:flex; align-items:center; gap:8px; }
+    .review-name{ font-weight:700; }
+    .review-time{ color:var(--muted); font-size:.88rem; margin-left:6px; }
+    .review-comment{ margin-top:8px; color:#333; }
+
+    .btn{ background:var(--accent); color:#fff; padding:10px 14px; border-radius:10px; border:0; cursor:pointer; font-weight:700; }
+    .btn-ghost{ background:transparent; color:var(--accent); border:1px solid #dbeeff; padding:10px 14px; border-radius:10px; font-weight:700; }
+    .btn-small{ padding:6px 8px; border-radius:8px; background:#fff; border:1px solid #eef3f8; cursor:pointer; }
+
+    .lb-overlay{ position:fixed; inset:0; background:rgba(0,0,0,.8); display:none; align-items:center; justify-content:center; z-index:1200; padding:20px; }
+    .lb-overlay.active{ display:flex; }
+    .lb-img{ max-width:calc(100% - 40px); max-height:calc(100% - 40px); box-shadow:0 10px 40px rgba(0,0,0,.6); border-radius:8px; }
+    .lb-close{ position:absolute; top:18px; right:18px; background:#fff; border-radius:6px; padding:6px 8px; cursor:pointer; font-weight:700; }
+
+    @media(max-width:1000px){ .svc-grid{ grid-template-columns:1fr; } .logo{ height:220px; } }
   </style>
 </head>
 <body>
 <?php include __DIR__ . '/header.php'; ?>
 
-<main class="svc-wrap">
+<div class="container">
   <?php if (!$service): ?>
-    <p class="muted">Сервис не найден или ещё не одобрен.</p>
-  <?php else: ?>
-    <div class="svc-top">
-      <?php if (!empty($service['logo']) && file_exists(__DIR__ . '/uploads/' . $service['logo'])): ?>
-        <img src="uploads/<?= htmlspecialchars($service['logo']) ?>" alt="Логотип" class="svc-logo">
-      <?php endif; ?>
+    <div class="card">Сервис не найден или ещё не одобрен.</div>
+  <?php else:
+      // логотип — попробуем найти корректный URL и FS
+      [$logoUrl,$logoFs] = !empty($service['logo'])
+        ? find_upload_url($service['logo'], 'services', $uploadsFsRoot, $uploadsUrlRoot)
+        : ['', ''];
+  ?>
+    <div class="svc-grid">
+      <!-- LEFT: логотип, название, контакты, цены -->
+      <aside class="card">
+        <?php if ($logoUrl): ?>
+          <img src="<?= htmlspecialchars($logoUrl) ?>" alt="Логотип" class="logo">
+        <?php else: ?>
+          <div class="logo" style="display:flex;align-items:center;justify-content:center;color:#999;font-weight:700;">Нет логотипа</div>
+        <?php endif; ?>
 
-      <div class="svc-info">
-        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-          <h1 style="margin:0; font-size:1.25rem;"><?= htmlspecialchars($service['name']) ?></h1>
+        <h1 class="title"><?= htmlspecialchars($service['name']) ?></h1>
+        <!-- УБРАНО краткое описание под названием по просьбе -->
 
-          <?php
-            // prepare 10-star string and percent fill
-            $stars10 = str_repeat('★', 10);
-            $percent = ($avgRating / 5) * 100;
-            if ($percent < 0) $percent = 0;
-            if ($percent > 100) $percent = 100;
-          ?>
-          <div class="rating-inline" aria-label="Средний рейтинг <?= number_format($avgRating,1) ?> из 5">
-            <div style="position:relative;">
-              <div class="stars-outer"><span><?= $stars10 ?></span></div>
-              <div class="stars-inner" style="width:<?= $percent ?>%"><span><?= $stars10 ?></span></div>
-            </div>
-            <div style="font-size:.95rem;color:#333;"><?= number_format($avgRating,1) ?> (<?= $reviewsCount ?>)</div>
-          </div>
-        </div>
-
-        <div style="margin-top:8px; color:#444;">
-          <p style="margin:0 0 6px 0;"><strong>Описание:</strong><br><?= nl2br(htmlspecialchars($service['description'])) ?></p>
-
-          <!-- Контактное лицо (переименованный телефон сервиса) -->
-          <?php if (!empty($service['phone'])): ?>
-            <div><strong>Контактное лицо:</strong> <?= htmlspecialchars($service['phone']) ?></div>
-          <?php endif; ?>
-
-          <?php if (!empty($service['email'])): ?><div><strong>Email:</strong> <?= htmlspecialchars($service['email']) ?></div><?php endif; ?>
+        <div class="contact-list">
+          <?php if (!empty($service['contact_name'])): ?><div><strong>Контакт:</strong> <?= htmlspecialchars($service['contact_name']) ?></div><?php endif; ?>
+          <?php if (!empty($service['phone'])): ?><div><strong>Телефон:</strong> <a href="tel:<?= rawurlencode($service['phone']) ?>"><?= htmlspecialchars($service['phone']) ?></a></div><?php endif; ?>
+          <?php if (!empty($service['email'])): ?><div><strong>Email:</strong> <a href="mailto:<?= htmlspecialchars($service['email']) ?>"><?= htmlspecialchars($service['email']) ?></a></div><?php endif; ?>
           <?php if (!empty($service['address'])): ?><div><strong>Адрес:</strong> <?= htmlspecialchars($service['address']) ?></div><?php endif; ?>
         </div>
 
-        <!-- Владелец -->
-        <?php if (!empty($owner)): ?>
-          <div class="owner-block" aria-label="Информация о владельце">
-            <div><strong>Владелец:</strong> <?= htmlspecialchars($owner['name'] ?: '—') ?></div>
-            <div style="margin-top:6px;"><strong>Номер владельца:</strong> <?= htmlspecialchars($owner['phone'] ?? '—') ?></div>
+        <?php if (!empty($prices)): ?>
+          <div class="prices card" style="margin-top:12px; padding:12px;">
+            <div style="font-weight:800; margin-bottom:8px;">Цены на услуги</div>
+            <?php foreach ($prices as $p): ?>
+              <div class="price-row">
+                <div><?= htmlspecialchars($p['name']) ?></div>
+                <div style="font-weight:700; color:var(--accent);">
+                  <?= is_numeric($p['price']) ? number_format($p['price'], 2, '.', ' ') : htmlspecialchars($p['price']) ?> тмт
+                </div>
+              </div>
+            <?php endforeach; ?>
           </div>
         <?php endif; ?>
-      </div>
-    </div>
+      </aside>
 
-    <!-- Карта -->
-    <h2 style="margin-top:18px;">Местоположение</h2>
-    <div id="map" style="height:320px; border:1px solid #ddd; border-radius:6px; margin-bottom:18px;"></div>
+      <!-- RIGHT: описание, карта, фото, отзывы/рейтинг -->
+      <main>
+        <div class="card">
+          <h2 style="margin:0 0 8px 0;">Описание</h2>
+          <p style="margin:0; color:#333;"><?= nl2br(htmlspecialchars($service['description'])) ?></p>
 
-    <!-- Галерея -->
-    <?php if (!empty($photos)): ?>
-      <h2>Фотографии</h2>
-      <div class="photos-grid">
-        <?php foreach ($photos as $p): if (!empty($p['photo']) && file_exists(__DIR__ . '/uploads/' . $p['photo'])): ?>
-          <img src="uploads/<?= htmlspecialchars($p['photo']) ?>" alt="Фото сервиса" style="width:100%; height:180px; object-fit:cover; border-radius:8px; border:1px solid #eee;">
-        <?php endif; endforeach; ?>
-      </div>
-    <?php endif; ?>
+          <div style="margin-top:14px;">
+            <h3 style="margin:0 0 8px 0;">Местоположение</h3>
+            <div id="map" class="map-card"></div>
+          </div>
 
-    <!-- Отзывы -->
-    <section class="reviews" id="reviews">
-      <h2>Отзывы (<?= $reviewsCount ?>)</h2>
-
-      <?php if (empty($reviews)): ?>
-        <p class="muted">Пока нет отзывов — будьте первым!</p>
-      <?php else: ?>
-        <?php foreach ($reviews as $r):
-          $rRating = isset($r['rating']) ? round(floatval($r['rating']), 1) : 0.0;
-          $rPercent = ($rRating / 5) * 100;
-        ?>
-          <div class="review" id="review-<?= (int)$r['id'] ?>">
-            <div>
-              <span class="meta"><?= htmlspecialchars($r['user_name']) ?></span>
-              <span class="time"><?= htmlspecialchars(date('d.m.Y H:i', strtotime($r['created_at']))) ?></span>
-              <div style="display:inline-block; margin-left:10px; position:relative; vertical-align:middle;">
-                <div class="stars-outer" style="font-size:0.9rem;"><span><?= $stars10 ?></span></div>
-                <div class="stars-inner" style="width:<?= $rPercent ?>%; font-size:0.9rem;"><span><?= $stars10 ?></span></div>
+          <?php if (!empty($photos)): ?>
+            <div style="margin-top:14px;">
+              <h3 style="margin:0 0 8px 0;">Фотографии</h3>
+              <div class="photos-grid">
+                <?php foreach ($photos as $p):
+                    $val = $p['photo'] ?? '';
+                    [$url,$fs] = $val ? find_upload_url($val, 'services', $uploadsFsRoot, $uploadsUrlRoot) : ['',''];
+                    if ($url): ?>
+                      <div class="thumb" role="button" tabindex="0" onclick="openLightbox('<?= htmlspecialchars($url) ?>')">
+                        <img src="<?= htmlspecialchars($url) ?>" alt="Фото">
+                      </div>
+                    <?php endif;
+                endforeach; ?>
               </div>
-              <span style="margin-left:8px;color:#333; font-weight:600;"><?= number_format($rRating,1) ?></span>
             </div>
-            <div class="comment"><?= nl2br(htmlspecialchars($r['comment'])) ?></div>
-          </div>
-        <?php endforeach; ?>
-      <?php endif; ?>
 
-      <!-- Форма добавления отзыва -->
-      <div class="add-review" aria-labelledby="add-review-title">
-        <h3 id="add-review-title" style="margin:0 0 8px 0;">Оставить отзыв</h3>
-
-        <form method="post" action="service.php?id=<?= $id ?>#reviews">
-          <?php if (empty($_SESSION['user'])): ?>
-            <label for="user_name">Ваше имя</label>
-            <input id="user_name" type="text" name="user_name" placeholder="Как вас зовут?" required>
-          <?php else: ?>
-            <div style="font-size:.95rem;margin-bottom:8px;">Вы авторизованы как <strong><?= htmlspecialchars($_SESSION['user']['name']) ?></strong></div>
+            <div id="lb" class="lb-overlay" onclick="closeLightbox(event)">
+              <button class="lb-close" onclick="closeLightbox(event)">×</button>
+              <img id="lbImg" class="lb-img" src="" alt="Фото">
+            </div>
           <?php endif; ?>
+        </div>
 
-          <label for="rating">Оценка (0.1 — 5.0)</label>
-          <div class="rating-slider">
-            <input id="rating" type="range" name="rating" min="0.1" max="5.0" step="0.1" value="5.0" oninput="document.getElementById('ratingVal').textContent=this.value">
-            <div class="rating-value" id="ratingVal">5.0</div>
+        <!-- Рейтинг и отзывы -->
+        <section class="card" id="reviews" style="margin-top:18px;">
+          <div style="display:flex; gap:16px; align-items:center; justify-content:space-between;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <div class="avg-num"><?= number_format($avgRating,1) ?></div>
+              <div>
+                <div style="font-weight:800; color:#222;">Средний рейтинг</div>
+                <div class="avg-meta"><?= $reviewsCount ?> отзыв<?= ($reviewsCount%10==1 && $reviewsCount%100!=11)?'':'ов' ?></div>
+              </div>
+            </div>
+
+            <div style="min-width:240px; text-align:right;">
+              <?php $percent = max(0,min(100, ($avgRating/5)*100 )); ?>
+              <span class="stars" style="--percent:<?= $percent ?>%;" aria-hidden="true" title="Рейтинг: <?= number_format($avgRating,1) ?>"></span>
+              <?php if ($userId>0): ?>
+                <form method="post" style="margin-top:8px; display:flex; justify-content:flex-end; gap:8px; align-items:center;">
+                  <input type="hidden" name="action" value="rate">
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    <input id="rateInput" type="range" name="rating" min="0.1" max="5.0" step="0.1" value="<?= htmlspecialchars($avgRating ?: 5.0) ?>" oninput="document.getElementById('rateVal').textContent=this.value">
+                    <div id="rateVal" style="min-width:40px; font-weight:700;"><?= number_format($avgRating ?: 5.0,1) ?></div>
+                  </div>
+                  <button class="btn" type="submit">Поставить оценку</button>
+                </form>
+                <div style="font-size:.88rem;color:var(--muted); margin-top:6px; text-align:right;">Оценку можно изменить в любой момент</div>
+              <?php else: ?>
+                <div style="margin-top:8px;"><a class="btn-ghost" href="login.php" style="text-decoration:none;">Войдите, чтобы оценить</a></div>
+              <?php endif; ?>
+            </div>
           </div>
 
-          <label for="comment">Комментарий</label>
-          <textarea id="comment" name="comment" required placeholder="Ваш отзыв..."></textarea>
+          <h3 style="margin:14px 0 8px 0;">Отзывы</h3>
 
-          <input type="hidden" name="action" value="add_review">
-          <button type="submit" class="submit">Отправить отзыв</button>
-        </form>
-      </div>
-    </section>
+          <?php if (empty($reviews)): ?>
+            <div class="review-card">Пока нет отзывов — будьте первым!</div>
+          <?php else: foreach ($reviews as $r):
+              $rId = (int)$r['id'];
+              $rUserId = (int)($r['user_id'] ?? 0);
+              $rUserName = $r['user_name'] ?? 'Гость';
+              $rRating = (isset($r['rating']) && is_numeric($r['rating']) && $r['rating']>0) ? round((float)$r['rating'],1) : null;
+              $isOwner = $isAdmin || ($userId>0 && (($rUserId>0 && $userId===$rUserId) || ($rUserId===0 && !empty($user['name']) && $user['name']===$rUserName)));
+              $rPercent = $rRating!==null ? max(0,min(100, ($rRating/5)*100 )) : 0;
+          ?>
+            <div class="review-card" id="review-<?= $rId ?>">
+              <div class="review-meta">
+                <div>
+                  <span class="review-name"><?= htmlspecialchars($rUserName) ?></span>
+                  <span class="review-time"><?= htmlspecialchars(date('d.m.Y H:i', strtotime($r['created_at']))) ?></span>
+                </div>
+
+                <?php if ($rRating !== null): ?>
+                  <span class="stars" style="--percent:<?= $rPercent ?>%; font-size:16px; margin-left:12px;" aria-hidden="true"></span>
+                  <div style="font-weight:700; margin-left:8px;"><?= number_format($rRating,1) ?></div>
+                <?php endif; ?>
+
+                <?php if ($isOwner): ?>
+                  <div style="margin-left:auto; display:flex; gap:8px;">
+                    <button class="btn-small" onclick="startEdit(<?= $rId ?>, <?= json_encode($rUserName) ?>, <?= json_encode($r['comment']) ?>)">Изменить</button>
+                    <form method="post" style="display:inline-block;margin:0;">
+                      <input type="hidden" name="action" value="delete_review">
+                      <input type="hidden" name="review_id" value="<?= $rId ?>">
+                      <button type="submit" class="btn-small" onclick="return confirm('Удалить отзыв?')">Удалить</button>
+                    </form>
+                  </div>
+                <?php endif; ?>
+              </div>
+
+              <div class="review-comment"><?= nl2br(htmlspecialchars($r['comment'])) ?></div>
+            </div>
+          <?php endforeach; endif; ?>
+
+          <div class="review-card" style="margin-top:12px;">
+            <h3 style="margin:0 0 8px 0;">Оставить отзыв</h3>
+            <form id="reviewForm" method="post" action="service.php?id=<?= $id ?>#reviews">
+              <?php if ($userId <= 0): ?>
+                <div style="margin-bottom:8px;">
+                  <label>Ваше имя</label>
+                  <input id="user_name" name="user_name" class="input" type="text" placeholder="Как вас зовут?" required>
+                </div>
+              <?php else: ?>
+                <div style="font-size:.95rem;margin-bottom:8px;">Вы: <strong><?= htmlspecialchars($user['name']) ?></strong></div>
+              <?php endif; ?>
+
+              <div>
+                <label>Комментарий</label>
+                <textarea id="comment" name="comment" class="input" rows="5" required placeholder="Поделитесь впечатлением..."></textarea>
+              </div>
+
+              <div style="margin-top:8px; display:flex; gap:8px; justify-content:flex-end;">
+                <input type="hidden" name="action" value="upsert_review">
+                <button type="submit" class="btn">Сохранить отзыв</button>
+                <button type="button" class="btn-ghost" onclick="resetReviewForm()">Очистить</button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </main>
+    </div>
   <?php endif; ?>
-</main>
+</div>
 
 <footer style="padding:20px;text-align:center;color:#777;font-size:.9rem;">
   &copy; <?= date('Y') ?> Mehanik
 </footer>
 
-<!-- Leaflet -->
+<!-- Leaflet + helpers -->
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
 <?php if ($service && !empty($service['latitude']) && !empty($service['longitude'])): ?>
-    const map = L.map('map').setView([<?= $service['latitude'] ?>, <?= $service['longitude'] ?>], 15);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-    L.marker([<?= $service['latitude'] ?>, <?= $service['longitude'] ?>]).addTo(map)
-        .bindPopup("<?= addslashes(htmlspecialchars($service['name'])) ?>").openPopup();
+  const map = L.map('map').setView([<?= $service['latitude'] ?>, <?= $service['longitude'] ?>], 15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  L.marker([<?= $service['latitude'] ?>, <?= $service['longitude'] ?>]).addTo(map).bindPopup("<?= addslashes(htmlspecialchars($service['name'])) ?>").openPopup();
 <?php else: ?>
-    const map = L.map('map').setView([37.95, 58.38], 13);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  const map = L.map('map').setView([37.95, 58.38], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 <?php endif; ?>
+
+// Lightbox
+function openLightbox(src){ const lb=document.getElementById('lb'); const img=document.getElementById('lbImg'); img.src=src; lb.classList.add('active'); }
+function closeLightbox(e){ if (!e || e.target.id==='lb' || (e.target.classList && e.target.classList.contains('lb-close'))) { const lb=document.getElementById('lb'); lb.classList.remove('active'); document.getElementById('lbImg').src=''; } }
+
+// Review edit helpers
+function startEdit(id, userName, comment){
+  const f=document.getElementById('reviewForm'); const c=document.getElementById('comment'); const n=document.getElementById('user_name');
+  if(c) c.value = comment || ''; if(n && userName) n.value = userName || '';
+  f.scrollIntoView({behavior:'smooth', block:'center'}); if(c) c.focus();
+}
+function resetReviewForm(){ document.getElementById('reviewForm').reset(); }
 </script>
 
 <script src="/mehanik/assets/js/main.js"></script>

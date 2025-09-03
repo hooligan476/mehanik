@@ -1,10 +1,10 @@
 <?php
-// public/add-product.php
+// mehanik/public/add-product.php
 require_once __DIR__ . '/../middleware.php';
 require_auth();
 require_once __DIR__ . '/../db.php';
 
-// Попробуем взять $mysqli (MySQLi) или $pdo (PDO) — поддерживаем оба варианта
+// load brands and complex parts (mysqli or pdo support)
 $brands = [];
 $cparts = [];
 
@@ -12,20 +12,20 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
     try {
         $r = $mysqli->query("SELECT id,name FROM brands ORDER BY name");
         while ($row = $r->fetch_assoc()) $brands[] = $row;
-    } catch (Exception $e) {}
+    } catch (Throwable $e) {}
     try {
         $r = $mysqli->query("SELECT id,name FROM complex_parts ORDER BY name");
         while ($row = $r->fetch_assoc()) $cparts[] = $row;
-    } catch (Exception $e) {}
+    } catch (Throwable $e) {}
 } elseif (isset($pdo) && $pdo instanceof PDO) {
     try {
         $st = $pdo->query("SELECT id,name FROM brands ORDER BY name");
         $brands = $st->fetchAll(PDO::FETCH_ASSOC);
-    } catch (Exception $e) {}
+    } catch (Throwable $e) {}
     try {
         $st = $pdo->query("SELECT id,name FROM complex_parts ORDER BY name");
         $cparts = $st->fetchAll(PDO::FETCH_ASSOC);
-    } catch (Exception $e) {}
+    } catch (Throwable $e) {}
 }
 ?>
 <!doctype html>
@@ -36,9 +36,7 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet" href="/mehanik/assets/css/header.css">
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
-
   <style>
-    /* небольшие локальные стили */
     .container { max-width:980px; margin:26px auto; padding:18px; }
     .card { background:#fff; border-radius:12px; padding:18px; box-shadow:0 8px 28px rgba(2,6,23,0.08); }
     h2 { margin-top:0; }
@@ -50,6 +48,9 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
     .actions { margin-top:14px; display:flex; gap:10px; align-items:center; }
     button#submitBtn { background: linear-gradient(180deg,#0b57a4,#074b82); color:#fff; border:0; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:700; }
     .hint { font-size:13px; color:#6b7280; margin-top:6px; }
+    .preview { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+    .preview img { width:100px; height:100px; object-fit:cover; border-radius:8px; border:1px solid #eee; }
+    .logo-preview img { width:120px; height:80px; object-fit:cover; border-radius:8px; border:1px solid #eee; }
     @media (max-width:800px){ .row { flex-direction:column; } }
   </style>
 </head>
@@ -60,10 +61,8 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
   <div class="card">
     <h2>Добавление товара</h2>
 
-    <!-- Форма с отключённым автозаполнением и ловушкой -->
     <form id="addProductForm" enctype="multipart/form-data" method="post" action="/mehanik/api/add-product.php"
           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" novalidate>
-      <!-- ловушка для автозаполнения -->
       <input style="display:none" type="text" name="fakeuser" autocomplete="off">
 
       <label for="p_name">Название *</label>
@@ -72,20 +71,30 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
       <label for="p_manuf">Производитель</label>
       <input id="p_manuf" type="text" name="manufacturer" placeholder="Производитель">
 
-      <label for="p_quality">Состояние *</label>
-      <select id="p_quality" name="quality" required>
-        <option value="New">New</option>
-        <option value="Used">Used</option>
-      </select>
+      <div class="row">
+        <div style="flex:1">
+          <label for="p_quality">Состояние *</label>
+          <select id="p_quality" name="quality" required>
+            <option value="New">New</option>
+            <option value="Used">Used</option>
+          </select>
+        </div>
+        <div style="width:140px">
+          <label for="p_rating">Качество (0.1–9.9) *</label>
+          <input id="p_rating" type="number" name="rating" step="0.1" min="0.1" max="9.9" value="5.0" required>
+        </div>
+      </div>
 
-      <label for="p_rating">Качество (0.1–9.9) *</label>
-      <input id="p_rating" type="number" name="rating" step="0.1" min="0.1" max="9.9" value="5.0" required>
-
-      <label for="p_avail">Наличие *</label>
-      <input id="p_avail" type="number" name="availability" placeholder="Наличие" value="1" required min="0">
-
-      <label for="p_price">Цена *</label>
-      <input id="p_price" type="number" step="0.01" name="price" placeholder="Цена" required min="0">
+      <div class="row">
+        <div style="width:160px">
+          <label for="p_avail">Наличие *</label>
+          <input id="p_avail" type="number" name="availability" placeholder="Наличие" value="1" required min="0">
+        </div>
+        <div style="flex:1">
+          <label for="p_price">Цена *</label>
+          <input id="p_price" type="number" step="0.01" name="price" placeholder="Цена" required min="0">
+        </div>
+      </div>
 
       <label for="ap_brand">Бренд *</label>
       <select id="ap_brand" name="brand_id" required>
@@ -120,15 +129,16 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
       </select>
 
       <label for="p_description">Описание</label>
-      <textarea id="p_description" name="description" placeholder="Описание товара
-Например:
-Колодки хорошие
-Подходит на любую модель тойоты,
-замена бесплатная.
-      "></textarea>
+      <textarea id="p_description" name="description" placeholder="Описание товара (кратко)"></textarea>
 
-      <label for="p_photo">Фото</label>
-      <input id="p_photo" type="file" name="photo" accept="image/*">
+      <label for="p_logo">Логотип (основной)</label>
+      <input id="p_logo" type="file" name="logo" accept="image/*">
+      <div class="logo-preview" id="logoPreview"></div>
+
+      <label for="p_photos">Фотографии (до 10 штук)</label>
+      <input id="p_photos" type="file" name="photos[]" accept="image/*" multiple>
+      <div id="photosPreview" class="preview"></div>
+      <div class="hint">Максимум 10 фото. Форматы: jpg, png, webp. Рекомендуемый размер ≤ 3MB на файл.</div>
 
       <div class="actions">
         <button id="submitBtn" type="submit">Сохранить</button>
@@ -139,36 +149,7 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
 </div>
 
 <script>
-  // Автозаполнение: очистка и отключение «подстановки»
-  (function () {
-    // очистим возможные автозаполненные значения
-    window.addEventListener('load', function () {
-      setTimeout(() => {
-        const f = document.getElementById('addProductForm');
-        try { f.reset(); } catch (e) {}
-        // дополнительная чистка для полей text/number
-        ['p_name','p_manuf','p_rating','p_avail','p_price','p_description'].forEach(id=>{
-          const el = document.getElementById(id);
-          if (el) el.value = el.value ? el.value.trim() : '';
-        });
-      }, 40);
-    });
-
-    window.addEventListener('pagehide', () => {
-      try {
-        const f = document.getElementById('addProductForm');
-        ['p_name','p_manuf','p_rating','p_avail','p_price','p_description','p_photo'].forEach(id=>{
-          const el = document.getElementById(id);
-          if (el) el.value = '';
-        });
-        try { f.reset(); } catch(e){}
-      } catch(e){}
-    });
-  })();
-</script>
-
-<script>
-  // динамическая подгрузка моделей и компонентов (через существующие API)
+  // динамическая подгрузка моделей и компонентов (используем ваши API)
   (function () {
     const brandSel = document.getElementById('ap_brand');
     const modelSel = document.getElementById('ap_model');
@@ -187,9 +168,7 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
           o.value = m.id; o.textContent = m.name;
           modelSel.appendChild(o);
         });
-      } catch (e) {
-        console.error('Ошибка загрузки моделей', e);
-      }
+      } catch (e) { console.error('Ошибка загрузки моделей', e); }
     }
 
     async function loadComponents(cpartId) {
@@ -204,17 +183,13 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
           o.value = c.id; o.textContent = c.name;
           compSel.appendChild(o);
         });
-      } catch (e) {
-        console.error('Ошибка загрузки компонентов', e);
-      }
+      } catch (e) { console.error('Ошибка загрузки компонентов', e); }
     }
 
     if (brandSel) {
       brandSel.addEventListener('change', () => loadModels(brandSel.value));
-      // если бренд уже выбран серверно — подгружаем модели
       if (brandSel.value) loadModels(brandSel.value);
     }
-
     if (cpartSel) {
       cpartSel.addEventListener('change', () => loadComponents(cpartSel.value));
       if (cpartSel.value) loadComponents(cpartSel.value);
@@ -223,24 +198,82 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
 </script>
 
 <script>
-  // Отправка формы — поведение AJAX как у тебя было. Мы оставляем действие формы на /mehanik/api/add-product.php
+  // preview + limit for photos and logo preview
+  (function(){
+    const photosInput = document.getElementById('p_photos');
+    const photosPreview = document.getElementById('photosPreview');
+    const logoInput = document.getElementById('p_logo');
+    const logoPreview = document.getElementById('logoPreview');
+
+    const MAX_PHOTOS = 10;
+    const ALLOWED = ['image/jpeg','image/png','image/webp'];
+    const MAX_SIZE = 3 * 1024 * 1024; // 3MB
+
+    function clearPreview() { photosPreview.innerHTML = ''; }
+    photosInput && photosInput.addEventListener('change', function(){
+      const files = Array.from(this.files || []);
+      if (files.length > MAX_PHOTOS) {
+        alert('Можно загрузить не более ' + MAX_PHOTOS + ' фото.');
+        this.value = ''; clearPreview();
+        return;
+      }
+      clearPreview();
+      files.forEach(f => {
+        if (!ALLOWED.includes(f.type)) return;
+        if (f.size > MAX_SIZE) { alert('Один из файлов слишком большой: ' + f.name); this.value = ''; clearPreview(); return; }
+        const r = new FileReader();
+        r.onload = e => {
+          const img = document.createElement('img');
+          img.src = e.target.result;
+          photosPreview.appendChild(img);
+        };
+        r.readAsDataURL(f);
+      });
+    });
+
+    logoInput && logoInput.addEventListener('change', function(){
+      logoPreview.innerHTML = '';
+      const f = (this.files && this.files[0]) || null;
+      if (!f) return;
+      if (!ALLOWED.includes(f.type)) { alert('Неподдерживаемый формат логотипа'); this.value = ''; return; }
+      if (f.size > MAX_SIZE) { alert('Логотип слишком большой'); this.value = ''; return; }
+      const r = new FileReader();
+      r.onload = e => {
+        const img = document.createElement('img');
+        img.src = e.target.result;
+        logoPreview.appendChild(img);
+      };
+      r.readAsDataURL(f);
+    });
+  })();
+</script>
+
+<script>
+  // AJAX submit with FormData and client validation (reuse your previous logic)
   (function () {
     const form = document.getElementById('addProductForm');
     const btn = document.getElementById('submitBtn');
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
 
-      // простая клиентская валидация
-      const required = [
-        'p_name','p_quality','p_rating','p_avail','p_price','ap_brand','ap_model','ap_cpart','ap_comp'
+      // client-side required fields
+      const requiredSelectors = [
+        '#p_name','#p_quality','#p_rating','#p_avail','#p_price','#ap_brand','#ap_model','#ap_cpart','#ap_comp'
       ];
-      for (let id of required) {
-        const el = document.getElementById(id) || document.querySelector(`[name="${id}"]`);
-        if (el && String(el.value).trim() === '') {
+      for (let sel of requiredSelectors) {
+        const el = document.querySelector(sel);
+        if (!el || String(el.value).trim() === '') {
           alert('Пожалуйста, заполните все обязательные поля.');
-          el.focus();
+          if (el) el.focus();
           return;
         }
+      }
+
+      // photos count check
+      const photosInput = document.getElementById('p_photos');
+      if (photosInput && photosInput.files.length > 10) {
+        alert('Максимум 10 фото.');
+        return;
       }
 
       btn.disabled = true;
@@ -253,7 +286,6 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
         });
         const data = await res.json();
         if (data && data.ok && data.id) {
-          // переход на карточку товара
           window.location.href = `/mehanik/public/product.php?id=${encodeURIComponent(data.id)}`;
         } else {
           alert('Ошибка: ' + (data && data.error ? data.error : 'Неизвестная ошибка при сохранении'));
