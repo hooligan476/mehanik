@@ -1,9 +1,8 @@
 <?php
 // htdocs/mehanik/public/admin/products.php
 session_start();
-
-// доступ только админам
-if (!isset($_SESSION['user']) || ($_SESSION['user']['role'] ?? '') !== 'admin') {
+// доступ только admin или superadmin
+if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'] ?? '', ['admin','superadmin'], true)) {
     header('Location: /mehanik/public/login.php');
     exit;
 }

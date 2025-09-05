@@ -1,6 +1,6 @@
 <?php
-// public/header.php — хедер с кнопкой "Автосервисы / Услуги"
-
+// public/header.php — header с кнопкой "Автосервисы / Услуги"
+// Обновлён: надёжно показывает "Админка" для role=admin OR role=superadmin OR is_superadmin=1
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 // проектный корень (папка mehanik)
@@ -10,34 +10,50 @@ $projectRoot = dirname(__DIR__);
 $configPath = $projectRoot . '/config.php';
 $dbPath     = $projectRoot . '/db.php';
 
+$config = ['base_url' => '/mehanik/public'];
 if (file_exists($configPath)) {
-    $config = require $configPath;
-} else {
-    $config = ['base_url' => '/mehanik/public'];
+    $cfg = require $configPath;
+    if (is_array($cfg)) $config = array_merge($config, $cfg);
 }
 
-// Подключаем db.php, если существует (создаёт $mysqli или $pdo)
-if (file_exists($dbPath)) {
-    require_once $dbPath;
-}
+// Попытка подключения к БД (db.php должен создавать $mysqli или $pdo)
+if (file_exists($dbPath)) require_once $dbPath;
 
 // base URL
 $base = rtrim($config['base_url'] ?? '/mehanik/public', '/');
 
-// Подтягиваем свежие данные пользователя, если есть id в сессии
+// получим данные пользователя из сессии (возможно неполные)
 $user = $_SESSION['user'] ?? null;
-if (!empty($user['id'])) {
-    $uid = (int)$user['id'];
+$uid = !empty($user['id']) ? (int)$user['id'] : 0;
 
+// Если у нас есть id, но в сессии нет нужных полей — подтянем свежие данные из БД
+$needReload = false;
+if ($uid) {
+    // reload when we don't have role/is_superadmin present
+    if (!isset($user['role']) || !isset($user['is_superadmin'])) $needReload = true;
+}
+
+// Try to reload from DB if needed (supports mysqli and PDO)
+if ($needReload && $uid) {
     if (isset($mysqli) && $mysqli instanceof mysqli) {
         try {
-            if ($st = $mysqli->prepare("SELECT id,name,phone,role,created_at,verify_code,status,ip FROM users WHERE id = ? LIMIT 1")) {
+            $sql = "SELECT id,name,phone,role,created_at,verify_code,status,ip,
+                           COALESCE(is_superadmin,0) AS is_superadmin,
+                           COALESCE(can_view,0) AS can_view,
+                           COALESCE(can_edit,0) AS can_edit,
+                           COALESCE(can_delete,0) AS can_delete
+                    FROM users WHERE id = ? LIMIT 1";
+            if ($st = $mysqli->prepare($sql)) {
                 $st->bind_param('i', $uid);
                 $st->execute();
                 $res = $st->get_result();
                 $fresh = $res ? $res->fetch_assoc() : null;
                 $st->close();
                 if ($fresh) {
+                    $fresh['is_superadmin'] = (int)($fresh['is_superadmin'] ?? 0);
+                    $fresh['can_view'] = (int)($fresh['can_view'] ?? 0);
+                    $fresh['can_edit'] = (int)($fresh['can_edit'] ?? 0);
+                    $fresh['can_delete'] = (int)($fresh['can_delete'] ?? 0);
                     $_SESSION['user'] = $fresh;
                     $user = $fresh;
                 }
@@ -45,10 +61,20 @@ if (!empty($user['id'])) {
         } catch (Throwable $e) { /* ignore */ }
     } elseif (isset($pdo) && $pdo instanceof PDO) {
         try {
-            $st = $pdo->prepare("SELECT id,name,phone,role,created_at,verify_code,status,ip FROM users WHERE id = :id LIMIT 1");
+            $sql = "SELECT id,name,phone,role,created_at,verify_code,status,ip,
+                           COALESCE(is_superadmin,0) AS is_superadmin,
+                           COALESCE(can_view,0) AS can_view,
+                           COALESCE(can_edit,0) AS can_edit,
+                           COALESCE(can_delete,0) AS can_delete
+                    FROM users WHERE id = :id LIMIT 1";
+            $st = $pdo->prepare($sql);
             $st->execute([':id' => $uid]);
             $fresh = $st->fetch(PDO::FETCH_ASSOC);
             if ($fresh) {
+                $fresh['is_superadmin'] = (int)($fresh['is_superadmin'] ?? 0);
+                $fresh['can_view'] = (int)($fresh['can_view'] ?? 0);
+                $fresh['can_edit'] = (int)($fresh['can_edit'] ?? 0);
+                $fresh['can_delete'] = (int)($fresh['can_delete'] ?? 0);
                 $_SESSION['user'] = $fresh;
                 $user = $fresh;
             }
@@ -56,16 +82,29 @@ if (!empty($user['id'])) {
     }
 }
 
-// Admin phone for verification (fallback)
+// fallback admin phone
 if (!defined('ADMIN_PHONE_FOR_VERIFY')) define('ADMIN_PHONE_FOR_VERIFY', '+99363722023');
 
-// Путь к CSS
+// compute visibility of admin panel link:
+// visible if user role is 'admin' OR 'superadmin', OR is_superadmin flag == 1,
+// OR (optional) config superadmin_id matches current user id.
+$isAdminPanelVisible = false;
+if (!empty($user)) {
+    $role = strtolower((string)($user['role'] ?? ''));
+    $isSuperFlag = ((int)($user['is_superadmin'] ?? 0) === 1);
+    $cfgSuperId = isset($config['superadmin_id']) ? (int)$config['superadmin_id'] : 0;
+    if ($role === 'admin' || $role === 'superadmin' || $isSuperFlag || ($cfgSuperId && $uid === $cfgSuperId)) {
+        $isAdminPanelVisible = true;
+    }
+}
+
+// css
 $cssPath = htmlspecialchars($base . '/assets/css/header.css', ENT_QUOTES, 'UTF-8');
 ?>
 <link rel="stylesheet" href="<?= $cssPath ?>">
 
 <header class="topbar" role="banner">
-  <div class="wrap" style="display:flex;align-items:center;gap:12px;max-width:1100px;margin:0 auto;">
+  <div class="wrap" style="display:flex;align-items:center;gap:12px;max-width:1100px;margin:0 auto;padding:10px 12px;">
     <a class="brand" href="<?= htmlspecialchars($base . '/index.php') ?>" style="font-weight:700;font-size:1.15rem;color:#fff;text-decoration:none;">Mehanik</a>
 
     <nav class="nav" aria-label="Главная навигация" style="display:flex;gap:10px;align-items:center;margin-left:16px;">
@@ -76,9 +115,11 @@ $cssPath = htmlspecialchars($base . '/assets/css/header.css', ENT_QUOTES, 'UTF-8
         <a href="<?= htmlspecialchars($base . '/add-product.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Добавить товар</a>
         <a href="<?= htmlspecialchars($base . '/my-products.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Мои товары</a>
         <a href="<?= htmlspecialchars($base . '/chat.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Техподдержка чат</a>
-        <?php if (($user['role'] ?? '') === 'admin'): ?>
+
+        <?php if ($isAdminPanelVisible): ?>
           <a href="<?= htmlspecialchars($base . '/admin/index.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Админка</a>
         <?php endif; ?>
+
         <a href="<?= htmlspecialchars($base . '/logout.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Выйти</a>
       <?php else: ?>
         <a href="<?= htmlspecialchars($base . '/login.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Войти</a>
@@ -96,6 +137,9 @@ $cssPath = htmlspecialchars($base . '/assets/css/header.css', ENT_QUOTES, 'UTF-8
         <?php elseif ($status === 'active' || $status === 'approved'): ?>
           <div><strong><?= htmlspecialchars($user['name'] ?? $user['phone']) ?></strong></div>
           <div style="font-size:.85rem;color:#e6f2ff;"><?= htmlspecialchars($user['phone'] ?? '') ?></div>
+          <?php if (!empty($user['is_superadmin']) && (int)$user['is_superadmin'] === 1): ?>
+            <div style="font-size:.75rem;color:#ffd9a8;margin-top:6px;">Superadmin</div>
+          <?php endif; ?>
         <?php elseif ($status === 'rejected'): ?>
           <div style="color:#ffd2d2;font-weight:700;">Профиль отклонён</div>
         <?php else: ?>

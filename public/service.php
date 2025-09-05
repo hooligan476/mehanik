@@ -1,5 +1,5 @@
 <?php
-// public/service.php — фиксы звёзд, логотипа/фото и убрано описание под названием
+// public/service.php — threaded reviews, editing_review_id handling, reply support + staff sidebar + booking btn
 session_start();
 require_once __DIR__ . '/../db.php';
 $config = file_exists(__DIR__ . '/../config.php') ? require __DIR__ . '/../config.php' : ['base_url'=>'/mehanik'];
@@ -11,23 +11,19 @@ $prices = [];
 $avgRating = 0.0;
 $reviewsCount = 0;
 $reviews = [];
+$staff = []; // сотрудники
 
 $user = $_SESSION['user'] ?? null;
 $userId = (int)($user['id'] ?? 0);
 $isAdmin = isset($user['role']) && $user['role'] === 'admin';
 
-/** FS/URL helpers */
+/** FS/URL helpers (kept from previous) */
 $uploadsFsRoot  = realpath(__DIR__ . '/../uploads') ?: (__DIR__ . '/../uploads');
 $uploadsUrlRoot = '/mehanik/uploads';
 
-/**
- * Возвращает корректный [URL, FS-path] для файла...
- * (функция оставлена без изменений)
- */
 function find_upload_url(string $value, string $preferredSubdir = 'services', string $uploadsFsRoot = '', string $uploadsUrlRoot = ''): array {
     $fname = trim($value);
     if ($fname === '') return ['', ''];
-
     if (is_file($fname)) {
         $pos = mb_stripos($fname, DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR);
         if ($pos !== false) {
@@ -41,35 +37,28 @@ function find_upload_url(string $value, string $preferredSubdir = 'services', st
         }
         return ['', $fname];
     }
-
     $pathOnly = $fname;
     if (preg_match('#^https?://#i', $fname)) {
         $p = parse_url($fname, PHP_URL_PATH);
         if ($p !== null) $pathOnly = $p;
     }
-
     $pathOnly = str_replace('\\', '/', $pathOnly);
     $pathOnly = ltrim($pathOnly, '/');
-
     $uploadsPos = stripos($pathOnly, 'uploads/');
     $candidatesFs = [];
-
     if ($uploadsPos !== false) {
         $fromUploads = substr($pathOnly, $uploadsPos + strlen('uploads/'));
         $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . $fromUploads;
         $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . trim($preferredSubdir, '/') . '/' . basename($fromUploads);
     }
-
     $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . trim($preferredSubdir, '/') . '/' . basename($pathOnly);
     $candidatesFs[] = rtrim($uploadsFsRoot, '/') . '/' . basename($pathOnly);
     $candidatesFs[] = $pathOnly;
-
     $checked = [];
     foreach ($candidatesFs as $c) {
         $cNorm = str_replace(['//','\\\\'], ['/','/'], $c);
         if (!in_array($cNorm, $checked, true)) $checked[] = $cNorm;
     }
-
     foreach ($checked as $fs) {
         if (is_file($fs)) {
             $normalizedFs = str_replace('\\', '/', $fs);
@@ -87,20 +76,18 @@ function find_upload_url(string $value, string $preferredSubdir = 'services', st
             return [$url, $fs];
         }
     }
-
     if (stripos($pathOnly, 'uploads/') !== false) {
         $after = substr($pathOnly, stripos($pathOnly, 'uploads/') + strlen('uploads/'));
         $url = rtrim($uploadsUrlRoot, '/') . '/' . str_replace('%2F','/', rawurlencode($after));
         $fallbackFs = rtrim($uploadsFsRoot, '/') . '/' . $after;
         return [$url, $fallbackFs];
     }
-
     $fallbackUrl = rtrim($uploadsUrlRoot, '/') . '/' . trim($preferredSubdir, '/') . '/' . rawurlencode(basename($pathOnly));
     $fallbackFs = rtrim($uploadsFsRoot, '/') . '/' . trim($preferredSubdir, '/') . '/' . basename($pathOnly);
     return [$fallbackUrl, $fallbackFs];
 }
 
-// --------- утилиты БД (наличие колонок/таблиц) ----------
+/** DB utilities */
 function column_exists($mysqli, $table, $col) {
     $table_q = $mysqli->real_escape_string($table);
     $col_q = $mysqli->real_escape_string($col);
@@ -108,6 +95,13 @@ function column_exists($mysqli, $table, $col) {
     return ($res && $res->num_rows > 0);
 }
 
+/** Ensure parent_id exists (best-effort) */
+if (!column_exists($mysqli, 'service_reviews', 'parent_id')) {
+    @ $mysqli->query("ALTER TABLE service_reviews ADD COLUMN parent_id INT NULL DEFAULT NULL, ADD INDEX (parent_id)");
+    // ignore errors — user may not have ALTER rights, but the code below will still work (it will simply not use parent_id)
+}
+
+/** Ratings table ensure (as before) */
 $haveRatingsTable = ($mysqli->query("SHOW TABLES LIKE 'service_ratings'")->num_rows > 0);
 if (!$haveRatingsTable) {
     @ $mysqli->query("
@@ -125,14 +119,14 @@ if (!$haveRatingsTable) {
 }
 $reviewsHasUpdatedAt = column_exists($mysqli, 'service_reviews', 'updated_at');
 $reviewsHasUserId    = column_exists($mysqli, 'service_reviews', 'user_id');
-if (!$reviewsHasUserId) {
-    @ $mysqli->query("ALTER TABLE service_reviews ADD COLUMN user_id INT NULL");
-    $reviewsHasUserId = true;
-}
+$reviewsHasParentId  = column_exists($mysqli, 'service_reviews', 'parent_id');
 
-// ---------------- Handlers ----------------
+/** Staff table (optional) */
+$haveStaffTable = ($mysqli->query("SHOW TABLES LIKE 'service_staff'")->num_rows > 0);
 
-// поставить/обновить оценку
+/* ---------------- Handlers ---------------- */
+
+/* 1) Rate (same as before) */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'rate' && $id > 0) {
     if ($userId > 0 && $haveRatingsTable) {
         $rating = isset($_POST['rating']) ? (float)$_POST['rating'] : null;
@@ -150,80 +144,138 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'rate'
     header("Location: service.php?id={$id}#reviews"); exit;
 }
 
-// добавить/обновить отзыв (текст)
+/* 2) Upsert review: create new or edit (if editing_review_id provided) */
+/* Security: edit only if admin or user_id matches review.user_id (for reviews created by logged users) */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upsert_review' && $id > 0) {
     $comment  = trim($_POST['comment'] ?? '');
     $userName = trim($_POST['user_name'] ?? '');
+    $editingReviewId = isset($_POST['editing_review_id']) ? (int)$_POST['editing_review_id'] : 0;
+    $parentId = isset($_POST['parent_id']) ? (int)$_POST['parent_id'] : 0;
+
     if ($userId > 0 && !empty($user['name'])) $userName = $user['name'];
 
-    if ($comment !== '' && $userName !== '') {
-        if ($userId > 0 && $reviewsHasUserId) {
-            $rid = 0;
-            if ($st = $mysqli->prepare("SELECT id FROM service_reviews WHERE service_id = ? AND user_id = ? LIMIT 1")) {
-                $st->bind_param("ii", $id, $userId);
-                $st->execute();
-                $row = $st->get_result()->fetch_assoc();
-                $st->close();
-                if ($row) $rid = (int)$row['id'];
-            }
-            if ($rid > 0) {
-                $sql = $reviewsHasUpdatedAt
-                    ? "UPDATE service_reviews SET comment=?, user_name=?, updated_at=NOW() WHERE id=? AND service_id=? LIMIT 1"
-                    : "UPDATE service_reviews SET comment=?, user_name=? WHERE id=? AND service_id=? LIMIT 1";
-                if ($u = $mysqli->prepare($sql)) {
-                    $u->bind_param("ssii", $comment, $userName, $rid, $id);
-                    $u->execute();
-                    $u->close();
-                }
-            } else {
-                if ($ins = $mysqli->prepare("INSERT INTO service_reviews (service_id, user_id, user_name, comment, created_at) VALUES (?,?,?,?,NOW())")) {
-                    $ins->bind_param("iiss", $id, $userId, $userName, $comment);
-                    $ins->execute();
-                    $ins->close();
-                }
-            }
+    if ($comment === '') {
+        header("Location: service.php?id={$id}#reviews"); exit;
+    }
+
+    // EDIT existing review
+    if ($editingReviewId > 0) {
+        // fetch owner
+        if ($st = $mysqli->prepare("SELECT user_id FROM service_reviews WHERE id = ? AND service_id = ? LIMIT 1")) {
+            $st->bind_param('ii', $editingReviewId, $id);
+            $st->execute();
+            $ownerRow = $st->get_result()->fetch_assoc();
+            $st->close();
         } else {
-            if ($ins = $mysqli->prepare("INSERT INTO service_reviews (service_id, user_name, comment, created_at) VALUES (?,?,?,NOW())")) {
-                $ins->bind_param("iss", $id, $userName, $comment);
-                $ins->execute();
-                $ins->close();
-            }
+            $ownerRow = null;
+        }
+
+        if (!$ownerRow) {
+            // nothing to edit
+            header("Location: service.php?id={$id}#reviews"); exit;
+        }
+
+        $ownerUserId = (int)($ownerRow['user_id'] ?? 0);
+        $canEdit = false;
+        if ($isAdmin) $canEdit = true;
+        elseif ($ownerUserId > 0 && $userId > 0 && $ownerUserId === $userId) $canEdit = true;
+        // NOTE: anonymous reviews (ownerUserId == 0) cannot be edited by users (only admin)
+        if (!$canEdit) {
+            header("Location: service.php?id={$id}#reviews"); exit;
+        }
+
+        // update comment & user_name (do not change parent_id here)
+        if ($u = $mysqli->prepare("UPDATE service_reviews SET comment = ?, user_name = ?" . ($reviewsHasUpdatedAt ? ", updated_at = NOW()" : "") . " WHERE id = ? AND service_id = ? LIMIT 1")) {
+            $u->bind_param('ssii', $comment, $userName, $editingReviewId, $id);
+            $u->execute();
+            $u->close();
+        }
+
+        header("Location: service.php?id={$id}#reviews"); exit;
+    }
+
+    // INSERT new review (possibly a reply with parent_id)
+    // Validate user_name for anonymous users
+    if ($userId <= 0 && $userName === '') {
+        // anonymous must provide name
+        header("Location: service.php?id={$id}#reviews"); exit;
+    }
+
+    // create appropriate INSERT depending on user presence and parent_id presence
+    if ($userId > 0) {
+        if ($reviewsHasParentId && $parentId > 0) {
+            $ins = $mysqli->prepare("INSERT INTO service_reviews (service_id, user_id, user_name, comment, parent_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())");
+            if ($ins) { $ins->bind_param('iissi', $id, $userId, $userName, $comment, $parentId); $ins->execute(); $ins->close(); }
+        } else {
+            $ins = $mysqli->prepare("INSERT INTO service_reviews (service_id, user_id, user_name, comment, created_at) VALUES (?, ?, ?, ?, NOW())");
+            if ($ins) { $ins->bind_param('iiss', $id, $userId, $userName, $comment); $ins->execute(); $ins->close(); }
+        }
+    } else {
+        // anonymous
+        if ($reviewsHasParentId && $parentId > 0) {
+            $ins = $mysqli->prepare("INSERT INTO service_reviews (service_id, user_name, comment, parent_id, created_at) VALUES (?, ?, ?, ?, NOW())");
+            if ($ins) { $ins->bind_param('issi', $id, $userName, $comment, $parentId); $ins->execute(); $ins->close(); }
+        } else {
+            $ins = $mysqli->prepare("INSERT INTO service_reviews (service_id, user_name, comment, created_at) VALUES (?, ?, ?, NOW())");
+            if ($ins) { $ins->bind_param('iss', $id, $userName, $comment); $ins->execute(); $ins->close(); }
         }
     }
+
     header("Location: service.php?id={$id}#reviews"); exit;
 }
 
-// удалить отзыв
+/* 3) Delete review (recursive children deletion) */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_review' && $id > 0) {
     $rid = (int)($_POST['review_id'] ?? 0);
-    if ($rid > 0) {
-        $canDelete = $isAdmin;
-        if (!$canDelete) {
-            if ($st = $mysqli->prepare("SELECT user_id, user_name FROM service_reviews WHERE id=? AND service_id=? LIMIT 1")) {
-                $st->bind_param("ii", $rid, $id);
-                $st->execute();
-                $row = $st->get_result()->fetch_assoc();
-                $st->close();
-                if ($row) {
-                    $rvUserId = (int)($row['user_id'] ?? 0);
-                    $rvName   = $row['user_name'] ?? '';
-                    if ($rvUserId>0 && $userId>0 && $rvUserId===$userId) $canDelete = true;
-                    elseif ($rvUserId===0 && $userId>0 && !empty($user['name']) && $rvName===$user['name']) $canDelete = true;
-                }
+    if ($rid <= 0) {
+        header("Location: service.php?id={$id}#reviews"); exit;
+    }
+
+    // permission check
+    $canDelete = $isAdmin;
+    if (!$canDelete && $userId > 0) {
+        if ($st = $mysqli->prepare("SELECT user_id FROM service_reviews WHERE id = ? AND service_id = ? LIMIT 1")) {
+            $st->bind_param('ii', $rid, $id);
+            $st->execute();
+            $row = $st->get_result()->fetch_assoc();
+            $st->close();
+            if ($row) {
+                $rvUserId = (int)($row['user_id'] ?? 0);
+                if ($rvUserId > 0 && $rvUserId === $userId) $canDelete = true;
             }
         }
-        if ($canDelete) {
-            if ($del = $mysqli->prepare("DELETE FROM service_reviews WHERE id=? AND service_id=? LIMIT 1")) {
-                $del->bind_param("ii", $rid, $id);
+    }
+
+    if ($canDelete) {
+        // delete recursively: BFS queue
+        $queue = [$rid];
+        while (!empty($queue)) {
+            $cur = array_shift($queue);
+            // find children
+            if ($reviewsHasParentId) {
+                if ($st = $mysqli->prepare("SELECT id FROM service_reviews WHERE parent_id = ?")) {
+                    $st->bind_param('i', $cur);
+                    $st->execute();
+                    $res = $st->get_result();
+                    while ($row = $res->fetch_assoc()) {
+                        $queue[] = (int)$row['id'];
+                    }
+                    $st->close();
+                }
+            }
+            // delete current
+            if ($del = $mysqli->prepare("DELETE FROM service_reviews WHERE id = ? AND service_id = ? LIMIT 1")) {
+                $del->bind_param('ii', $cur, $id);
                 $del->execute();
                 $del->close();
             }
         }
     }
+
     header("Location: service.php?id={$id}#reviews"); exit;
 }
 
-// ---------------- Fetch service and related data ----------------
+/* ---------------- Fetch service and related data ---------------- */
 if ($id > 0) {
     if ($st = $mysqli->prepare("SELECT id, user_id, name, description, logo, contact_name, phone, email, address, latitude, longitude
                                 FROM services WHERE id=? AND (status='approved' OR status='active')")) {
@@ -255,16 +307,84 @@ if ($id > 0) {
                 $st->close();
             }
         }
-        $cols = "id, service_id, user_id, user_name, rating, comment, created_at";
-        if ($reviewsHasUpdatedAt) $cols .= ", updated_at";
-        if ($st = $mysqli->prepare("SELECT $cols FROM service_reviews WHERE service_id=? ORDER BY created_at DESC")) {
-            $st->bind_param("i", $id);
-            $st->execute();
-            $reviews = $st->get_result()->fetch_all(MYSQLI_ASSOC);
-            $st->close();
+
+        // fetch staff if table exists
+        if ($haveStaffTable) {
+            if ($st = $mysqli->prepare("SELECT id, photo, name, position, rating FROM service_staff WHERE service_id=? ORDER BY id ASC")) {
+                $st->bind_param("i", $id);
+                $st->execute();
+                $staff = $st->get_result()->fetch_all(MYSQLI_ASSOC);
+                $st->close();
+            }
         }
-        $reviewsCount = count($reviews);
+
+        // fetch all reviews (flat), then build tree
+        $cols = "id, service_id, user_id, user_name, comment, parent_id, created_at";
+        if ($reviewsHasUpdatedAt) $cols .= ", updated_at";
+        $sql = "SELECT $cols FROM service_reviews WHERE service_id = ? ORDER BY created_at ASC";
+        if ($st = $mysqli->prepare($sql)) {
+            $st->bind_param('i', $id);
+            $st->execute();
+            $flat = $st->get_result()->fetch_all(MYSQLI_ASSOC);
+            $st->close();
+        } else {
+            $flat = [];
+        }
+
+        // build tree
+        $byId = [];
+        foreach ($flat as &$row) {
+            $row['children'] = [];
+            $byId[(int)$row['id']] = $row;
+        }
+        $tree = [];
+        foreach ($byId as $rid => &$r) {
+            $pid = isset($r['parent_id']) && $r['parent_id'] !== null ? (int)$r['parent_id'] : 0;
+            if ($pid && isset($byId[$pid])) {
+                $byId[$pid]['children'][] = &$r;
+            } else {
+                $tree[] = &$r;
+            }
+        }
+        $reviews = $tree;
+        // compute reviewsCount as total flat count
+        $reviewsCount = count($flat);
     }
+}
+
+/* Helper to render reviews recursively (server-side) */
+function render_reviews_tree(array $nodes, $level = 0) {
+    $html = '';
+    foreach ($nodes as $n) {
+        $id = (int)$n['id'];
+        $userName = htmlspecialchars($n['user_name'] ?? 'Гость');
+        $time = htmlspecialchars(date('d.m.Y H:i', strtotime($n['created_at'])));
+        $commentEsc = nl2br(htmlspecialchars($n['comment']));
+        $hasChildren = !empty($n['children']);
+        // indent by level
+        $indent = max(0, $level * 18);
+        $html .= '<div class="review-card" id="review-' . $id . '" style="margin-left:' . $indent . 'px;margin-top:10px;">';
+        $html .= '<div class="review-meta" style="align-items:flex-start;">';
+        $html .= '<div><span class="review-name">' . $userName . '</span> <span class="review-time">' . $time . '</span></div>';
+        // buttons area (rendered by JS for functionality), keep placeholders for layout
+        $html .= '<div style="margin-left:auto; display:flex; gap:8px; align-items:center;">';
+        $html .= '</div>';
+        $html .= '</div>'; // meta
+        $html .= '<div class="review-comment">' . $commentEsc . '</div>';
+        if ($hasChildren) {
+            $html .= render_reviews_tree($n['children'], $level+1);
+        }
+        $html .= '</div>';
+    }
+    return $html;
+}
+
+/* helper toPublicUrl for simple relative -> public mapping */
+function toPublicUrl($rel){
+    if (!$rel) return '';
+    if (preg_match('#^https?://#i',$rel)) return $rel;
+    if (strpos($rel, '/') === 0) return $rel;
+    return '/mehanik/' . ltrim($rel, '/');
 }
 ?>
 <!doctype html>
@@ -279,8 +399,10 @@ if ($id > 0) {
   <style>
     :root{ --accent:#0b57a4; --muted:#6b7280; --card:#fff; --radius:12px; }
     body{ background:#f6f8fb; color:#222; }
-    .container{ max-width:1100px; margin:20px auto; padding:16px; }
-    .svc-grid{ display:grid; grid-template-columns:320px 1fr; gap:20px; align-items:start; }
+    .container{ max-width:1200px; margin:20px auto; padding:16px; }
+
+    /* ТРИ колонки: слева инфо, середина контент, справа сотрудники */
+    .svc-grid{ display:grid; grid-template-columns:320px 1fr 300px; gap:20px; align-items:start; }
     .card{ background:var(--card); border-radius:var(--radius); padding:16px; box-shadow:0 8px 30px rgba(12,20,30,.04); border:1px solid #eef3f8; }
 
     .logo{ width:100%; height:180px; object-fit:cover; border-radius:10px; border:1px solid #e6eef7; background:#fff; }
@@ -296,31 +418,49 @@ if ($id > 0) {
     .thumb{ width:100%; height:110px; overflow:hidden; border-radius:8px; border:1px solid #eee; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; }
     .thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
 
-    /* Рейтинг: ровные звёзды */
+    /* stars */
     .stars{ position:relative; display:inline-block; font-size:20px; line-height:1; letter-spacing:2px; }
     .stars::before{ content:'★★★★★'; color:#e5e7eb; }
     .stars::after{ content:'★★★★★'; color:#fbbf24; position:absolute; left:0; top:0; white-space:nowrap; overflow:hidden; width:var(--percent,0%); }
     .avg-num{ font-size:1.6rem; font-weight:800; color:var(--accent); }
     .avg-meta{ color:var(--muted); font-size:.95rem; }
 
-    .review-card{ background:#fff; border-radius:10px; padding:12px; border:1px solid #eef3f8; margin-bottom:10px; }
+    .review-card{ background:#fff; border-radius:10px; padding:12px; border:1px solid #eef3f8; margin-bottom:8px; }
     .review-meta{ display:flex; align-items:center; gap:8px; }
     .review-name{ font-weight:700; }
     .review-time{ color:var(--muted); font-size:.88rem; margin-left:6px; }
     .review-comment{ margin-top:8px; color:#333; white-space:pre-wrap; }
+
     .btn{ background:var(--accent); color:#fff; padding:10px 14px; border-radius:10px; border:0; cursor:pointer; font-weight:700; }
     .btn-ghost{ background:transparent; color:var(--accent); border:1px solid #dbeeff; padding:10px 14px; border-radius:10px; font-weight:700; }
     .btn-small{ padding:6px 8px; border-radius:8px; background:#fff; border:1px solid #eef3f8; cursor:pointer; }
+    .btn-wide{ width:100%; display:block; text-align:center; margin-top:10px; }
 
-    .inline-editor{ margin-top:8px; display:flex; flex-direction:column; gap:8px; }
-    .inline-editor textarea{ width:100%; min-height:80px; padding:8px; border-radius:8px; border:1px solid #e6eef7; box-sizing:border-box; }
+    .reply-indicator{ font-size:.9rem; color:var(--muted); margin-bottom:8px; display:flex; gap:8px; align-items:center; }
 
     .lb-overlay{ position:fixed; inset:0; background:rgba(0,0,0,.8); display:none; align-items:center; justify-content:center; z-index:1200; padding:20px; }
     .lb-overlay.active{ display:flex; }
     .lb-img{ max-width:calc(100% - 40px); max-height:calc(100% - 40px); box-shadow:0 10px 40px rgba(0,0,0,.6); border-radius:8px; }
     .lb-close{ position:absolute; top:18px; right:18px; background:#fff; border-radius:6px; padding:6px 8px; cursor:pointer; font-weight:700; }
 
-    @media(max-width:1000px){ .svc-grid{ grid-template-columns:1fr; } .logo{ height:220px; } }
+    /* Инпуты (правим высоту текстового поля комментария) */
+    .input{ width:100%; border:1px solid #e6e7eb; border-radius:10px; padding:10px 12px; font-size:14px; box-sizing:border-box; }
+    textarea.input{ min-height:90px; max-height:220px; line-height:1.4; resize:vertical; }
+
+    /* Правая колонка: сотрудники */
+    .staff-card{ background:#fff; border:1px solid #eef3f8; border-radius:12px; padding:12px; display:flex; gap:10px; align-items:flex-start; }
+    .staff-photo{ width:64px; height:64px; border-radius:50%; object-fit:cover; border:1px solid #e6eef7; background:#fff; }
+    .staff-name{ font-weight:800; }
+    .staff-pos{ color:var(--muted); font-size:.92rem; margin-top:2px; }
+    .staff-rating{ margin-top:6px; font-size:.95rem; color:#111; }
+
+    @media(max-width:1200px){
+      .container{ max-width:1100px; }
+    }
+    @media(max-width:1000px){
+      .svc-grid{ grid-template-columns:1fr; }
+      .logo{ height:220px; }
+    }
   </style>
 </head>
 <body>
@@ -330,13 +470,12 @@ if ($id > 0) {
   <?php if (!$service): ?>
     <div class="card">Сервис не найден или ещё не одобрен.</div>
   <?php else:
-      // логотип — попробуем найти корректный URL и FS
       [$logoUrl,$logoFs] = !empty($service['logo'])
         ? find_upload_url($service['logo'], 'services', $uploadsFsRoot, $uploadsUrlRoot)
         : ['', ''];
   ?>
     <div class="svc-grid">
-      <!-- LEFT: логотип, название, контакты, цены -->
+      <!-- LEFT -->
       <aside class="card">
         <?php if ($logoUrl): ?>
           <img src="<?= htmlspecialchars($logoUrl) ?>" alt="Логотип" class="logo">
@@ -353,6 +492,9 @@ if ($id > 0) {
           <?php if (!empty($service['address'])): ?><div><strong>Адрес:</strong> <?= htmlspecialchars($service['address']) ?></div><?php endif; ?>
         </div>
 
+        <!-- Кнопка записи -->
+        <a class="btn btn-wide" href="booking.php?service_id=<?= $id ?>">Записаться</a>
+
         <?php if (!empty($prices)): ?>
           <div class="prices card" style="margin-top:12px; padding:12px;">
             <div style="font-weight:800; margin-bottom:8px;">Цены на услуги</div>
@@ -368,7 +510,7 @@ if ($id > 0) {
         <?php endif; ?>
       </aside>
 
-      <!-- RIGHT: описание, карта, фото, отзывы/рейтинг -->
+      <!-- MIDDLE -->
       <main>
         <div class="card">
           <h2 style="margin:0 0 8px 0;">Описание</h2>
@@ -402,7 +544,7 @@ if ($id > 0) {
           <?php endif; ?>
         </div>
 
-        <!-- Рейтинг и отзывы -->
+        <!-- Reviews & Rating -->
         <section class="card" id="reviews" style="margin-top:18px;">
           <div style="display:flex; gap:16px; align-items:center; justify-content:space-between;">
             <div style="display:flex; align-items:center; gap:12px;">
@@ -434,74 +576,67 @@ if ($id > 0) {
 
           <h3 style="margin:14px 0 8px 0;">Отзывы</h3>
 
-          <?php if (empty($reviews)): ?>
-            <div class="review-card">Пока нет отзывов — будьте первым!</div>
-          <?php else: foreach ($reviews as $r):
-              $rId = (int)$r['id'];
-              $rUserId = (int)($r['user_id'] ?? 0);
-              $rUserName = $r['user_name'] ?? 'Гость';
-              $rRating = (isset($r['rating']) && is_numeric($r['rating']) && $r['rating']>0) ? round((float)$r['rating'],1) : null;
-              $isOwner = $isAdmin || ($userId>0 && (($rUserId>0 && $userId===$rUserId) || ($rUserId===0 && !empty($user['name']) && $user['name']===$rUserName)));
-              $rPercent = $rRating!==null ? max(0,min(100, ($rRating/5)*100 )) : 0;
+          <?php
+            // Render reviews tree (we will render interactive buttons with JS)
+            function render_tree_for_display($nodes, $userId, $isAdmin) {
+                $out = '';
+                foreach ($nodes as $n) {
+                    $rid = (int)$n['id'];
+                    $userName = htmlspecialchars($n['user_name'] ?? 'Гость');
+                    $time = htmlspecialchars(date('d.m.Y H:i', strtotime($n['created_at'])));
+                    $commentHtml = nl2br(htmlspecialchars($n['comment']));
+                    $canManage = false;
+                    if ($isAdmin) $canManage = true;
+                    elseif ($userId > 0 && isset($n['user_id']) && (int)$n['user_id'] === $userId) $canManage = true;
+                    $out .= '<div class="review-card" id="review-' . $rid . '">';
+                    $out .= '<div class="review-meta">';
+                    $out .= '<div><span class="review-name">' . $userName . '</span> <span class="review-time">' . $time . '</span></div>';
+                    $out .= '<div style="margin-left:auto; display:flex; gap:8px;">';
+                    $out .= '<button class="btn-small" type="button" onclick="startReply(' . $rid . ', ' . json_encode($userName) . ')">Ответить</button>';
+                    if ($canManage) {
+                        $out .= '<button class="btn-small" type="button" onclick="startEdit(' . $rid . ')">Изменить</button>';
+                        $out .= '<form method="post" style="display:inline-block;margin:0;"><input type="hidden" name="action" value="delete_review"><input type="hidden" name="review_id" value="' . $rid . '"><button type="submit" class="btn-small" onclick="return confirm(\'Удалить отзыв?\')">Удалить</button></form>';
+                    }
+                    $out .= '</div></div>'; // review-meta
+                    $out .= '<div class="review-comment">' . $commentHtml . '</div>';
+                    if (!empty($n['children'])) {
+                        $out .= '<div style="margin-left:18px; margin-top:8px;">' . render_tree_for_display($n['children'], $userId, $isAdmin) . '</div>';
+                    }
+                    $out .= '</div>';
+                }
+                return $out;
+            }
+
+            if (empty($reviews)) {
+                echo '<div class="review-card">Пока нет отзывов — будьте первым!</div>';
+            } else {
+                echo render_tree_for_display($reviews, $userId, $isAdmin);
+            }
           ?>
-            <div class="review-card" id="review-<?= $rId ?>">
-              <div class="review-meta">
-                <div>
-                  <span class="review-name"><?= htmlspecialchars($rUserName) ?></span>
-                  <span class="review-time"><?= htmlspecialchars(date('d.m.Y H:i', strtotime($r['created_at']))) ?></span>
-                </div>
 
-                <?php if ($rRating !== null): ?>
-                  <span class="stars" style="--percent:<?= $rPercent ?>%; font-size:16px; margin-left:12px;" aria-hidden="true"></span>
-                  <div style="font-weight:700; margin-left:8px;"><?= number_format($rRating,1) ?></div>
-                <?php endif; ?>
-
-                <div style="margin-left:auto; display:flex; gap:8px;">
-                  <?php if ($userId>0): ?>
-                    <!-- Ответить доступен всем залогиненным -->
-                    <button class="btn-small" onclick="startReply(<?= $rId ?>)">Ответить</button>
-                  <?php endif; ?>
-
-                  <?php if ($isOwner): ?>
-                    <!-- Изменить доступен только владельцу/админу (фронтенд/инлайн) -->
-                    <button class="btn-small" onclick="startEditInline(<?= $rId ?>)">Изменить</button>
-                    <form method="post" style="display:inline-block;margin:0;">
-                      <input type="hidden" name="action" value="delete_review">
-                      <input type="hidden" name="review_id" value="<?= $rId ?>">
-                      <button type="submit" class="btn-small" onclick="return confirm('Удалить отзыв?')">Удалить</button>
-                    </form>
-                  <?php endif; ?>
-                </div>
-              </div>
-
-              <div class="review-comment"><?= nl2br(htmlspecialchars($r['comment'])) ?></div>
-
-              <!-- контейнер для inline-редактора (вставляем сюда textarea при редактировании) -->
-              <div class="inline-editor" data-review-id="<?= $rId ?>" style="display:none;"></div>
+          <!-- Add / edit form -->
+          <div class="review-card" style="margin-top:12px;">
+            <div id="replyIndicator" class="reply-indicator" style="display:none;">
+              <span id="replyToText"></span>
+              <button class="btn-ghost" type="button" onclick="cancelReply()">Отменить ответ</button>
             </div>
-          <?php endforeach; endif; ?>
 
-          <div class="review-card" style="margin-top:12px;" id="mainReviewFormCard">
-            <h3 style="margin:0 0 8px 0;">Оставить отзыв</h3>
+            <h3 style="margin:0 0 8px 0;" id="formTitle">Оставить отзыв</h3>
             <form id="reviewForm" method="post" action="service.php?id=<?= $id ?>#reviews">
               <?php if ($userId <= 0): ?>
                 <div style="margin-bottom:8px;">
                   <label>Ваше имя</label>
                   <input id="user_name" name="user_name" class="input" type="text" placeholder="Как вас зовут?" required>
                 </div>
-              <?php else: ?>
-                <div style="font-size:.95rem;margin-bottom:8px;">Вы: <strong><?= htmlspecialchars($user['name']) ?></strong></div>
               <?php endif; ?>
 
               <div>
                 <label>Комментарий</label>
-                <textarea id="comment" name="comment" class="input" rows="5" required placeholder="Поделитесь впечатлением..."></textarea>
+                <textarea id="comment" name="comment" class="input" rows="4" required placeholder="Поделитесь впечатлением..."></textarea>
               </div>
 
-              <!-- вспомогательное поле: если захотите редактировать конкретный отзыв по id -->
               <input type="hidden" id="editing_review_id" name="editing_review_id" value="">
-              <!-- reply target (frontend only for now) -->
-              <input type="hidden" id="reply_to" name="reply_to" value="">
+              <input type="hidden" id="parent_id" name="parent_id" value="0">
 
               <div style="margin-top:8px; display:flex; gap:8px; justify-content:flex-end;">
                 <input type="hidden" name="action" value="upsert_review">
@@ -510,8 +645,44 @@ if ($id > 0) {
               </div>
             </form>
           </div>
+
         </section>
       </main>
+
+      <!-- RIGHT: сотрудники -->
+      <aside class="card">
+        <h3 style="margin:0 0 8px 0;">Сотрудники</h3>
+        <?php if (empty($staff)): ?>
+          <div style="color:#6b7280;">Информация пока не добавлена.</div>
+        <?php else: ?>
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <?php foreach ($staff as $s):
+              $photoVal = $s['photo'] ?? '';
+              [$stUrl, $stFs] = $photoVal ? find_upload_url($photoVal, 'staff', $uploadsFsRoot, $uploadsUrlRoot) : ['',''];
+              $stName = htmlspecialchars($s['name'] ?? 'Без имени');
+              $stPos  = htmlspecialchars($s['position'] ?? '');
+              $stRating = isset($s['rating']) ? (float)$s['rating'] : 0.0;
+              $stPercent = max(0, min(100, ($stRating/5)*100));
+            ?>
+              <div class="staff-card">
+                <?php if ($stUrl): ?>
+                  <img class="staff-photo" src="<?= htmlspecialchars($stUrl) ?>" alt="<?= $stName ?>">
+                <?php else: ?>
+                  <div class="staff-photo" style="display:flex;align-items:center;justify-content:center;color:#9aa3af;">—</div>
+                <?php endif; ?>
+                <div>
+                  <div class="staff-name"><?= $stName ?></div>
+                  <?php if ($stPos): ?><div class="staff-pos"><?= $stPos ?></div><?php endif; ?>
+                  <div class="staff-rating">
+                    <span class="stars" style="--percent:<?= $stPercent ?>%;" title="Рейтинг сотрудника: <?= number_format($stRating,1) ?>"></span>
+                    <span style="margin-left:6px; font-weight:700;"><?= number_format($stRating,1) ?></span>
+                  </div>
+                </div>
+              </div>
+            <?php endforeach; ?>
+          </div>
+        <?php endif; ?>
+      </aside>
     </div>
   <?php endif; ?>
 </div>
@@ -530,135 +701,84 @@ if ($id > 0) {
 <?php else: ?>
   const map = L.map('map').setView([37.95, 58.38], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-<?php endif; ?> 
+<?php endif; ?>
 
 // Lightbox
 function openLightbox(src){ const lb=document.getElementById('lb'); const img=document.getElementById('lbImg'); img.src=src; lb.classList.add('active'); }
 function closeLightbox(e){ if (!e || e.target.id==='lb' || (e.target.classList && e.target.classList.contains('lb-close'))) { const lb=document.getElementById('lb'); lb.classList.remove('active'); document.getElementById('lbImg').src=''; } }
 
-// Inline edit: открывает textarea в карточке отзыва, можно сохранить или отменить.
-// Сохранение выполняется стандартным POST с action=upsert_review и редиректом на страницу.
-// (Сервер по текущей реализации обновляет отзывы залогиненного пользователя.)
-function startEditInline(id){
+// Review edit helpers — take content from DOM
+function startEdit(id){
   try {
     const card = document.getElementById('review-' + id);
     if (!card) return;
-    const container = card.querySelector('.inline-editor');
-    if (!container) return;
-
-    // если редактор уже открыт — ничего не делаем
-    if (container.dataset.mode === 'edit') return;
-
-    // достаём текущие значения
     const commentNode = card.querySelector('.review-comment');
     const nameNode = card.querySelector('.review-name');
-    const currentComment = commentNode ? commentNode.innerText.trim() : '';
-    const currentName = nameNode ? nameNode.innerText.trim() : '';
+    const commentText = commentNode ? commentNode.innerText.trim() : '';
+    const userNameText = nameNode ? nameNode.innerText.trim() : '';
 
-    // очистим контейнер и покажем
-    container.style.display = 'block';
-    container.dataset.mode = 'edit';
-    container.innerHTML = '';
+    const form = document.getElementById('reviewForm');
+    const commentEl = document.getElementById('comment');
+    const nameEl = document.getElementById('user_name');
+    const editIdEl = document.getElementById('editing_review_id');
+    const parentIdEl = document.getElementById('parent_id');
+    const formTitle = document.getElementById('formTitle');
+    const replyInd = document.getElementById('replyIndicator');
 
-    // textarea
-    const ta = document.createElement('textarea');
-    ta.className = 'input';
-    ta.rows = 5;
-    ta.value = currentComment;
-    container.appendChild(ta);
+    if (commentEl) commentEl.value = commentText;
+    if (nameEl && userNameText) nameEl.value = userNameText;
+    if (editIdEl) editIdEl.value = id;
+    if (parentIdEl) parentIdEl.value = 0; // editing — remove parent change
+    if (formTitle) formTitle.textContent = 'Редактировать отзыв';
+    if (replyInd) replyInd.style.display = 'none';
 
-    // кнопки
-    const btns = document.createElement('div');
-    btns.style.display = 'flex';
-    btns.style.justifyContent = 'flex-end';
-    btns.style.gap = '8px';
-    btns.style.marginTop = '6px';
-
-    const saveBtn = document.createElement('button');
-    saveBtn.type = 'button';
-    saveBtn.className = 'btn';
-    saveBtn.textContent = 'Сохранить';
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.className = 'btn-ghost';
-    cancelBtn.textContent = 'Отмена';
-
-    btns.appendChild(cancelBtn);
-    btns.appendChild(saveBtn);
-    container.appendChild(btns);
-
-    // focus
-    ta.focus();
-
-    // Save handler: создаём временную форму и отправляем
-    saveBtn.addEventListener('click', function(){
-      const commentVal = ta.value.trim();
-      if (commentVal === '') { alert('Комментарий не может быть пустым'); ta.focus(); return; }
-
-      // build form
-      const f = document.createElement('form');
-      f.method = 'post';
-      f.action = window.location.pathname + window.location.search + '#reviews';
-      // action
-      const a = document.createElement('input'); a.type='hidden'; a.name='action'; a.value='upsert_review'; f.appendChild(a);
-      // comment
-      const c = document.createElement('input'); c.type='hidden'; c.name='comment'; c.value = commentVal; f.appendChild(c);
-      // user_name (if exists in DOM main form or nameNode)
-      let userName = '';
-      const mainNameInput = document.getElementById('user_name');
-      if (mainNameInput && mainNameInput.value) userName = mainNameInput.value;
-      else if (currentName) userName = currentName;
-      const un = document.createElement('input'); un.type='hidden'; un.name='user_name'; un.value = userName; f.appendChild(un);
-
-      // optional: include editing_review_id (server currently ignores, but left for future)
-      const eid = document.createElement('input'); eid.type='hidden'; eid.name='editing_review_id'; eid.value = id; f.appendChild(eid);
-
-      document.body.appendChild(f);
-      f.submit();
-    });
-
-    cancelBtn.addEventListener('click', function(){
-      container.innerHTML = '';
-      container.style.display = 'none';
-      container.dataset.mode = '';
-    });
-
+    form.scrollIntoView({behavior:'smooth', block:'center'});
+    if (commentEl) commentEl.focus();
   } catch (e) {
-    console.error('startEditInline error', e);
+    console.error('startEdit error', e);
   }
 }
 
-// Reply: заполняет основную форму префиксом @UserName и скроллит к форме.
-function startReply(id){
+// Reply to a review
+function startReply(id, userName){
   try {
-    const card = document.getElementById('review-' + id);
-    if (!card) return;
-    const nameNode = card.querySelector('.review-name');
-    const userNameText = nameNode ? nameNode.innerText.trim() : '';
-    const mainForm = document.getElementById('reviewForm');
+    const form = document.getElementById('reviewForm');
     const commentEl = document.getElementById('comment');
     const nameEl = document.getElementById('user_name');
-    const replyToEl = document.getElementById('reply_to');
+    const parentIdEl = document.getElementById('parent_id');
+    const editIdEl = document.getElementById('editing_review_id');
+    const formTitle = document.getElementById('formTitle');
+    const replyInd = document.getElementById('replyIndicator');
+    const replyToText = document.getElementById('replyToText');
 
-    if (nameEl && userNameText && !nameEl.value) {
-      // если имя не заполнено — проставляем ( у залогиненных оно обычно скрыто )
-      nameEl.value = userNameText;
+    if (editIdEl) editIdEl.value = ''; // cancel editing
+    if (parentIdEl) parentIdEl.value = id;
+    if (formTitle) formTitle.textContent = 'Ответить на отзыв';
+    if (replyInd && replyToText) {
+      replyToText.textContent = 'Ответ пользователю: ' + (userName || 'Гость');
+      replyInd.style.display = 'flex';
     }
-
+    form.scrollIntoView({behavior:'smooth', block:'center'});
     if (commentEl) {
-      const prefix = userNameText ? ('@' + userNameText + ' ') : '';
-      // если уже есть префикс, не дублируем
-      if (!commentEl.value.startsWith(prefix)) commentEl.value = prefix + commentEl.value;
+      commentEl.placeholder = 'Ваш ответ...';
+      commentEl.focus();
     }
-
-    if (replyToEl) replyToEl.value = id;
-
-    // скроллим к форме и фокусируем
-    if (mainForm) mainForm.scrollIntoView({behavior:'smooth', block:'center'});
-    if (commentEl) commentEl.focus();
   } catch (e) {
     console.error('startReply error', e);
   }
+}
+
+function cancelReply(){
+  const parentIdEl = document.getElementById('parent_id');
+  const editIdEl = document.getElementById('editing_review_id');
+  const formTitle = document.getElementById('formTitle');
+  const replyInd = document.getElementById('replyIndicator');
+  const commentEl = document.getElementById('comment');
+  if (parentIdEl) parentIdEl.value = 0;
+  if (editIdEl) editIdEl.value = '';
+  if (formTitle) formTitle.textContent = 'Оставить отзыв';
+  if (replyInd) replyInd.style.display = 'none';
+  if (commentEl) commentEl.placeholder = 'Поделитесь впечатлением...';
 }
 
 function resetReviewForm(){
@@ -666,9 +786,13 @@ function resetReviewForm(){
   if (!f) return;
   f.reset();
   const editIdEl = document.getElementById('editing_review_id');
+  const parentIdEl = document.getElementById('parent_id');
+  const formTitle = document.getElementById('formTitle');
+  const replyInd = document.getElementById('replyIndicator');
   if (editIdEl) editIdEl.value = '';
-  const replyToEl = document.getElementById('reply_to');
-  if (replyToEl) replyToEl.value = '';
+  if (parentIdEl) parentIdEl.value = 0;
+  if (formTitle) formTitle.textContent = 'Оставить отзыв';
+  if (replyInd) replyInd.style.display = 'none';
 }
 </script>
 

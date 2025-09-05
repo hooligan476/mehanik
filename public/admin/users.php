@@ -1,14 +1,14 @@
 <?php
-// htdocs/mehanik/admin/users.php
+// public/admin/users.php (simplified — "Права" ведёт на permissions.php)
 session_start();
 
-// доступ только админу
-if (!isset($_SESSION['user']) || ($_SESSION['user']['role'] ?? '') !== 'admin') {
+// доступ только admin или superadmin
+if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'] ?? '', ['admin','superadmin'], true)) {
     header('Location: /mehanik/public/login.php');
     exit;
 }
 
-// DB
+// DB (как было)
 $dbHost = '127.0.0.1';
 $dbName = 'mehanik';
 $dbUser = 'root';
@@ -40,12 +40,12 @@ if (!in_array($sort, $allowedSort)) $sort = 'created_at';
 if (!in_array($dir, ['asc','desc'])) $dir = 'desc';
 
 $totalUsers = $pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
-$totalPages = ceil($totalUsers / $perPage);
+$totalPages = max(1, (int)ceil($totalUsers / $perPage));
 
 // выборка
 $sql = "SELECT id, name, phone, role, created_at, last_seen, verify_code, status, ip
         FROM users 
-        ORDER BY $sort $dir
+        ORDER BY {$sort} {$dir}
         LIMIT :limit OFFSET :offset";
 $stmt = $pdo->prepare($sql);
 $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
@@ -55,7 +55,7 @@ $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $basePublic = '/mehanik/public';
 
-// helper для ссылки сортировки: включает текущую страницу, переключает направление
+// helper для ссылки сортировки
 function sortLink($col, $title, $currentSort, $currentDir, $page) {
     $dir = ($currentSort === $col && $currentDir === 'asc') ? 'desc' : 'asc';
     $arrow = '';
@@ -66,7 +66,6 @@ function sortLink($col, $title, $currentSort, $currentDir, $page) {
     return "<a href=\"{$q}\" class=\"sort-link\">{$title}{$arrow}</a>";
 }
 
-// читаемая метка для текущей сортировки
 $labelMap = [
     'id' => 'ID',
     'name' => 'Имя',
@@ -78,6 +77,11 @@ $labelMap = [
 ];
 $currentSortLabel = $labelMap[$sort] ?? $sort;
 $currentDirLabel = $dir === 'asc' ? 'по возрастанию' : 'по убыванию';
+
+// определим, является ли текущий пользователь superadmin (на всякий случай)
+$currentUserRole = $_SESSION['user']['role'] ?? '';
+$isSuperadmin = ($currentUserRole === 'superadmin');
+
 ?>
 <!doctype html>
 <html lang="ru">
@@ -85,51 +89,39 @@ $currentDirLabel = $dir === 'asc' ? 'по возрастанию' : 'по убы
 <meta charset="utf-8">
 <title>Админ — Пользователи</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/mehanik/assets/css/users.css"> <!-- если вынесли стили -->
 <style>
-/* Полноэкранный контейнер */
+/* Базовые стили (фолбэк, если users.css нет) */
 body { font-family: Arial, sans-serif; background:#f5f6fa; margin:0; padding:0; }
 .header-wrap { padding:16px 24px; background:#fff; border-bottom:1px solid #edf0f4; box-shadow:0 1px 0 rgba(0,0,0,0.02); }
 .header-wrap h2 { margin:0; font-size:20px; color:#111827; }
 .container { width:100%; max-width:none; margin:0; padding:20px 24px; box-sizing:border-box; }
-
-/* Статусы сообщений */
 .message { margin:10px 0; padding:10px; border-radius:6px; }
 .message.success { background:#eafaf1; color:#2e7d32; border:1px solid #c8e6c9; }
 .message.error { background:#fdecea; color:#c62828; border:1px solid #f5c6cb; }
-
-/* Инфо о сортировке */
 .sort-info { margin:12px 0 6px; color:#374151; font-size:14px; }
-
-/* Таблица на всю ширину */
 .table-wrap { overflow-x:auto; background:transparent; }
 table { border-collapse: collapse; width:100%; min-width:1100px; background:#fff; border-radius:8px; box-shadow:0 6px 18px rgba(2,6,23,0.04); }
-thead th {
-    position:sticky; top:0; background:#fbfcfe; z-index:2;
-    text-align:left; padding:12px; border-bottom:1px solid #eef2f6; font-weight:700; color:#374151;
-}
+thead th { position:sticky; top:0; background:#fbfcfe; z-index:2; text-align:left; padding:12px; border-bottom:1px solid #eef2f6; font-weight:700; color:#374151; }
 th, td { padding:12px 14px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
 tbody tr:hover td { background:#fbfbfd; }
-
-/* Ссылка сортировки */
 .sort-link { text-decoration:none; color:#0f172a; display:inline-block; }
-th.sorted { background:#e8f1ff; } /* подсветка текущего столбца в заголовке */
-
-/* Кнопки действий */
+th.sorted { background:#e8f1ff; }
 .button { padding:6px 12px; border:none; border-radius:6px; cursor:pointer; margin:2px; font-weight:600; }
 .approve { background:#2ecc71; color:white; }
 .reject { background:#e74c3c; color:white; }
 .pending { background:#f39c12; color:white; }
 
-/* Пагинация */
+.btn-rights { padding:6px 10px; border-radius:6px; background:#0b57a4; color:#fff; text-decoration:none; font-weight:700; border:0; cursor:pointer; display:inline-block; }
+.btn-rights.viewonly { background:#6c757d; }
+
 .pagination { margin-top:16px; text-align:center; padding-bottom:12px; }
 .pagination a { padding:8px 12px; border:1px solid #e6e9ef; margin:2px; border-radius:8px; text-decoration:none; color:#0f172a; display:inline-block; }
 .pagination a.active { background:#0b57a4; color:#fff; border-color:#0b57a4; }
 
-/* Мелкие правки */
 .ip-cell { color:#6b7280; font-size:13px; }
 .small { font-size:13px; color:#6b7280; }
 
-/* Адаптив */
 @media (max-width:900px){
   table { min-width:900px; }
   th, td { padding:10px; }
@@ -141,7 +133,6 @@ th.sorted { background:#e8f1ff; } /* подсветка текущего сто�
 <div class="header-wrap">
   <h2>Админ — Пользователи</h2>
 </div>
-
 
 <div class="container">
   <?php if ($msg): ?><div class="message success"><?=htmlspecialchars($msg)?></div><?php endif; ?>
@@ -196,6 +187,17 @@ th.sorted { background:#e8f1ff; } /* подсветка текущего сто�
                         <button class="button pending" type="submit">Вернуть в Pending</button>
                     </form>
                 <?php endif; ?>
+
+                <!-- Права: переход на отдельную страницу управления правами -->
+                <?php
+                  // ссылка ведёт на permissions.php?user_id=ID — там будем реализовывать сохранение/просмотр прав
+                  $permUrl = $basePublic . '/admin/permissions.php?user_id=' . (int)$u['id'];
+                ?>
+                <a href="<?= htmlspecialchars($permUrl) ?>"
+                   class="btn-rights <?= $isSuperadmin ? '' : 'viewonly' ?>"
+                   title="<?= $isSuperadmin ? 'Управление правами' : 'Просмотр прав' ?>">
+                  Права
+                </a>
             </td>
         </tr>
       <?php endforeach; ?>
@@ -209,5 +211,6 @@ th.sorted { background:#e8f1ff; } /* подсветка текущего сто�
     <?php endfor; ?>
   </div>
 </div>
+
 </body>
 </html>
