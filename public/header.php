@@ -1,5 +1,5 @@
 <?php
-// public/header.php — header с кнопкой "Автосервисы / Услуги"
+// public/header.php — header с кнопкой "Сервисы/Услуги" и "Автомаркет"
 // Обновлён: надёжно показывает "Админка" для role=admin OR role=superadmin OR is_superadmin=1
 if (session_status() === PHP_SESSION_NONE) session_start();
 
@@ -22,14 +22,13 @@ if (file_exists($dbPath)) require_once $dbPath;
 // base URL
 $base = rtrim($config['base_url'] ?? '/mehanik/public', '/');
 
-// получим данные пользователя из сессии (возможно неполные)
+// получим данные пользователя из сессии
 $user = $_SESSION['user'] ?? null;
 $uid = !empty($user['id']) ? (int)$user['id'] : 0;
 
-// Если у нас есть id, но в сессии нет нужных полей — подтянем свежие данные из БД
+// reload данных если не хватает
 $needReload = false;
 if ($uid) {
-    // reload when we don't have role/is_superadmin present
     if (!isset($user['role']) || !isset($user['is_superadmin'])) $needReload = true;
 }
 
@@ -85,9 +84,7 @@ if ($needReload && $uid) {
 // fallback admin phone
 if (!defined('ADMIN_PHONE_FOR_VERIFY')) define('ADMIN_PHONE_FOR_VERIFY', '+99363722023');
 
-// compute visibility of admin panel link:
-// visible if user role is 'admin' OR 'superadmin', OR is_superadmin flag == 1,
-// OR (optional) config superadmin_id matches current user id.
+// compute visibility of admin panel link
 $isAdminPanelVisible = false;
 if (!empty($user)) {
     $role = strtolower((string)($user['role'] ?? ''));
@@ -108,12 +105,13 @@ $cssPath = htmlspecialchars($base . '/assets/css/header.css', ENT_QUOTES, 'UTF-8
     <a class="brand" href="<?= htmlspecialchars($base . '/index.php') ?>" style="font-weight:700;font-size:1.15rem;color:#fff;text-decoration:none;">Mehanik</a>
 
     <nav class="nav" aria-label="Главная навигация" style="display:flex;gap:10px;align-items:center;margin-left:16px;">
-      <!-- Кнопка для автосервисов -->
-      <a href="<?= htmlspecialchars($base . '/services.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Автосервисы / Услуги</a>
+      <!-- Кнопка для сервисов -->
+      <a href="<?= htmlspecialchars($base . '/services.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Сервисы/Услуги</a>
+      <!-- Новая кнопка Автомаркет -->
+      <a href="<?= htmlspecialchars($base . '/market.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Авто</a>
 
       <?php if (!empty($user)): ?>
-        <a href="<?= htmlspecialchars($base . '/add-product.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Добавить товар</a>
-        <a href="<?= htmlspecialchars($base . '/my-products.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Мои товары</a>
+        <a href="<?= htmlspecialchars($base . '/my-products.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Запчасти</a>
         <a href="<?= htmlspecialchars($base . '/chat.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Техподдержка чат</a>
 
         <?php if ($isAdminPanelVisible): ?>

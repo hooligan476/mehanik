@@ -29,11 +29,43 @@ $config = require __DIR__.'/../config.php';
       .sidebar { order:2; }
       .products { order:1; }
     }
+
+    /* ---- переключатель Авто | Запчасть (пустышка) ---- */
+    .switch-wrap { max-width:1200px; margin: 12px auto; padding: 0 18px; box-sizing: border-box; }
+    .type-switch { display:inline-flex; gap:8px; background: transparent; padding: 6px; border-radius: 8px; align-items:center; }
+    .switch-btn {
+      border: 1px solid #d1d5db;
+      background: #fff;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      color: #111827;
+      box-shadow: 0 1px 2px rgba(2,6,23,0.04);
+    }
+    .switch-btn.active {
+      background: #0b57a4;
+      color: #fff;
+      border-color: #0b57a4;
+    }
+    /* небольшой responsive */
+    @media (max-width:480px){
+      .type-switch { gap:6px; }
+      .switch-btn { padding:7px 10px; font-size:14px; }
+    }
   </style>
 </head>
 <body>
 
 <?php require_once __DIR__ . '/header.php'; ?>
+
+<!-- Переключатель типа каталога (Авто | Запчасть) — пустышка -->
+<div class="switch-wrap" aria-hidden="false">
+  <div class="type-switch" role="tablist" aria-label="Тип каталога">
+    <button type="button" class="switch-btn active" data-type="auto" role="tab" aria-selected="true">Авто</button>
+    <button type="button" class="switch-btn" data-type="part" role="tab" aria-selected="false">Запчасть</button>
+  </div>
+</div>
 
 <main class="layout">
   <aside class="sidebar" aria-label="Фильтр товаров">
@@ -163,6 +195,24 @@ $config = require __DIR__.'/../config.php';
         applyFilters();
       });
     }
+
+    // маленький обработчик переключателя (пока пустышка — просто переключает класс active)
+    const switchBtns = document.querySelectorAll('.switch-btn');
+    switchBtns.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        switchBtns.forEach(b => {
+          b.classList.remove('active');
+          b.setAttribute('aria-selected', 'false');
+        });
+        e.currentTarget.classList.add('active');
+        e.currentTarget.setAttribute('aria-selected', 'true');
+
+        // TODO: здесь позже добавим реальную логику переключения (фильтрация / запросы)
+        // const type = e.currentTarget.getAttribute('data-type');
+        // console.log('switched to', type);
+      });
+    });
+
   });
 })();
 </script>

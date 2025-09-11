@@ -85,7 +85,7 @@ try {
 
       <a href="<?= htmlspecialchars($base . '/admin/services.php') ?>" class="btn-catalog">Сервисы/Услуги <?php if($pendingServices) echo "<span class='badge'>{$pendingServices}</span>"; ?></a>
 
-      <a href="<?= htmlspecialchars($base . '/admin/products.php') ?>">Товары <?php if($pendingProducts) echo "<span class='badge'>{$pendingProducts}</span>"; ?></a>
+      <a href="<?= htmlspecialchars($base . '/admin/products.php') ?>">Запчасти<?php if($pendingProducts) echo "<span class='badge'>{$pendingProducts}</span>"; ?></a>
       <a href="<?= htmlspecialchars($base . '/admin/chats.php') ?>">Чаты</a>
       <a href="<?= htmlspecialchars($base . '/admin/cars.php') ?>" class="btn-catalog">Бренд/Модель</a>
       <a href="<?= htmlspecialchars($base . '/index.php') ?>">Открыть сайт</a>
