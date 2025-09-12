@@ -53,6 +53,9 @@ $config = require __DIR__.'/../config.php';
       .type-switch { gap:6px; }
       .switch-btn { padding:7px 10px; font-size:14px; }
     }
+
+    /* Disabled-select appearance */
+    select[disabled] { opacity: 0.6; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -75,7 +78,7 @@ $config = require __DIR__.'/../config.php';
     <select id="brand" name="brand"><option value="">Все бренды</option></select>
 
     <label for="model">Модель</label>
-    <select id="model" name="model"><option value="">Все модели</option></select>
+    <select id="model" name="model" disabled><option value="">Сначала выберите бренд</option></select>
 
     <label for="year_from">Год (от)</label>
     <input type="number" id="year_from" name="year_from" placeholder="1998">
@@ -87,7 +90,7 @@ $config = require __DIR__.'/../config.php';
     <select id="complex_part" name="complex_part"><option value="">Все комплексные части</option></select>
 
     <label for="component">Компонент</label>
-    <select id="component" name="component"><option value="">Все компоненты</option></select>
+    <select id="component" name="component" disabled><option value="">Сначала выберите комплексную часть</option></select>
 
     <label for="search">Поиск (название / артикул / ID)</label>
     <input type="text" id="search" name="search" placeholder="например: 123 или тормоза">
@@ -107,113 +110,338 @@ $config = require __DIR__.'/../config.php';
 <script src="/mehanik/assets/js/productList.js"></script>
 
 <script>
-/* Автозагрузка lookups и автоприменение фильтров
-   Работает либо через runFilter() (если он определён в main.js),
-   либо через productList.loadProducts(filters).
-*/
 (function(){
-  // простая debounce реализация, не зависим от main.js
   function debounce(fn, ms = 300) {
     let t;
     return (...args) => { clearTimeout(t); t = setTimeout(()=>fn(...args), ms); };
   }
 
-  // собирает только непустые фильтры
+  const brandEl = document.getElementById('brand');
+  const modelEl = document.getElementById('model');
+  const yearFromEl = document.getElementById('year_from');
+  const yearToEl = document.getElementById('year_to');
+  const complexPartEl = document.getElementById('complex_part');
+  const componentEl = document.getElementById('component');
+  const searchEl = document.getElementById('search');
+
+  // in-memory lookups
+  let lookups = {
+    brands: [],              // ['Toyota', 'BMW', ...]
+    modelsByBrand: {},       // { 'Toyota': ['Corolla','Camry'], ... }
+    complex_parts: [],       // ['Двигатель', 'Тормоза', ...]
+    componentsByComplex: {}  // { 'Двигатель': ['Фильтр','Ремень'], ... }
+  };
+
+  function setSelectOptions(sel, items, placeholderText = 'Все') {
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = '';
+    const opt0 = document.createElement('option');
+    opt0.value = '';
+    opt0.textContent = placeholderText;
+    sel.appendChild(opt0);
+    if (!items || !items.length) {
+      // leave only placeholder
+      sel.value = '';
+      return;
+    }
+    for (const it of items) {
+      let value, label;
+      if (typeof it === 'object') {
+        value = String(it.value ?? it.id ?? it.name ?? '');
+        label = String(it.label ?? it.name ?? it.value ?? value);
+      } else {
+        value = label = String(it);
+      }
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = label;
+      sel.appendChild(o);
+    }
+    // restore prev value if still present
+    if (prev && Array.from(sel.options).some(o => o.value === prev)) {
+      sel.value = prev;
+    } else {
+      sel.selectedIndex = 0;
+    }
+  }
+
+  function updateModelOptionsForBrand(brand) {
+    if (!modelEl) return;
+    if (!brand) {
+      modelEl.innerHTML = '<option value="">Сначала выберите бренд</option>';
+      modelEl.disabled = true;
+      modelEl.value = '';
+      return;
+    }
+    const models = lookups.modelsByBrand[brand] || [];
+    if (!models.length) {
+      modelEl.innerHTML = '<option value="">Модели не найдены</option>';
+      modelEl.disabled = true;
+      modelEl.value = '';
+      return;
+    }
+    setSelectOptions(modelEl, models, 'Все модели');
+    modelEl.disabled = false;
+  }
+
+  function updateComponentOptionsForComplex(complex) {
+    if (!componentEl) return;
+    if (!complex) {
+      componentEl.innerHTML = '<option value="">Сначала выберите комплексную часть</option>';
+      componentEl.disabled = true;
+      componentEl.value = '';
+      return;
+    }
+    const comps = lookups.componentsByComplex[complex] || [];
+    if (!comps.length) {
+      componentEl.innerHTML = '<option value="">Компоненты не найдены</option>';
+      componentEl.disabled = true;
+      componentEl.value = '';
+      return;
+    }
+    setSelectOptions(componentEl, comps, 'Все компоненты');
+    componentEl.disabled = false;
+  }
+
   function collectFilters() {
-    const getVal = id => {
-      const el = document.getElementById(id);
-      return el ? String(el.value).trim() : '';
-    };
+    const getVal = el => el ? String(el.value).trim() : '';
+    const brand = getVal(brandEl);
+    const model = brand ? getVal(modelEl) : '';  // only pass model if brand set
+    const complex = getVal(complexPartEl);
+    const component = complex ? getVal(componentEl) : ''; // only pass component if complex selected
     return {
-      brand: getVal('brand'),
-      model: getVal('model'),
-      year_from: getVal('year_from'),
-      year_to: getVal('year_to'),
-      complex_part: getVal('complex_part'),
-      component: getVal('component'),
-      q: getVal('search')
+      brand,
+      model,
+      year_from: getVal(yearFromEl),
+      year_to: getVal(yearToEl),
+      complex_part: complex,
+      component,
+      q: getVal(searchEl)
     };
   }
 
-  // применить фильтр: предпочитаем runFilter, иначе productList.loadProducts
   async function applyFilters() {
     const filters = collectFilters();
     if (typeof runFilter === 'function') {
-      // runFilter ожидает данные из DOM сам — просто вызовем
       try { await runFilter(); } catch(e){ console.warn('runFilter error', e); }
-    } else if (window.productList && typeof productList.loadProducts === 'function') {
+      return;
+    }
+    if (window.productList && typeof productList.loadProducts === 'function') {
       try { await productList.loadProducts(filters); } catch(e){ console.warn('productList.loadProducts error', e); }
-    } else {
-      console.warn('Нет runFilter и нет productList.loadProducts');
+      return;
+    }
+    // nothing to do otherwise
+  }
+
+  // merge lookups from various possible shapes
+  function mergeLookups(data) {
+    if (!data || typeof data !== 'object') return;
+
+    // brands
+    if (Array.isArray(data.brands)) {
+      lookups.brands = data.brands.map(b => (typeof b === 'object' ? (b.name ?? b.value ?? '') : String(b))).filter(Boolean);
+    } else if (Array.isArray(data.brand_list)) {
+      lookups.brands = data.brand_list.map(b => b.name || b).filter(Boolean);
+    }
+
+    // modelsByBrand preferred shape
+    if (data.modelsByBrand && typeof data.modelsByBrand === 'object') {
+      lookups.modelsByBrand = {};
+      for (const k of Object.keys(data.modelsByBrand)) {
+        const arr = Array.isArray(data.modelsByBrand[k]) ? data.modelsByBrand[k] : [data.modelsByBrand[k]];
+        lookups.modelsByBrand[k] = arr.map(m => (typeof m === 'object' ? (m.name ?? m.value ?? '') : String(m))).filter(Boolean);
+      }
+    } else if (Array.isArray(data.models)) {
+      // models: [{brand, name}] or [{make, model}]
+      lookups.modelsByBrand = lookups.modelsByBrand || {};
+      for (const m of data.models) {
+        const brand = (m.brand ?? m.make ?? '') + '';
+        const name = (m.name ?? m.model ?? '') + '';
+        if (!brand || !name) continue;
+        if (!lookups.modelsByBrand[brand]) lookups.modelsByBrand[brand] = [];
+        lookups.modelsByBrand[brand].push(name);
+      }
+      // unique
+      for (const b in lookups.modelsByBrand) {
+        lookups.modelsByBrand[b] = Array.from(new Set(lookups.modelsByBrand[b]));
+      }
+    } else if (Array.isArray(data.model_list)) {
+      lookups.modelsByBrand = lookups.modelsByBrand || {};
+      for (const m of data.model_list) {
+        const brand = (m.brand ?? '') + '';
+        const name = (m.model ?? '') + '';
+        if (!brand || !name) continue;
+        if (!lookups.modelsByBrand[brand]) lookups.modelsByBrand[brand] = [];
+        lookups.modelsByBrand[brand].push(name);
+      }
+    }
+
+    // complex_parts
+    if (Array.isArray(data.complex_parts)) {
+      lookups.complex_parts = data.complex_parts.map(x => (typeof x === 'object' ? (x.name ?? x.value ?? '') : String(x))).filter(Boolean);
+    } else if (Array.isArray(data.complex_list)) {
+      lookups.complex_parts = data.complex_list.map(x => x.name ?? x).filter(Boolean);
+    }
+
+    // components by complex part
+    if (data.componentsByComplex && typeof data.componentsByComplex === 'object') {
+      lookups.componentsByComplex = {};
+      for (const k of Object.keys(data.componentsByComplex)) {
+        const arr = Array.isArray(data.componentsByComplex[k]) ? data.componentsByComplex[k] : [data.componentsByComplex[k]];
+        lookups.componentsByComplex[k] = arr.map(c => (typeof c === 'object' ? (c.name ?? c.value ?? '') : String(c))).filter(Boolean);
+      }
+    } else if (Array.isArray(data.components)) {
+      // components: [{complex_part, name}] or [{group,component}]
+      lookups.componentsByComplex = lookups.componentsByComplex || {};
+      for (const c of data.components) {
+        const complex = (c.complex_part ?? c.group ?? '') + '';
+        const name = (c.name ?? c.component ?? '') + '';
+        if (!complex || !name) continue;
+        if (!lookups.componentsByComplex[complex]) lookups.componentsByComplex[complex] = [];
+        lookups.componentsByComplex[complex].push(name);
+      }
+      for (const k in lookups.componentsByComplex) {
+        lookups.componentsByComplex[k] = Array.from(new Set(lookups.componentsByComplex[k]));
+      }
+    }
+
+    // derive brands if missing but modelsByBrand keys exist
+    if ((!lookups.brands || !lookups.brands.length) && lookups.modelsByBrand && Object.keys(lookups.modelsByBrand).length) {
+      lookups.brands = Object.keys(lookups.modelsByBrand).sort();
     }
   }
 
-  // инициализация при загрузке
-  document.addEventListener('DOMContentLoaded', async function(){
-    // 1) Сначала попытаемся вызвать loadLookups() (если определена) — она подгружает lookups и товары
+  async function loadLookupsSmart() {
+    // 1) try global loadLookups()
     if (typeof loadLookups === 'function') {
       try {
-        await loadLookups();
-      } catch (e) {
-        console.warn('loadLookups failed', e);
+        const res = await loadLookups();
+        if (res && typeof res === 'object') {
+          mergeLookups(res);
+        }
+      } catch (e) { console.warn('loadLookups failed', e); }
+    }
+
+    // 2) try productList.lookups
+    if (window.productList && window.productList.lookups) {
+      mergeLookups(window.productList.lookups);
+    }
+
+    // 3) try fetch endpoint
+    if ((!lookups.brands || !lookups.brands.length) && (!lookups.modelsByBrand || Object.keys(lookups.modelsByBrand).length === 0)) {
+      try {
+        const resp = await fetch('/mehanik/api/lookups.php', { credentials: 'same-origin' });
+        if (resp.ok) {
+          const data = await resp.json();
+          mergeLookups(data);
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // populate UI
+    setSelectOptions(brandEl, lookups.brands, 'Все бренды');
+    if (Array.isArray(lookups.complex_parts) && lookups.complex_parts.length) {
+      setSelectOptions(complexPartEl, lookups.complex_parts, 'Все комплексные части');
+    } else {
+      // leave placeholder
+      setSelectOptions(complexPartEl, [], 'Все комплексные части');
+    }
+
+    // initial model/component state
+    if (!brandEl.value) updateModelOptionsForBrand('');
+    else updateModelOptionsForBrand(brandEl.value);
+
+    if (!complexPartEl.value) updateComponentOptionsForComplex('');
+    else updateComponentOptionsForComplex(complexPartEl.value);
+  }
+
+  // listeners
+  if (brandEl) {
+    brandEl.addEventListener('change', function(){
+      const b = this.value;
+      updateModelOptionsForBrand(b);
+      // applying filters
+      applyFilters();
+    });
+  }
+  if (modelEl) {
+    modelEl.addEventListener('change', function(){
+      // if brand not selected, clear model
+      if (!brandEl || !brandEl.value) {
+        modelEl.value = '';
       }
-    } else if (window.productList && typeof productList.loadProducts === 'function') {
-      // вызываем без фильтров — покажет все товары и подгрузит lookups
-      try { await productList.loadProducts(); } catch(e){ console.warn('productList.loadProducts() init failed', e); }
-    }
-
-    // 2) Затем явный вызов applyFilters чтобы убедиться, что отображение синхронизировано
-    await applyFilters();
-
-    // 3) навешиваем listeners — изменения селектов и полей будут автоматически применять фильтры
-    const idsChange = ['brand','model','year_from','year_to','complex_part','component'];
-    idsChange.forEach(id => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.addEventListener('change', () => {
-        applyFilters();
-      });
+      applyFilters();
     });
+  }
 
-    // Поиск с debounce
-    const search = document.getElementById('search');
-    if (search) {
-      search.addEventListener('input', debounce(()=>applyFilters(), 300));
-    }
-
-    // Сброс фильтров
-    const clearBtn = document.getElementById('clearFilters');
-    if (clearBtn) {
-      clearBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        ['brand','model','year_from','year_to','complex_part','component','search'].forEach(id=>{
-          const el = document.getElementById(id);
-          if (!el) return;
-          if (el.tagName.toLowerCase() === 'select') el.selectedIndex = 0;
-          else el.value = '';
-        });
-        applyFilters();
-      });
-    }
-
-    // маленький обработчик переключателя (пока пустышка — просто переключает класс active)
-    const switchBtns = document.querySelectorAll('.switch-btn');
-    switchBtns.forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        switchBtns.forEach(b => {
-          b.classList.remove('active');
-          b.setAttribute('aria-selected', 'false');
-        });
-        e.currentTarget.classList.add('active');
-        e.currentTarget.setAttribute('aria-selected', 'true');
-
-        // TODO: здесь позже добавим реальную логику переключения (фильтрация / запросы)
-        // const type = e.currentTarget.getAttribute('data-type');
-        // console.log('switched to', type);
-      });
+  if (complexPartEl) {
+    complexPartEl.addEventListener('change', function(){
+      const c = this.value;
+      updateComponentOptionsForComplex(c);
+      applyFilters();
     });
+  }
+  if (componentEl) {
+    componentEl.addEventListener('change', function(){
+      if (!complexPartEl || !complexPartEl.value) componentEl.value = '';
+      applyFilters();
+    });
+  }
 
+  [yearFromEl, yearToEl].forEach(el=>{
+    if (!el) return;
+    el.addEventListener('change', () => applyFilters());
   });
+
+  if (searchEl) searchEl.addEventListener('input', debounce(()=>applyFilters(), 300));
+
+  const clearBtn = document.getElementById('clearFilters');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      ['brand','model','year_from','year_to','complex_part','component','search'].forEach(id=>{
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.tagName.toLowerCase() === 'select') el.selectedIndex = 0;
+        else el.value = '';
+      });
+      updateModelOptionsForBrand('');
+      updateComponentOptionsForComplex('');
+      applyFilters();
+    });
+  }
+
+  // switcher UI only
+  const switchBtns = document.querySelectorAll('.switch-btn');
+  switchBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      switchBtns.forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+      });
+      e.currentTarget.classList.add('active');
+      e.currentTarget.setAttribute('aria-selected', 'true');
+    });
+  });
+
+  // init
+  document.addEventListener('DOMContentLoaded', async function(){
+    await loadLookupsSmart();
+
+    // initial products load
+    try {
+      if (window.productList && typeof productList.loadProducts === 'function') {
+        await productList.loadProducts();
+      } else if (typeof runFilter === 'function') {
+        await runFilter();
+      }
+    } catch (e) { console.warn('Initial products load failed', e); }
+
+    // sync filters (ensures UI state -> products)
+    await applyFilters();
+  });
+
 })();
 </script>
 

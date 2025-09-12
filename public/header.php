@@ -1,5 +1,5 @@
 <?php
-// public/header.php — header с кнопкой "Сервисы/Услуги" и "Автомаркет"
+// public/header.php — header с кнопками (Сервисы/Услуги, Авто) и логикой видимости для неавторизованных
 // Обновлён: надёжно показывает "Админка" для role=admin OR role=superadmin OR is_superadmin=1
 if (session_status() === PHP_SESSION_NONE) session_start();
 
@@ -105,10 +105,12 @@ $cssPath = htmlspecialchars($base . '/assets/css/header.css', ENT_QUOTES, 'UTF-8
     <a class="brand" href="<?= htmlspecialchars($base . '/index.php') ?>" style="font-weight:700;font-size:1.15rem;color:#fff;text-decoration:none;">Mehanik</a>
 
     <nav class="nav" aria-label="Главная навигация" style="display:flex;gap:10px;align-items:center;margin-left:16px;">
-      <!-- Кнопка для сервисов -->
-      <a href="<?= htmlspecialchars($base . '/services.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Сервисы/Услуги</a>
-      <!-- Новая кнопка Автомаркет -->
-      <a href="<?= htmlspecialchars($base . '/market.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Авто</a>
+      <?php if (!empty($user)): // показываем ссылки на Сервисы/Услуги и Авто только авторизованным ?>
+        <!-- Кнопка для сервисов -->
+        <a href="<?= htmlspecialchars($base . '/services.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Сервисы/Услуги</a>
+        <!-- Кнопка Авто (ведёт на страницу моих авто) -->
+        <a href="<?= htmlspecialchars($base . '/my-cars.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Авто</a>
+      <?php endif; ?>
 
       <?php if (!empty($user)): ?>
         <a href="<?= htmlspecialchars($base . '/my-products.php') ?>" style="color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;">Запчасти</a>

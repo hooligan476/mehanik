@@ -78,17 +78,43 @@
     // models (with brand relation if provided)
     if (Array.isArray(lookups.models) && document.querySelector('#model')) {
       const sel = document.querySelector('#model');
-      const fillModels = (brandId) => {
-        sel.innerHTML = `<option value="">Все модели</option>` +
-          lookups.models
-            .filter(m => !brandId || String(m.brand_id) === String(brandId))
-            .map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`).join('');
-        if (prev.model) sel.value = prev.model;
-      };
       const brandSel = document.querySelector('#brand');
-      fillModels(brandSel ? brandSel.value : null);
+
+      const fillModels = (brandId) => {
+        // Если бренд не выбран — показываем подсказку и блокируем селект
+        if (!brandId) {
+          sel.innerHTML = `<option value="">Сначала выберите бренд</option>`;
+          sel.disabled = true;
+          sel.value = '';
+          return;
+        }
+
+        // Наполняем только модели выбранного бренда
+        const filtered = lookups.models
+          .filter(m => String(m.brand_id) === String(brandId))
+          .map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`);
+
+        sel.innerHTML = `<option value="">Все модели</option>` + filtered.join('');
+        sel.disabled = filtered.length === 0;
+        // восстановим предыдущую модель только если она присутствует в текущем списке
+        if (prev.model && Array.from(sel.options).some(o => o.value === prev.model)) {
+          sel.value = prev.model;
+        } else {
+          sel.selectedIndex = 0;
+        }
+      };
+
+      // Инициализация (если бренд уже выбран)
+      if (brandSel && brandSel.value) fillModels(brandSel.value);
+      else {
+        sel.innerHTML = `<option value="">Сначала выберите бренд</option>`;
+        sel.disabled = true;
+      }
+
       if (brandSel) {
-        brandSel.addEventListener('change', () => fillModels(brandSel.value));
+        brandSel.addEventListener('change', () => {
+          fillModels(brandSel.value);
+        });
       }
     }
 
@@ -103,15 +129,37 @@
     // components (depend on complex_part)
     if (Array.isArray(lookups.components) && document.querySelector('#component')) {
       const sel = document.querySelector('#component');
-      const fillComps = (cpId) => {
-        sel.innerHTML = `<option value="">Все компоненты</option>` +
-          lookups.components
-            .filter(c => !cpId || String(c.complex_part_id) === String(cpId))
-            .map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
-        if (prev.component) sel.value = prev.component;
-      };
       const cpSel = document.querySelector('#complex_part');
-      fillComps(cpSel ? cpSel.value : null);
+
+      const fillComps = (cpId) => {
+        // Если комплексная часть не выбрана — показываем подсказку и блокируем селект
+        if (!cpId) {
+          sel.innerHTML = `<option value="">Сначала выберите комплексную часть</option>`;
+          sel.disabled = true;
+          sel.value = '';
+          return;
+        }
+
+        const filtered = lookups.components
+          .filter(c => String(c.complex_part_id) === String(cpId))
+          .map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`);
+
+        sel.innerHTML = `<option value="">Все компоненты</option>` + filtered.join('');
+        sel.disabled = filtered.length === 0;
+
+        if (prev.component && Array.from(sel.options).some(o => o.value === prev.component)) {
+          sel.value = prev.component;
+        } else {
+          sel.selectedIndex = 0;
+        }
+      };
+
+      if (cpSel && cpSel.value) fillComps(cpSel.value);
+      else {
+        sel.innerHTML = `<option value="">Сначала выберите комплексную часть</option>`;
+        sel.disabled = true;
+      }
+
       if (cpSel) cpSel.addEventListener('change', () => fillComps(cpSel.value));
     }
   }

@@ -45,7 +45,10 @@ $uploadsPrefix = '/mehanik/uploads/products/';
       --pending: #b45309;
     }
     .page-wrap{ max-width:1200px; margin:18px auto; padding:12px; }
-    h2.page-title{ margin:6px 0 18px; font-size:1.5rem; display:flex;align-items:center;gap:12px; }
+    /* верхняя панель (заголовок + кнопки) */
+    .topbar-row{ display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+    .page-title{ margin:0; font-size:1.5rem; display:flex;align-items:center;gap:12px; font-weight:700; }
+    .tools { margin-left:auto; display:flex; gap:10px; align-items:center; }
     .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:18px; }
     @media (max-width:992px){ .grid { grid-template-columns: repeat(2,1fr); } }
     @media (max-width:600px){ .grid { grid-template-columns: 1fr; } }
@@ -88,6 +91,8 @@ $uploadsPrefix = '/mehanik/uploads/products/';
 
     .no-products { text-align:center; padding:40px 10px; color:var(--muted); background:#fff; border-radius:10px; box-shadow:0 6px 18px rgba(2,6,23,0.04); }
     .tools { display:flex; gap:10px; align-items:center; margin-left:auto; }
+    .btn { display:inline-block; background:#0b57a4; color:#fff; padding:8px 12px; border-radius:8px; text-decoration:none; font-weight:600; cursor:pointer; border:0; }
+    .btn-ghost { background:#6b7280; color:#fff; }
   </style>
 </head>
 <body>
@@ -95,7 +100,12 @@ $uploadsPrefix = '/mehanik/uploads/products/';
 <?php require_once __DIR__ . '/header.php'; ?>
 
 <div class="page-wrap">
-  <h2 class="page-title">Мои товары</h2>
+  <div class="topbar-row">
+    <h2 class="page-title">Мои товары</h2>
+    <div class="tools">
+      <a href="/mehanik/public/add-product.php" class="btn">➕ Добавить товар</a>
+    </div>
+  </div>
 
   <?php if (!empty($products)): ?>
     <div class="grid" role="list">
@@ -167,8 +177,7 @@ $uploadsPrefix = '/mehanik/uploads/products/';
     <div class="no-products">
       <p style="font-weight:700;margin:0 0 8px;">У вас пока нет товаров</p>
       <p style="margin:0 0 12px;color:var(--muted)">Нажмите кнопку «Добавить товар», чтобы создать первое объявление.</p>
-      <a href="/mehanik/public/add-product.php" class="btn" style="background:linear-gradient(180deg,var(--accent), #074b82);color:#fff;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:700;">➕ Добавить товар</a>
-    </div>
+      </div>
   <?php endif; ?>
 </div>
 
