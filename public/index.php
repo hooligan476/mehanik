@@ -15,90 +15,126 @@ $config = require __DIR__.'/../config.php';
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
 
   <style>
-    .layout { display: grid; grid-template-columns: 260px 1fr; gap: 20px; padding: 18px; max-width:1200px; margin: 0 auto; }
-    .sidebar { background:#fafafa; padding:14px; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,.04); }
-    .sidebar h3 { margin-top:0; }
-    .sidebar label { display:block; margin-top:10px; font-weight:600; font-size:.95rem; }
-    .sidebar select, .sidebar input { width:100%; padding:8px 10px; margin-top:6px; border:1px solid #ddd; border-radius:6px; box-sizing:border-box; }
+    :root{
+      --card-bg:#ffffff;
+      --muted:#6b7280;
+      --accent:#0b57a4;
+      --surface:#f8fafc;
+      --input-border:#e6e9ef;
+    }
+
+    body { background:#f5f7fb; }
+
+    .layout { display: grid; grid-template-columns: 300px 1fr; gap: 24px; padding: 22px; max-width:1200px; margin: 0 auto; box-sizing:border-box; }
+    .sidebar { background:var(--card-bg); padding:18px; border-radius:12px; box-shadow:0 8px 24px rgba(12,17,23,.04); border:1px solid rgba(15,20,30,0.02); }
+    .sidebar h3 { margin:0 0 8px 0; font-size:1.05rem; color:#111827; }
+    .form-row { display:flex; flex-direction:column; gap:6px; margin-top:12px; }
+    .form-row label { font-weight:600; font-size:.95rem; color:#0f1724; }
+    .form-row select, .form-row input { width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--input-border); box-sizing:border-box; background:transparent; font-size:14px; color:#111827; }
+    .form-row select:focus, .form-row input:focus { outline: none; box-shadow: 0 0 0 4px rgba(11,87,164,0.06); border-color: var(--accent); }
+
+    .controls-row { display:flex; gap:8px; align-items:center; margin-top:14px; flex-wrap:wrap; }
+    .btn { display:inline-block; background:var(--accent); color:#fff; padding:9px 14px; border-radius:10px; text-decoration:none; font-weight:700; cursor:pointer; border:0; box-shadow: 0 4px 10px rgba(11,87,164,0.08); }
+    .btn-ghost { background:#eef2f6; color:var(--accent); border-radius:10px; padding:8px 12px; font-weight:700; border:1px solid rgba(11,87,164,0.06); cursor:pointer; }
+    .hint { font-size:.92rem; color:var(--muted); margin-top:8px; }
+
     .products { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px,1fr)); gap:16px; }
-    .muted { color:#6b7280; padding: 8px; }
-    .btn { display:inline-block; background:#0b57a4; color:#fff; padding:8px 12px; border-radius:8px; text-decoration:none; font-weight:600; cursor:pointer; border:0; }
-    .btn-ghost { background:#6b7280; }
+
+    /* ---- переключатель (теперь внутри боковой панели под кнопкой) ---- */
+    .type-block { margin-top:12px; padding:10px; border-radius:10px; background:var(--surface); border:1px dashed rgba(2,6,23,0.03); }
+    .type-switch { display:flex; gap:8px; align-items:center; justify-content:flex-start; flex-wrap:wrap; }
+    .switch-btn {
+      border: 1px solid transparent;
+      background: #fff;
+      padding:8px 12px;
+      border-radius:8px;
+      cursor:pointer;
+      font-weight:700;
+      color:#0f1724;
+      display:inline-flex;
+      gap:8px;
+      align-items:center;
+      box-shadow: 0 1px 2px rgba(2,6,23,0.03);
+      transition: all .15s ease;
+    }
+    .switch-btn .dot { width:10px;height:10px;border-radius:50%; background:transparent; border:1px solid rgba(0,0,0,0.06); display:inline-block; }
+    .switch-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); transform:translateY(-1px); }
+    .switch-btn.active .dot { background:#fff; border-color:transparent; }
+
+    .switch-hint { font-size:0.85rem; color:var(--muted); margin-top:8px; }
+
     @media (max-width:900px) {
       .layout { grid-template-columns: 1fr; padding:12px; }
       .sidebar { order:2; }
       .products { order:1; }
     }
 
-    /* ---- переключатель Авто | Запчасть (пустышка) ---- */
-    .switch-wrap { max-width:1200px; margin: 12px auto; padding: 0 18px; box-sizing: border-box; }
-    .type-switch { display:inline-flex; gap:8px; background: transparent; padding: 6px; border-radius: 8px; align-items:center; }
-    .switch-btn {
-      border: 1px solid #d1d5db;
-      background: #fff;
-      padding: 8px 14px;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: 600;
-      color: #111827;
-      box-shadow: 0 1px 2px rgba(2,6,23,0.04);
-    }
-    .switch-btn.active {
-      background: #0b57a4;
-      color: #fff;
-      border-color: #0b57a4;
-    }
-    /* небольшой responsive */
-    @media (max-width:480px){
-      .type-switch { gap:6px; }
-      .switch-btn { padding:7px 10px; font-size:14px; }
-    }
-
-    /* Disabled-select appearance */
-    select[disabled] { opacity: 0.6; cursor: not-allowed; }
+    select[disabled] { opacity: 0.6; cursor:not-allowed; }
   </style>
 </head>
 <body>
 
 <?php require_once __DIR__ . '/header.php'; ?>
 
-<!-- Переключатель типа каталога (Авто | Запчасть) — пустышка -->
-<div class="switch-wrap" aria-hidden="false">
-  <div class="type-switch" role="tablist" aria-label="Тип каталога">
-    <button type="button" class="switch-btn active" data-type="auto" role="tab" aria-selected="true">Авто</button>
-    <button type="button" class="switch-btn" data-type="part" role="tab" aria-selected="false">Запчасть</button>
-  </div>
-</div>
-
 <main class="layout">
   <aside class="sidebar" aria-label="Фильтр товаров">
     <h3>Фильтр</h3>
 
-    <label for="brand">Бренд</label>
-    <select id="brand" name="brand"><option value="">Все бренды</option></select>
-
-    <label for="model">Модель</label>
-    <select id="model" name="model" disabled><option value="">Сначала выберите бренд</option></select>
-
-    <label for="year_from">Год (от)</label>
-    <input type="number" id="year_from" name="year_from" placeholder="1998">
-
-    <label for="year_to">Год (до)</label>
-    <input type="number" id="year_to" name="year_to" placeholder="2025">
-
-    <label for="complex_part">Комплексная часть</label>
-    <select id="complex_part" name="complex_part"><option value="">Все комплексные части</option></select>
-
-    <label for="component">Компонент</label>
-    <select id="component" name="component" disabled><option value="">Сначала выберите комплексную часть</option></select>
-
-    <label for="search">Поиск (название / артикул / ID)</label>
-    <input type="text" id="search" name="search" placeholder="например: 123 или тормоза">
-
-    <div style="margin-top:10px; display:flex; gap:8px;">
-      <button id="clearFilters" class="btn btn-ghost">Сбросить</button>
-      <!-- Кнопка "Применить" убрана — фильтры применяются автоматически -->
+    <div class="form-row">
+      <label for="brand">Бренд</label>
+      <select id="brand" name="brand"><option value="">Все бренды</option></select>
     </div>
+
+    <div class="form-row">
+      <label for="model">Модель</label>
+      <select id="model" name="model" disabled><option value="">Сначала выберите бренд</option></select>
+    </div>
+
+    <div class="form-row" style="flex-direction:row;gap:8px;">
+      <div style="flex:1">
+        <label for="year_from">Год (от)</label>
+        <input type="number" id="year_from" name="year_from" placeholder="1998">
+      </div>
+      <div style="flex:1">
+        <label for="year_to">Год (до)</label>
+        <input type="number" id="year_to" name="year_to" placeholder="2025">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label for="complex_part">Комплексная часть</label>
+      <select id="complex_part" name="complex_part"><option value="">Все комплексные части</option></select>
+    </div>
+
+    <div class="form-row">
+      <label for="component">Компонент</label>
+      <select id="component" name="component" disabled><option value="">Сначала выберите комплексную часть</option></select>
+    </div>
+
+    <div class="form-row">
+      <label for="search">Поиск (название / артикул / ID)</label>
+      <input type="text" id="search" name="search" placeholder="например: 123 или тормоза">
+    </div>
+
+    <div class="controls-row">
+      <button id="clearFilters" class="btn-ghost">Сбросить</button>
+      <div style="flex:1" class="hint">Фильтры применяются автоматически (по изменению полей).</div>
+    </div>
+
+    <!-- Переключатель помещён прямо под контролы, в виде компактного блока -->
+    <div class="type-block" aria-hidden="false">
+      <div style="font-weight:700;color:#0f1724;margin-bottom:6px">Показывать</div>
+      <div class="type-switch" role="group" aria-label="Тип каталога">
+        <button type="button" class="switch-btn active" data-type="auto" aria-pressed="true" title="Показывать автомобили">
+          <span class="dot" aria-hidden="true"></span> Авто
+        </button>
+        <button type="button" class="switch-btn" data-type="part" aria-pressed="false" title="Показывать запчасти">
+          <span class="dot" aria-hidden="true"></span> Запчасть
+        </button>
+      </div>
+      <div class="switch-hint">Можно включить оба режима — тогда будут показаны и авто, и запчасти</div>
+    </div>
+
   </aside>
 
   <section class="products" id="products" aria-live="polite">
@@ -126,10 +162,10 @@ $config = require __DIR__.'/../config.php';
 
   // in-memory lookups
   let lookups = {
-    brands: [],              // ['Toyota', 'BMW', ...]
-    modelsByBrand: {},       // { 'Toyota': ['Corolla','Camry'], ... }
-    complex_parts: [],       // ['Двигатель', 'Тормоза', ...]
-    componentsByComplex: {}  // { 'Двигатель': ['Фильтр','Ремень'], ... }
+    brands: [],
+    modelsByBrand: {},
+    complex_parts: [],
+    componentsByComplex: {}
   };
 
   function setSelectOptions(sel, items, placeholderText = 'Все') {
@@ -141,7 +177,6 @@ $config = require __DIR__.'/../config.php';
     opt0.textContent = placeholderText;
     sel.appendChild(opt0);
     if (!items || !items.length) {
-      // leave only placeholder
       sel.value = '';
       return;
     }
@@ -158,7 +193,6 @@ $config = require __DIR__.'/../config.php';
       o.textContent = label;
       sel.appendChild(o);
     }
-    // restore prev value if still present
     if (prev && Array.from(sel.options).some(o => o.value === prev)) {
       sel.value = prev;
     } else {
@@ -210,7 +244,12 @@ $config = require __DIR__.'/../config.php';
     const model = brand ? getVal(modelEl) : '';  // only pass model if brand set
     const complex = getVal(complexPartEl);
     const component = complex ? getVal(componentEl) : ''; // only pass component if complex selected
-    return {
+
+    // types from switch buttons
+    const switchBtns = document.querySelectorAll('.type-switch .switch-btn');
+    const activeTypes = Array.from(switchBtns).filter(s => s.classList.contains('active')).map(s => s.getAttribute('data-type')).filter(Boolean);
+
+    const filters = {
       brand,
       model,
       year_from: getVal(yearFromEl),
@@ -219,6 +258,11 @@ $config = require __DIR__.'/../config.php';
       component,
       q: getVal(searchEl)
     };
+
+    if (activeTypes.length === 1) filters.type = activeTypes[0];
+    else if (activeTypes.length > 1) filters.type = activeTypes.join(',');
+
+    return filters;
   }
 
   async function applyFilters() {
@@ -231,21 +275,18 @@ $config = require __DIR__.'/../config.php';
       try { await productList.loadProducts(filters); } catch(e){ console.warn('productList.loadProducts error', e); }
       return;
     }
-    // nothing to do otherwise
   }
 
-  // merge lookups from various possible shapes
+  // merge lookups from various possible shapes (compatible with productList.loadProducts response)
   function mergeLookups(data) {
     if (!data || typeof data !== 'object') return;
 
-    // brands
     if (Array.isArray(data.brands)) {
       lookups.brands = data.brands.map(b => (typeof b === 'object' ? (b.name ?? b.value ?? '') : String(b))).filter(Boolean);
     } else if (Array.isArray(data.brand_list)) {
       lookups.brands = data.brand_list.map(b => b.name || b).filter(Boolean);
     }
 
-    // modelsByBrand preferred shape
     if (data.modelsByBrand && typeof data.modelsByBrand === 'object') {
       lookups.modelsByBrand = {};
       for (const k of Object.keys(data.modelsByBrand)) {
@@ -253,7 +294,6 @@ $config = require __DIR__.'/../config.php';
         lookups.modelsByBrand[k] = arr.map(m => (typeof m === 'object' ? (m.name ?? m.value ?? '') : String(m))).filter(Boolean);
       }
     } else if (Array.isArray(data.models)) {
-      // models: [{brand, name}] or [{make, model}]
       lookups.modelsByBrand = lookups.modelsByBrand || {};
       for (const m of data.models) {
         const brand = (m.brand ?? m.make ?? '') + '';
@@ -262,7 +302,6 @@ $config = require __DIR__.'/../config.php';
         if (!lookups.modelsByBrand[brand]) lookups.modelsByBrand[brand] = [];
         lookups.modelsByBrand[brand].push(name);
       }
-      // unique
       for (const b in lookups.modelsByBrand) {
         lookups.modelsByBrand[b] = Array.from(new Set(lookups.modelsByBrand[b]));
       }
@@ -277,14 +316,12 @@ $config = require __DIR__.'/../config.php';
       }
     }
 
-    // complex_parts
     if (Array.isArray(data.complex_parts)) {
       lookups.complex_parts = data.complex_parts.map(x => (typeof x === 'object' ? (x.name ?? x.value ?? '') : String(x))).filter(Boolean);
     } else if (Array.isArray(data.complex_list)) {
       lookups.complex_parts = data.complex_list.map(x => x.name ?? x).filter(Boolean);
     }
 
-    // components by complex part
     if (data.componentsByComplex && typeof data.componentsByComplex === 'object') {
       lookups.componentsByComplex = {};
       for (const k of Object.keys(data.componentsByComplex)) {
@@ -292,7 +329,6 @@ $config = require __DIR__.'/../config.php';
         lookups.componentsByComplex[k] = arr.map(c => (typeof c === 'object' ? (c.name ?? c.value ?? '') : String(c))).filter(Boolean);
       }
     } else if (Array.isArray(data.components)) {
-      // components: [{complex_part, name}] or [{group,component}]
       lookups.componentsByComplex = lookups.componentsByComplex || {};
       for (const c of data.components) {
         const complex = (c.complex_part ?? c.group ?? '') + '';
@@ -306,29 +342,23 @@ $config = require __DIR__.'/../config.php';
       }
     }
 
-    // derive brands if missing but modelsByBrand keys exist
     if ((!lookups.brands || !lookups.brands.length) && lookups.modelsByBrand && Object.keys(lookups.modelsByBrand).length) {
       lookups.brands = Object.keys(lookups.modelsByBrand).sort();
     }
   }
 
   async function loadLookupsSmart() {
-    // 1) try global loadLookups()
     if (typeof loadLookups === 'function') {
       try {
         const res = await loadLookups();
-        if (res && typeof res === 'object') {
-          mergeLookups(res);
-        }
+        if (res && typeof res === 'object') mergeLookups(res);
       } catch (e) { console.warn('loadLookups failed', e); }
     }
 
-    // 2) try productList.lookups
     if (window.productList && window.productList.lookups) {
       mergeLookups(window.productList.lookups);
     }
 
-    // 3) try fetch endpoint
     if ((!lookups.brands || !lookups.brands.length) && (!lookups.modelsByBrand || Object.keys(lookups.modelsByBrand).length === 0)) {
       try {
         const resp = await fetch('/mehanik/api/lookups.php', { credentials: 'same-origin' });
@@ -339,16 +369,14 @@ $config = require __DIR__.'/../config.php';
       } catch (e) { /* ignore */ }
     }
 
-    // populate UI
+    // populate UI selects
     setSelectOptions(brandEl, lookups.brands, 'Все бренды');
     if (Array.isArray(lookups.complex_parts) && lookups.complex_parts.length) {
       setSelectOptions(complexPartEl, lookups.complex_parts, 'Все комплексные части');
     } else {
-      // leave placeholder
       setSelectOptions(complexPartEl, [], 'Все комплексные части');
     }
 
-    // initial model/component state
     if (!brandEl.value) updateModelOptionsForBrand('');
     else updateModelOptionsForBrand(brandEl.value);
 
@@ -356,18 +384,16 @@ $config = require __DIR__.'/../config.php';
     else updateComponentOptionsForComplex(complexPartEl.value);
   }
 
-  // listeners
+  // listeners for selects
   if (brandEl) {
     brandEl.addEventListener('change', function(){
       const b = this.value;
       updateModelOptionsForBrand(b);
-      // applying filters
       applyFilters();
     });
   }
   if (modelEl) {
     modelEl.addEventListener('change', function(){
-      // if brand not selected, clear model
       if (!brandEl || !brandEl.value) {
         modelEl.value = '';
       }
@@ -412,16 +438,23 @@ $config = require __DIR__.'/../config.php';
     });
   }
 
-  // switcher UI only
-  const switchBtns = document.querySelectorAll('.switch-btn');
+  // SWITCHER: toggle behavior (can activate multiple)
+  const switchBtns = document.querySelectorAll('.type-switch .switch-btn');
   switchBtns.forEach(btn => {
+    btn.setAttribute('aria-pressed', btn.classList.contains('active') ? 'true' : 'false');
     btn.addEventListener('click', (e) => {
-      switchBtns.forEach(b => {
-        b.classList.remove('active');
-        b.setAttribute('aria-selected', 'false');
-      });
-      e.currentTarget.classList.add('active');
-      e.currentTarget.setAttribute('aria-selected', 'true');
+      const el = e.currentTarget;
+      const willBeActive = !el.classList.contains('active');
+      if (willBeActive) el.classList.add('active');
+      else el.classList.remove('active');
+      el.setAttribute('aria-pressed', willBeActive ? 'true' : 'false');
+
+      // keep dependent selects consistent
+      updateModelOptionsForBrand(brandEl ? brandEl.value : '');
+      updateComponentOptionsForComplex(complexPartEl ? complexPartEl.value : '');
+
+      // apply filters immediately
+      applyFilters();
     });
   });
 
@@ -438,7 +471,7 @@ $config = require __DIR__.'/../config.php';
       }
     } catch (e) { console.warn('Initial products load failed', e); }
 
-    // sync filters (ensures UI state -> products)
+    // sync UI -> products
     await applyFilters();
   });
 

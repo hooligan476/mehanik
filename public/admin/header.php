@@ -170,10 +170,7 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
       <?php if ($user): ?>
         <div class="name"><?= htmlspecialchars($user['name'] ?? $user['phone'] ?? 'admin') ?> <span style="font-weight:400;color:#9ca3af;">#<?= (int)($user['id'] ?? 0) ?></span></div>
         <div class="sub"><?= htmlspecialchars($user['phone'] ?? '') ?> · <?= htmlspecialchars($user['role'] ?? '') ?></div>
-        <div class="header-actions">
-          <a href="<?= htmlspecialchars($base . '/admin/profile.php') ?>">Профиль</a>
-          <a class="logout" href="<?= htmlspecialchars($base . '/logout.php') ?>">Выйти</a>
-        </div>
+        
       <?php else: ?>
         <div style="text-align:right;">
           <a href="<?= htmlspecialchars($base . '/login.php') ?>" class="header-actions">Войти</a>

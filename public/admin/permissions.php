@@ -1,22 +1,21 @@
 <?php
 // mehanik/public/admin/permissions_fixed.php
-// Упрощённая и исправленная версия permissions.php — возвращает стили и размеры хедера к виду, совместимому с admin/index.php
-
+// Управление правами и ролью пользователя
 require_once __DIR__ . '/../../middleware.php';
 require_admin(); // разрешаем admin и superadmin просматривать страницу
 
-// текущая роль и флаг супер-админа
+// определяем, является ли текущий пользователь супер-админом
 $currentRole = $_SESSION['user']['role'] ?? '';
 $isSuper = ($currentRole === 'superadmin') || (isset($_SESSION['user']['is_superadmin']) && (int)$_SESSION['user']['is_superadmin'] === 1);
 
 $basePublic = '/mehanik/public';
 
-// попытка подключить общий db.php (несколько популярных путей)
+// подключение db (несколько мест)
 $dbIncluded = false;
 $dbCandidates = [
     __DIR__ . '/../db.php',       // mehanik/public/db.php
     __DIR__ . '/../../db.php',    // mehanik/db.php
-    __DIR__ . '/db.php'           // на всякий случай
+    __DIR__ . '/db.php'
 ];
 foreach ($dbCandidates as $f) {
     if (file_exists($f)) {
@@ -24,13 +23,12 @@ foreach ($dbCandidates as $f) {
     }
 }
 
-// если $pdo не определён — попытка создать своё PDO (настройки по-умолчанию)
+// если $pdo не установлен, создаём PDO (дефолт)
 if (!isset($pdo) || !($pdo instanceof PDO)) {
     $dbHost = '127.0.0.1';
     $dbName = 'mehanik';
     $dbUser = 'root';
     $dbPass = '';
-
     try {
         $pdo = new PDO("mysql:host={$dbHost};dbname={$dbName};charset=utf8mb4", $dbUser, $dbPass, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
@@ -42,18 +40,18 @@ if (!isset($pdo) || !($pdo instanceof PDO)) {
     }
 }
 
-// параметры и проверка user_id
+// валидный user_id из GET
 $uid = isset($_GET['user_id']) ? (int)$_GET['user_id'] : 0;
 if ($uid <= 0) {
     header('Location: ' . $basePublic . '/admin/users.php?err=' . urlencode('No user_id'));
     exit;
 }
 
-// msg / err для отображения после редиректа
+// опциональные сообщения
 $msg = $_GET['msg'] ?? '';
 $err = $_GET['err'] ?? '';
 
-// ресурсы — добавлены users, chats, brands
+// ресурсы для управления правами
 $resources = [
     'services' => 'Сервисы / Услуги',
     'products' => 'Товары',
@@ -62,7 +60,7 @@ $resources = [
     'brands'   => 'Бренды / Модели'
 ];
 
-// получаем информацию о пользователе (для имени и fallback прав)
+// получаем пользователя (основные поля)
 try {
     $stUser = $pdo->prepare("SELECT id, name, phone, role, can_view, can_edit, can_delete FROM users WHERE id = ? LIMIT 1");
     $stUser->execute([$uid]);
@@ -76,13 +74,8 @@ try {
     exit;
 }
 
-// Загружаем существующие записи в user_permissions для всех ресурсов
-$placeholders = implode(',', array_fill(0, count($resources), '?'));
-$sql = "SELECT resource, can_view, can_edit, can_delete FROM user_permissions WHERE user_id = ? AND resource IN ($placeholders)";
-$params = array_merge([$uid], array_keys($resources));
-
+// подготовка прав — сначала из полей users (fallback)
 $perms = [];
-// дефолт из полей users (fallback)
 foreach ($resources as $k => $label) {
     $perms[$k] = [
         'can_view' => isset($user['can_view']) ? (int)$user['can_view'] : 0,
@@ -91,7 +84,11 @@ foreach ($resources as $k => $label) {
     ];
 }
 
+// читаем строки user_permissions, если они существуют
 try {
+    $placeholders = implode(',', array_fill(0, count($resources), '?'));
+    $sql = "SELECT resource, can_view, can_edit, can_delete FROM user_permissions WHERE user_id = ? AND resource IN ($placeholders)";
+    $params = array_merge([$uid], array_keys($resources));
     $st = $pdo->prepare($sql);
     $st->execute($params);
     $rows = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -109,21 +106,16 @@ try {
     $err = $err ?: 'Ошибка при чтении прав: ' . $e->getMessage();
 }
 
-// --- HTML ---
+// HTML вывод
 ?><!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <title>Права — Пользователь #<?= htmlspecialchars($uid, ENT_QUOTES) ?></title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-
-<!-- как в admin/index.php: глобальный стиль страницы -->
 <link rel="stylesheet" href="<?= htmlspecialchars($basePublic . '/assets/css/style.css', ENT_QUOTES) ?>">
-<!-- локальные стили для страницы прав (не перекрывающие header) -->
 <link rel="stylesheet" href="<?= htmlspecialchars($basePublic . '/assets/css/users.css', ENT_QUOTES) ?>">
-
 <style>
-/* минимальные правки: подтянуть фон страницы и центрирование контейнера без вмешательства в header */
 html, body { height:100%; margin:0; padding:0; background:#f6f7fb; font-family: Arial, sans-serif; }
 .wrap-center{max-width:1100px;margin:20px auto;padding:0 12px}
 .container{background:#fff;border-radius:10px;box-shadow:0 6px 18px rgba(2,6,23,0.04);overflow:hidden;padding:20px}
@@ -143,17 +135,19 @@ html, body { height:100%; margin:0; padding:0; background:#f6f7fb; font-family: 
 .checkbox input[type="checkbox"]{width:16px;height:16px;margin:0;cursor:pointer}
 .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
 .note-muted{color:#6b7280;padding:10px;border:1px dashed #eef2f6;border-radius:8px}
+.role-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.role-select{padding:8px;border-radius:8px;border:1px solid #e6e9ef}
+.role-note{font-size:13px;color:#6b7280}
 </style>
 </head>
 <body>
 
 <?php
-// Подключаем header так же, как в admin/index.php
+// подключаем хедер админки (если есть)
 $headerPath = __DIR__ . '/header.php';
 if (file_exists($headerPath)) {
     require_once $headerPath;
 } else {
-    // fallback на родительский header (если вдруг файл перемещён)
     $parentHeader = __DIR__ . '/../header.php';
     if (file_exists($parentHeader)) require_once $parentHeader;
 }
@@ -165,7 +159,11 @@ if (file_exists($headerPath)) {
       <div class="controls">
         <a href="<?= htmlspecialchars($basePublic . '/admin/users.php', ENT_QUOTES) ?>" class="btn ghost">← Вернуться в список</a>
       </div>
-      <div class="title">Права — <?= htmlspecialchars($user['name'] ?? ('#'.$uid), ENT_QUOTES) ?> (ID <?= $uid ?>)</div>
+
+      <div style="text-align:right;">
+        <div class="title">Права — <?= htmlspecialchars($user['name'] ?? ('#'.$uid), ENT_QUOTES) ?> (ID <?= $uid ?>)</div>
+        <div class="small"><?= htmlspecialchars($user['phone'] ?? '') ?></div>
+      </div>
     </div>
 
     <?php if ($msg): ?>
@@ -175,7 +173,33 @@ if (file_exists($headerPath)) {
       <div class="notice err"><?= htmlspecialchars($err, ENT_QUOTES) ?></div>
     <?php endif; ?>
 
-    <div class="legend">Управление правами по ресурсам. Просмотр доступен администраторам, изменение — только супер-админ.</div>
+    <div class="legend">Управление правами по ресурсам.</div>
+
+    <!-- Роль пользователя: доступна для изменения только суперадмину -->
+    <div class="role-row" role="group" aria-labelledby="roleLabel">
+      <div id="roleLabel" style="font-weight:700">Роль пользователя</div>
+
+      <form id="roleForm" method="post" action="<?= htmlspecialchars($basePublic . '/admin/action_user.php?action=update_role', ENT_QUOTES) ?>" style="display:flex;gap:10px;align-items:center;">
+        <input type="hidden" name="user_id" value="<?= $uid ?>">
+        <?php
+          // текущая роль в БД
+          $currentRoleValue = $user['role'] ?? 'user';
+        ?>
+        <select name="role" class="role-select" <?= $isSuper ? '' : 'disabled aria-disabled="true"' ?>>
+          <option value="user" <?= $currentRoleValue === 'user' ? 'selected' : '' ?>>User</option>
+          <option value="admin" <?= $currentRoleValue === 'admin' ? 'selected' : '' ?>>Admin</option>
+          <option value="superadmin" <?= $currentRoleValue === 'superadmin' ? 'selected' : '' ?>>Superadmin</option>
+        </select>
+
+        <?php if ($isSuper): ?>
+          <button type="submit" class="btn">Сохранить роль</button>
+        <?php else: ?>
+          <div class="role-note">Изменение роли доступно только супер-админу.</div>
+        <?php endif; ?>
+      </form>
+    </div>
+
+    <div class="legend" style="margin-top:10px">Переключатели прав по ресурсам. Только супер-админ может сохранить изменения.</div>
 
     <form method="post" action="<?= htmlspecialchars($basePublic . '/admin/action_user.php?action=update_permissions', ENT_QUOTES) ?>">
       <input type="hidden" name="user_id" value="<?= $uid ?>">
@@ -215,7 +239,7 @@ if (file_exists($headerPath)) {
 
       <?php if ($isSuper): ?>
         <div class="actions">
-          <button type="submit" class="btn">Сохранить</button>
+          <button type="submit" class="btn">Сохранить права</button>
         </div>
       <?php else: ?>
         <div class="note-muted">Вы не супер-админ — права нельзя менять.</div>

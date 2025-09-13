@@ -37,6 +37,10 @@ function json_err($msg, $code = 400) {
     exit;
 }
 
+// compute isSuper using session role OR is_superadmin flag (if present)
+$currentRole = $_SESSION['user']['role'] ?? '';
+$isSuper = ($currentRole === 'superadmin') || (!empty($_SESSION['user']['is_superadmin']) && (int)$_SESSION['user']['is_superadmin'] === 1);
+
 /* ----------------- GET permissions ----------------- */
 /* GET /admin/action_user.php?action=get_permissions&user_id=NN */
 if ($action === 'get_permissions' && $_SERVER['REQUEST_METHOD'] === 'GET') {
@@ -75,12 +79,49 @@ if ($action === 'get_permissions' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     }
 }
 
+/* ----------------- Update role (POST) ----------------- */
+/* POST /admin/action_user.php?action=update_role
+   Only superadmin allowed
+   Fields: user_id, role
+*/
+if ($action === 'update_role' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$isSuper) {
+        header("Location: {$basePublic}/admin/permissions.php?user_id=".(int)($_POST['user_id'] ?? 0)."&err=" . urlencode('Только супер-админ может менять роль'));
+        exit;
+    }
+
+    $userId = isset($_POST['user_id']) ? (int)$_POST['user_id'] : 0;
+    $role = isset($_POST['role']) ? trim((string)$_POST['role']) : '';
+    $allowed = ['user','admin','superadmin'];
+
+    if ($userId <= 0) {
+        header("Location: {$basePublic}/admin/users.php?err=" . urlencode('Некорректный user_id'));
+        exit;
+    }
+
+    if (!in_array($role, $allowed, true)) {
+        header("Location: {$basePublic}/admin/permissions.php?user_id={$userId}&err=" . urlencode('Некорректная роль'));
+        exit;
+    }
+
+    try {
+        $st = $pdo->prepare("UPDATE users SET role = :role WHERE id = :id");
+        $st->execute([':role' => $role, ':id' => $userId]);
+        // (опционально) можно синхронизировать флаг is_superadmin в базе, если у вас такая логика:
+        // if ($role === 'superadmin') { $pdo->prepare("UPDATE users SET is_superadmin = 1 WHERE id = ?")->execute([$userId]); }
+        header("Location: {$basePublic}/admin/permissions.php?user_id={$userId}&msg=" . urlencode('Роль сохранена'));
+        exit;
+    } catch (Throwable $e) {
+        header("Location: {$basePublic}/admin/permissions.php?user_id={$userId}&err=" . urlencode('DB error'));
+        exit;
+    }
+}
+
 /* ----------------- Update permissions (POST) ----------------- */
 /* POST /admin/action_user.php?action=update_permissions */
 if ($action === 'update_permissions' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     // only superadmin allowed to change
-    $currentRole = $_SESSION['user']['role'] ?? '';
-    if ($currentRole !== 'superadmin') {
+    if (!$isSuper) {
         header("Location: {$basePublic}/admin/permissions.php?user_id=".(int)($_POST['user_id'] ?? 0)."&err=" . urlencode('Только супер-админ может менять права'));
         exit;
     }
