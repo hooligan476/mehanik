@@ -21,3 +21,4 @@ $mysqli->set_charset($config['db']['charset'] ?? 'utf8mb4');
 
 // Для совместимости с register.php
 $conn = $mysqli;
+

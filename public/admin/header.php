@@ -1,6 +1,7 @@
 <?php
 // public/admin/header.php
 // Хедер админки — считает pending'и, подтягивает баланс и обновляет сессию пользователя.
+// Содержит логику инвалидации сессии через поле users.session_version.
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 
@@ -8,25 +9,33 @@ $projectRoot = dirname(__DIR__); // mehanik/public -> dirname -> mehanik
 $configPath = $projectRoot . '/config.php';
 $dbPath     = $projectRoot . '/db.php';
 
-if (file_exists($configPath)) $config = require $configPath;
-else $config = ['base_url' => '/mehanik/public'];
+// Загрузка конфига (если есть)
+if (file_exists($configPath)) {
+    $cfg = require $configPath;
+    if (is_array($cfg)) $config = $cfg + (isset($config) ? $config : []);
+}
+if (!isset($config)) $config = ['base_url' => '/mehanik/public'];
 
-// Подключаем DB (если есть) — db.php должен инициализировать $mysqli или $pdo
+// base URL (используется при редиректах и формированиях ссылок)
+$base = rtrim($config['base_url'] ?? '/mehanik/public', '/');
+
+// Подключаем DB (db.php должен инициализировать $mysqli или $pdo)
 if (file_exists($dbPath)) {
     require_once $dbPath;
 }
 
-// Обновим сессию текущего пользователя (подтянем свежие данные из БД)
-// При этом будем сливать свежие поля в уже существующую сессии, чтобы не потерять дополнительные флаги
+// Если пользователь залогинен — подтягиваем свежие данные + проверяем session_version
 if (!empty($_SESSION['user']['id'])) {
     $uid = (int)$_SESSION['user']['id'];
     try {
         $fresh = null;
         if (isset($mysqli) && $mysqli instanceof mysqli) {
-            if ($st = $mysqli->prepare("SELECT id,name,phone,role,created_at,verify_code,status,ip,
-                                               COALESCE(is_superadmin,0) AS is_superadmin,
-                                               COALESCE(balance,0.00) AS balance
-                                        FROM users WHERE id = ? LIMIT 1")) {
+            $sql = "SELECT id,name,phone,role,created_at,verify_code,status,ip,
+                           COALESCE(is_superadmin,0) AS is_superadmin,
+                           COALESCE(balance,0.00) AS balance,
+                           COALESCE(session_version,0) AS session_version
+                    FROM users WHERE id = ? LIMIT 1";
+            if ($st = $mysqli->prepare($sql)) {
                 $st->bind_param('i', $uid);
                 $st->execute();
                 $res = $st->get_result();
@@ -34,25 +43,56 @@ if (!empty($_SESSION['user']['id'])) {
                 $st->close();
             }
         } elseif (isset($pdo) && $pdo instanceof PDO) {
-            $st = $pdo->prepare("SELECT id,name,phone,role,created_at,verify_code,status,ip,
-                                       COALESCE(is_superadmin,0) AS is_superadmin,
-                                       COALESCE(balance,0.00) AS balance
-                                FROM users WHERE id = :id LIMIT 1");
+            $sql = "SELECT id,name,phone,role,created_at,verify_code,status,ip,
+                           COALESCE(is_superadmin,0) AS is_superadmin,
+                           COALESCE(balance,0.00) AS balance,
+                           COALESCE(session_version,0) AS session_version
+                    FROM users WHERE id = :id LIMIT 1";
+            $st = $pdo->prepare($sql);
             $st->execute([':id' => $uid]);
             $fresh = $st->fetch(PDO::FETCH_ASSOC);
         }
+
         if ($fresh) {
-            // сохраняем/сливаем — чтобы не перезаписывать дополнительные поля, которые могут быть в сессии
-            // приводим баланс к float
-            if (isset($fresh['balance'])) $fresh['balance'] = (float)$fresh['balance'];
+            // приводим типы
+            $fresh['is_superadmin'] = (int)($fresh['is_superadmin'] ?? 0);
+            $fresh['balance'] = isset($fresh['balance']) ? (float)$fresh['balance'] : 0.0;
+            $fresh['session_version'] = isset($fresh['session_version']) ? (int)$fresh['session_version'] : 0;
+
+            // версия в сессии (если была)
+            $sessVersionInSession = isset($_SESSION['user']['session_version']) ? (int)$_SESSION['user']['session_version'] : null;
+            $dbSessionVersion = $fresh['session_version'];
+
+            if ($sessVersionInSession !== null && $dbSessionVersion !== $sessVersionInSession) {
+                // session_version поменялся — аккуратно разлогиниваем пользователя
+                $_SESSION = [];
+                if (ini_get("session.use_cookies")) {
+                    $params = session_get_cookie_params();
+                    setcookie(session_name(), '', time() - 42000,
+                        $params["path"], $params["domain"],
+                        $params["secure"], $params["httponly"]
+                    );
+                }
+                session_destroy();
+
+                // Редиректим на логин (с параметром reason для дебага/UX)
+                header('Location: ' . $base . '/login.php?reason=session_invalidated');
+                exit;
+            }
+
+            // Сливаем свежие поля в сессию (если в сессии не было session_version — записываем её)
             $_SESSION['user'] = array_merge((array)$_SESSION['user'], (array)$fresh);
+            if ($sessVersionInSession === null) {
+                $_SESSION['user']['session_version'] = $dbSessionVersion;
+            }
         }
     } catch (Throwable $e) {
-        // ignore
+        // не прерываем работу хедера из-за ошибок БД
+        // лучше логировать, но здесь — silent fail
     }
 }
 
-$base = rtrim($config['base_url'] ?? '/mehanik/public', '/');
+$base = rtrim($config['base_url'] ?? '/mehanik/public', '/'); // на всякий случай
 $user = $_SESSION['user'] ?? null;
 
 // подсчёт pending для пользователей/запчастей/сервисов/авто
@@ -68,7 +108,6 @@ try {
         $res = $mysqli->query("SELECT COUNT(*) AS c FROM services WHERE status='pending'");
         if ($res) $pendingServices = (int)($res->fetch_assoc()['c'] ?? 0);
 
-        // cars: объявления, которые не утверждены (pending / rejected / any != approved)
         $res = $mysqli->query("SELECT COUNT(*) AS c FROM cars WHERE status!='approved'");
         if ($res) $pendingCars = (int)($res->fetch_assoc()['c'] ?? 0);
     } elseif (isset($pdo) && $pdo instanceof PDO) {
@@ -86,21 +125,15 @@ $currentPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '/';
 
 // helper: возвращает 'active' если $link ведёт на текущий путь (совпадение или startsWith)
 function isActiveLink(string $link, string $currentPath, bool $strict = false): bool {
-    // $link может быть относительным или абсолютным (с базой)
     $linkPath = parse_url($link, PHP_URL_PATH) ?: $link;
-    // нормализуем слэши в конце
     $lp = rtrim($linkPath, '/');
     $cp = rtrim($currentPath, '/');
 
     if ($lp === '') $lp = '/';
     if ($cp === '') $cp = '/';
 
-    if ($strict) {
-        return $lp === $cp;
-    }
-    // точное совпадение
+    if ($strict) return $lp === $cp;
     if ($lp === $cp) return true;
-    // стартовое совпадение (например /mehanik/public/admin/products.php и /mehanik/public/admin/products.php?id=1)
     if ($lp !== '/' && strpos($cp, $lp) === 0) return true;
     return false;
 }
@@ -185,8 +218,6 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
 
       <nav class="nav-admin" aria-label="Админ навигация">
         <?php
-          // Подготовим ссылки — убрал принудительную синию кнопку у Services,
-          // и переименовал 'Автомаркет' -> 'Авто'. btn-catalog теперь нейтральна по умолчанию.
           $links = [
             ['href' => $base . '/admin/users.php', 'label' => 'Пользователи', 'badge' => $pendingUsers, 'class' => ''],
             ['href' => $base . '/admin/services.php', 'label' => 'Сервисы/Услуги', 'badge' => $pendingServices, 'class' => ''],
@@ -323,24 +354,21 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
     }
   }
 
-  // --- НОВОЕ: теперь кнопки переходят на страницы ---
+  // --- Навигация: кнопки переходят на страницы ---
   const notifBtn = document.getElementById('adminNotificationsBtn');
   const accBtn = document.getElementById('adminAccountingBtn');
 
-  // БЕЗОПАСНО встраиваем пути из PHP через json_encode
   const notifUrl = <?= json_encode($base . '/admin/notifications.php') ?>;
   const accUrl = <?= json_encode($base . '/admin/accounting.php') ?>;
 
   if (notifBtn) {
     notifBtn.addEventListener('click', function(){
-      // напрямую переходим на страницу Уведомлений
       window.location.href = notifUrl;
     });
   }
 
   if (accBtn) {
     accBtn.addEventListener('click', function(){
-      // напрямую переходим на страницу Бухгалтерии
       window.location.href = accUrl;
     });
   }

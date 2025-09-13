@@ -35,7 +35,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errors)) {
         $phone_norm = '+993' . $phone_local;
 
-        $stmt = $pdo->prepare("SELECT id, name, phone, password_hash, role, created_at, verify_code, status FROM users WHERE phone = :phone LIMIT 1");
+        // берём session_version, если колонка есть
+        $stmt = $pdo->prepare("SELECT id, name, phone, password_hash, role, created_at, verify_code, status, COALESCE(session_version, 0) AS session_version FROM users WHERE phone = :phone LIMIT 1");
         $stmt->execute([':phone' => $phone_norm]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -43,8 +44,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'Пользователь не найден.';
         } else {
             if (password_verify($password, $user['password_hash'])) {
+                // Безопасность: регенерируем id сессии после успешного логина
+                session_regenerate_id(true);
+
+                // Убираем хэш пароля из массива и сохраняем только нужные поля
                 unset($user['password_hash']);
-                $_SESSION['user'] = $user;
+
+                // Явно приводим session_version к int и записываем в сессию
+                $session_version = isset($user['session_version']) ? (int)$user['session_version'] : 0;
+
+                $_SESSION['user'] = [
+                    'id' => (int)$user['id'],
+                    'name' => $user['name'],
+                    'phone' => $user['phone'],
+                    'role' => $user['role'],
+                    'created_at' => $user['created_at'] ?? null,
+                    'verify_code' => $user['verify_code'] ?? null,
+                    'status' => $user['status'] ?? null,
+                    'session_version' => $session_version
+                ];
 
                 // Абсолютный редирект на public/index.php внутри проекта mehanik
                 header('Location: http://localhost/mehanik/public/index.php');

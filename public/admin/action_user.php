@@ -41,6 +41,19 @@ function json_err($msg, $code = 400) {
 $currentRole = $_SESSION['user']['role'] ?? '';
 $isSuper = ($currentRole === 'superadmin') || (!empty($_SESSION['user']['is_superadmin']) && (int)$_SESSION['user']['is_superadmin'] === 1);
 
+/**
+ * Helper: increments session_version for a user (best-effort)
+ */
+function bump_session_version(PDO $pdo, int $userId) {
+    try {
+        $st = $pdo->prepare("UPDATE users SET session_version = COALESCE(session_version,0) + 1 WHERE id = :id");
+        $st->execute([':id' => $userId]);
+    } catch (Throwable $e) {
+        // логируем в будущем, но не мешаем основному сценарию
+        // error_log("Failed to bump session_version for user {$userId}: " . $e->getMessage());
+    }
+}
+
 /* ----------------- GET permissions ----------------- */
 /* GET /admin/action_user.php?action=get_permissions&user_id=NN */
 if ($action === 'get_permissions' && $_SERVER['REQUEST_METHOD'] === 'GET') {
@@ -105,10 +118,29 @@ if ($action === 'update_role' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     try {
+        // проверим текущую роль — чтобы инкрементить session_version только если было изменение
+        $curSt = $pdo->prepare("SELECT role FROM users WHERE id = :id LIMIT 1");
+        $curSt->execute([':id' => $userId]);
+        $currentRoleInDb = $curSt->fetchColumn();
+
+        if ($currentRoleInDb === false) {
+            header("Location: {$basePublic}/admin/users.php?err=" . urlencode('Пользователь не найден'));
+            exit;
+        }
+
+        if ($currentRoleInDb === $role) {
+            // Ничего не изменилось — не делаем лишних инвалидаций
+            header("Location: {$basePublic}/admin/permissions.php?user_id={$userId}&msg=" . urlencode('Роль не изменилась'));
+            exit;
+        }
+
+        // Выполняем обновление роли
         $st = $pdo->prepare("UPDATE users SET role = :role WHERE id = :id");
         $st->execute([':role' => $role, ':id' => $userId]);
-        // (опционально) можно синхронизировать флаг is_superadmin в базе, если у вас такая логика:
-        // if ($role === 'superadmin') { $pdo->prepare("UPDATE users SET is_superadmin = 1 WHERE id = ?")->execute([$userId]); }
+
+        // bump session_version — чтобы пользователь перелогинился и получил новые права
+        bump_session_version($pdo, $userId);
+
         header("Location: {$basePublic}/admin/permissions.php?user_id={$userId}&msg=" . urlencode('Роль сохранена'));
         exit;
     } catch (Throwable $e) {
@@ -160,6 +192,10 @@ if ($action === 'update_permissions' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $pdo->commit();
+
+        // bump session_version — права изменены (force re-login)
+        bump_session_version($pdo, $userId);
+
         header("Location: {$basePublic}/admin/permissions.php?user_id={$userId}&msg=" . urlencode('Права обновлены'));
         exit;
     } catch (Throwable $e) {
@@ -184,6 +220,10 @@ if (in_array($action, ['approve','reject','set_pending','delete']) && $_SERVER['
         if ($action === 'approve') {
             $st = $pdo->prepare("UPDATE users SET status = 'approved' WHERE id = ?");
             $st->execute([$id]);
+
+            // bump session_version — если хотите, чтобы подтверждённый пользователь перелогинился
+            bump_session_version($pdo, $id);
+
             header("Location: {$basePublic}/admin/users.php?msg=" . urlencode('Пользователь подтверждён'));
             exit;
         }
@@ -198,6 +238,10 @@ if (in_array($action, ['approve','reject','set_pending','delete']) && $_SERVER['
         if ($action === 'set_pending') {
             $st = $pdo->prepare("UPDATE users SET status = 'pending' WHERE id = ?");
             $st->execute([$id]);
+
+            // bump session_version — чтобы пользователь (если был онлайн) перелогинился и увидел новый статус
+            bump_session_version($pdo, $id);
+
             header("Location: {$basePublic}/admin/users.php?msg=" . urlencode('Статус изменён на pending'));
             exit;
         }

@@ -1,14 +1,10 @@
 <?php
 // public/admin/users.php (simplified — "Права" ведёт на permissions.php)
-session_start();
 
-// доступ только admin или superadmin
-if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'] ?? '', ['admin','superadmin'], true)) {
-    header('Location: /mehanik/public/login.php');
-    exit;
-}
+// Start session early
+if (session_status() === PHP_SESSION_NONE) session_start();
 
-// DB (как было)
+// DB (как было) — подключаем в начале, чтобы проверить session_version
 $dbHost = '127.0.0.1';
 $dbName = 'mehanik';
 $dbUser = 'root';
@@ -20,6 +16,49 @@ try {
     ]);
 } catch (PDOException $e) {
     die("DB error: " . $e->getMessage());
+}
+
+// --- NEW: check session_version and force logout if mismatch ---
+// If user is logged in and session contains session_version, compare to DB
+$sessionUserId = isset($_SESSION['user']['id']) ? (int)$_SESSION['user']['id'] : 0;
+if ($sessionUserId > 0) {
+    try {
+        $st = $pdo->prepare("SELECT COALESCE(session_version,0) AS session_version FROM users WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $sessionUserId]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        $dbSessionVersion = isset($row['session_version']) ? (int)$row['session_version'] : 0;
+
+        $sessVersionInSession = isset($_SESSION['user']['session_version']) ? (int)$_SESSION['user']['session_version'] : null;
+
+        if ($sessVersionInSession !== null && $dbSessionVersion !== $sessVersionInSession) {
+            // session_version changed -> force logout
+            $_SESSION = [];
+            if (ini_get("session.use_cookies")) {
+                $params = session_get_cookie_params();
+                setcookie(session_name(), '', time() - 42000,
+                    $params["path"], $params["domain"],
+                    $params["secure"], $params["httponly"]
+                );
+            }
+            session_destroy();
+            header('Location: /mehanik/public/login.php?reason=session_invalidated');
+            exit;
+        } else {
+            // if session had no session_version, set it to current DB value to enable future comparisons
+            if ($sessVersionInSession === null) {
+                if (!isset($_SESSION['user'])) $_SESSION['user'] = [];
+                $_SESSION['user']['session_version'] = $dbSessionVersion;
+            }
+        }
+    } catch (Throwable $e) {
+        // ignore — do not break the page if this check fails
+    }
+}
+
+// доступ только admin или superadmin
+if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'] ?? '', ['admin','superadmin'], true)) {
+    header('Location: /mehanik/public/login.php');
+    exit;
 }
 
 // сообщения
@@ -39,7 +78,7 @@ $dir  = strtolower($_GET['dir'] ?? 'desc');
 if (!in_array($sort, $allowedSort)) $sort = 'created_at';
 if (!in_array($dir, ['asc','desc'])) $dir = 'desc';
 
-$totalUsers = $pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
+$totalUsers = (int)$pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
 $totalPages = max(1, (int)ceil($totalUsers / $perPage));
 
 // выборка

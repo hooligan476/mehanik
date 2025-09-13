@@ -1,85 +1,90 @@
 <?php
 // public/header.php — header с балансом и пополнением (демо)
-if (session_status() === PHP_SESSION_NONE) session_start();
+// Обновлён: использует middleware.php для старта сессии, обновления last_seen,
+// централизованной проверки session_version и refresh_session_user().
 
-// проектный корень (папка mehanik)
 $projectRoot = dirname(__DIR__);
 
-// config и db (если есть)
-$configPath = $projectRoot . '/config.php';
-$dbPath     = $projectRoot . '/db.php';
+// Попытаемся включить middleware — он стартует сессию и подгружает DB (если есть)
+$middlewarePath = $projectRoot . '/middleware.php';
+if (file_exists($middlewarePath)) {
+    require_once $middlewarePath;
+} else {
+    // Если middleware отсутствует, делаем минимальный старт сессии и подключаем db.php
+    if (session_status() === PHP_SESSION_NONE) session_start();
+    $dbPath = $projectRoot . '/db.php';
+    if (file_exists($dbPath)) {
+        require_once $dbPath;
+    }
+}
 
+// load config (fallback)
+$configPath = $projectRoot . '/config.php';
 $config = ['base_url' => '/mehanik/public'];
 if (file_exists($configPath)) {
     $cfg = require $configPath;
     if (is_array($cfg)) $config = array_merge($config, $cfg);
 }
-
-// Попытка подключения к БД (db.php должен создавать $mysqli или $pdo)
-if (file_exists($dbPath)) require_once $dbPath;
-
-// base URL
 $base = rtrim($config['base_url'] ?? '/mehanik/public', '/');
+
+// Если middleware предоставляет refresh_session_user(), вызовем его, чтобы гарантированно подтянуть balance/session_version
+if (function_exists('refresh_session_user')) {
+    try { refresh_session_user(); } catch (Throwable $e) { /* ignore */ }
+}
+
+// enforce_session_version уже вызывается автоматически в middleware.php (если он подключён).
+// Если middleware не подключён, попробуем вызвать явную проверку, если функция доступна.
+if (function_exists('enforce_session_version')) {
+    try { enforce_session_version(); } catch (Throwable $e) { /* ignore */ }
+}
 
 // получим данные пользователя из сессии
 $user = $_SESSION['user'] ?? null;
 $uid = !empty($user['id']) ? (int)$user['id'] : 0;
 
-// reload данных если не хватает (теперь подтягиваем balance)
-$needReload = false;
-if ($uid) {
-    if (!isset($user['role']) || !isset($user['is_superadmin']) || !array_key_exists('balance', $user)) $needReload = true;
-}
-
-if ($needReload && $uid) {
-    if (isset($mysqli) && $mysqli instanceof mysqli) {
+// Если по какой-то причине в сессии нет balance / is_superadmin / role — попробуем подгрузить вручную через $mysqli/$pdo
+if ($uid && (!isset($user['role']) || !array_key_exists('balance', $user) || !isset($user['is_superadmin']))) {
+    // если в сессии нет нужных полей и middleware не сделал работу, подтянем минимально нужные поля
+    $dbPath = $projectRoot . '/db.php';
+    if (file_exists($dbPath) && !function_exists('refresh_session_user')) {
         try {
-            $sql = "SELECT id,name,phone,role,created_at,verify_code,status,ip,
-                           COALESCE(is_superadmin,0) AS is_superadmin,
-                           COALESCE(can_view,0) AS can_view,
-                           COALESCE(can_edit,0) AS can_edit,
-                           COALESCE(can_delete,0) AS can_delete,
-                           COALESCE(balance,0.00) AS balance
-                    FROM users WHERE id = ? LIMIT 1";
-            if ($st = $mysqli->prepare($sql)) {
-                $st->bind_param('i', $uid);
-                $st->execute();
-                $res = $st->get_result();
-                $fresh = $res ? $res->fetch_assoc() : null;
-                $st->close();
+            require_once $dbPath;
+            if (isset($mysqli) && $mysqli instanceof mysqli) {
+                $sql = "SELECT id,name,phone,role,created_at,verify_code,status,ip,
+                               COALESCE(is_superadmin,0) AS is_superadmin,
+                               COALESCE(balance,0.00) AS balance
+                        FROM users WHERE id = ? LIMIT 1";
+                if ($st = $mysqli->prepare($sql)) {
+                    $st->bind_param('i', $uid);
+                    $st->execute();
+                    $res = $st->get_result();
+                    $fresh = $res ? $res->fetch_assoc() : null;
+                    $st->close();
+                    if ($fresh) {
+                        $fresh['is_superadmin'] = (int)($fresh['is_superadmin'] ?? 0);
+                        $fresh['balance'] = (float)($fresh['balance'] ?? 0.0);
+                        $_SESSION['user'] = array_merge((array)$_SESSION['user'], (array)$fresh);
+                        $user = $_SESSION['user'];
+                    }
+                }
+            } elseif (isset($pdo) && $pdo instanceof PDO) {
+                $sql = "SELECT id,name,phone,role,created_at,verify_code,status,ip,
+                               COALESCE(is_superadmin,0) AS is_superadmin,
+                               COALESCE(balance,0.00) AS balance
+                        FROM users WHERE id = :id LIMIT 1";
+                $st = $pdo->prepare($sql);
+                $st->execute([':id' => $uid]);
+                $fresh = $st->fetch(PDO::FETCH_ASSOC);
                 if ($fresh) {
                     $fresh['is_superadmin'] = (int)($fresh['is_superadmin'] ?? 0);
-                    $fresh['can_view'] = (int)($fresh['can_view'] ?? 0);
-                    $fresh['can_edit'] = (int)($fresh['can_edit'] ?? 0);
-                    $fresh['can_delete'] = (int)($fresh['can_delete'] ?? 0);
                     $fresh['balance'] = (float)($fresh['balance'] ?? 0.0);
-                    $_SESSION['user'] = $fresh;
-                    $user = $fresh;
+                    $_SESSION['user'] = array_merge((array)$_SESSION['user'], (array)$fresh);
+                    $user = $_SESSION['user'];
                 }
             }
-        } catch (Throwable $e) { /* ignore */ }
-    } elseif (isset($pdo) && $pdo instanceof PDO) {
-        try {
-            $sql = "SELECT id,name,phone,role,created_at,verify_code,status,ip,
-                           COALESCE(is_superadmin,0) AS is_superadmin,
-                           COALESCE(can_view,0) AS can_view,
-                           COALESCE(can_edit,0) AS can_edit,
-                           COALESCE(can_delete,0) AS can_delete,
-                           COALESCE(balance,0.00) AS balance
-                    FROM users WHERE id = :id LIMIT 1";
-            $st = $pdo->prepare($sql);
-            $st->execute([':id' => $uid]);
-            $fresh = $st->fetch(PDO::FETCH_ASSOC);
-            if ($fresh) {
-                $fresh['is_superadmin'] = (int)($fresh['is_superadmin'] ?? 0);
-                $fresh['can_view'] = (int)($fresh['can_view'] ?? 0);
-                $fresh['can_edit'] = (int)($fresh['can_edit'] ?? 0);
-                $fresh['can_delete'] = (int)($fresh['can_delete'] ?? 0);
-                $fresh['balance'] = (float)($fresh['balance'] ?? 0.0);
-                $_SESSION['user'] = $fresh;
-                $user = $fresh;
-            }
-        } catch (Throwable $e) { /* ignore */ }
+        } catch (Throwable $e) {
+            // ignore — header must not fail on DB problems
+        }
     }
 }
 
