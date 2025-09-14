@@ -1,5 +1,5 @@
 <?php
-// mehanik/public/admin/permissions_fixed.php
+// mehanik/public/admin/permissions.php 
 // Управление правами и ролью пользователя
 require_once __DIR__ . '/../../middleware.php';
 require_admin(); // разрешаем admin и superadmin просматривать страницу
@@ -53,11 +53,14 @@ $err = $_GET['err'] ?? '';
 
 // ресурсы для управления правами
 $resources = [
-    'services' => 'Сервисы / Услуги',
-    'products' => 'Товары',
-    'users'    => 'Пользователи',
-    'chats'    => 'Чаты',
-    'brands'   => 'Бренды / Модели'
+    'services'      => 'Сервисы / Услуги',
+    'products'      => 'Товары',
+    'users'         => 'Пользователи',
+    'chats'         => 'Чаты',
+    'brands'        => 'Бренды / Модели',
+    // Добавленные ресурсы:
+    'notifications' => 'Уведомления',
+    'accounting'    => 'Бухгалтерия'
 ];
 
 // получаем пользователя (основные поля)

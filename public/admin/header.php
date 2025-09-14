@@ -144,14 +144,36 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
 .admin-top .wrap{ max-width:1200px; margin:0 auto; padding:0 16px; box-sizing:border-box; display:flex; gap:12px; align-items:center; }
 
 /* левый блок (бренд + навигация) растягивается, чтобы навигация могла центрироваться */
-.admin-top .wrap > div:first-child { display:flex; align-items:center; gap:8px; flex:1; }
+.admin-top .wrap > div:first-child { display:flex; align-items:center; gap:8px; flex:1 1 auto; min-width:0; }
 
 /* бренд */
 .admin-top .brand { font-weight:700; font-size:1.05rem; color:#fff; text-decoration:none; margin-right:8px; }
 
-/* навигация по центру */
-.nav-admin { display:flex; gap:10px; align-items:center; margin-left:8px; flex-wrap:wrap; justify-content:center; }
-.nav-admin a { color:#e6eef7; text-decoration:none; padding:6px 10px; border-radius:8px; font-weight:600; font-size:0.95rem; display:inline-flex; align-items:center; }
+/* навигация по центру — теперь занимает доступную ширину и при сжатии переносится на следующую строку (без скролла) */
+.nav-admin {
+  display:flex;
+  gap:10px;
+  align-items:center;
+  margin-left:8px;
+  flex:1 1 auto;
+  min-width:0;              /* важно, чтобы flex child мог ужиматься */
+  flex-wrap:wrap;           /* перенос элементов на новую строку при нехватке места */
+  padding-bottom:2px;
+  /* убрали overflow-x, чтобы не показывался скролл */
+}
+
+/* ссылки навигации */
+.nav-admin a {
+  color:#e6eef7;
+  text-decoration:none;
+  padding:6px 10px;
+  border-radius:8px;
+  font-weight:600;
+  font-size:0.95rem;
+  display:inline-flex;
+  align-items:center;
+  white-space:nowrap; /* предотвращаем перенос внутри одной ссылки */
+}
 .nav-admin a:hover { background: rgba(255,255,255,0.03); color:#fff; }
 
 /* активный пункт */
@@ -166,10 +188,10 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
 .badge{ display:inline-block; background:#ef4444; color:#fff; padding:2px 7px; border-radius:999px; margin-left:6px; font-weight:700; font-size:.8rem; vertical-align:middle; }
 
 /* правая часть (информация о текущем админ-пользователе) */
-.header-right { margin-left:auto; text-align:right; display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
+.header-right { margin-left:auto; text-align:right; display:flex; flex-direction:column; gap:6px; align-items:flex-end; min-width:0; }
 .header-right .name { font-weight:700; color:#fff; }
 .header-right .sub { font-size:.85rem; color:#9ca3af; }
-.header-actions { margin-top:6px; display:flex; gap:8px; align-items:center; }
+.header-actions { margin-top:6px; display:flex; gap:8px; align-items:center; flex-wrap:nowrap; }
 
 /* баланс и кнопка пополнить */
 .balance { font-weight:800; color:#f0f9ff; background:transparent; padding:6px 10px; border-radius:8px; }
@@ -182,8 +204,8 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
 .header-actions a { color:#dbeafe; text-decoration:none; padding:6px 10px; border-radius:8px; background:transparent; border:1px solid rgba(219,234,254,0.06); font-weight:600; }
 .header-actions a.logout { background:transparent; border:1px solid rgba(255,255,255,0.03); color:#ffdede; }
 
-/* buttons inside header-actions (Notifications / Accounting) */
-.header-actions button {
+/* compact buttons style (used in nav too) */
+.header-actions .small-btn {
   background: transparent;
   border: 1px solid rgba(219,234,254,0.06);
   color: #dbeafe;
@@ -192,23 +214,56 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
   font-weight: 600;
   cursor: pointer;
 }
-.header-actions button:hover {
-  background: rgba(255,255,255,0.03);
-  color: #fff;
+.header-actions .small-btn:hover { background: rgba(255,255,255,0.03); color:#fff; }
+
+/* --- FIX: модалка скрыта по умолчанию и показывается только при aria-hidden="false" --- */
+#adminTopupModal {
+  position: fixed;
+  inset: 0;
+  display: none !important;
+  visibility: hidden;
+  background: rgba(2,6,23,0.6);
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+#adminTopupModal[aria-hidden="false"] {
+  display: flex !important;
+  visibility: visible;
+}
+#adminTopupModal .m { background:#fff; color:#111; padding:18px; border-radius:10px; min-width:320px; max-width:520px; box-shadow:0 10px 30px rgba(2,6,23,0.3); }
+#adminTopupModal .m h3 { margin:0 0 8px 0; }
+#adminTopupModal .m .row { display:flex; gap:8px; margin-top:8px; }
+#adminTopupModal .m button { padding:8px 12px; border-radius:8px; cursor:pointer; border:0; }
+
+/* --- Супер-компактный режим: уменьшаем paddings / font-size на узких экранах --- */
+@media (max-width: 800px) {
+  .admin-top .wrap { padding: 8px 12px; gap:8px; }
+  .admin-top .brand { font-size: 0.98rem; }
+  .nav-admin a { padding:5px 8px; font-size:0.88rem; }
+  .nav-admin { gap:8px; }
+  .header-actions { gap:6px; }
+  .balance { padding:4px 8px; font-size:0.95rem; }
+  .topup-btn { padding:5px 8px; font-size:0.92rem; }
 }
 
+@media (max-width: 480px) {
+  .admin-top .brand { font-size: 0.92rem; }
+  .nav-admin a { padding:4px 7px; font-size:0.82rem; border-radius:6px; }
+  .nav-admin { gap:6px; }
+  .header-actions a, .header-actions .small-btn, .topup-btn { padding:4px 7px; font-size:0.82rem; border-radius:6px; }
+  .balance { padding:3px 6px; font-size:0.85rem; }
+  /* уменьшение высоты модалки на очень узких экранах */
+  #adminTopupModal .m { min-width:260px; max-width:380px; padding:12px; }
+  #adminTopupModal .m button { padding:6px 10px; }
+}
+
+/* mobile: столбцы */
 @media (max-width:900px) {
   .admin-top .wrap { flex-direction:column; align-items:stretch; gap:8px; }
   .admin-top .wrap > div:first-child { flex:unset; }
   .header-right { align-items:flex-start; }
 }
-
-/* modal для админского пополнения (демо) */
-#adminTopupModal { position:fixed; inset:0; display:none; background:rgba(2,6,23,0.6); align-items:center; justify-content:center; z-index:9999; }
-#adminTopupModal .m { background:#fff; color:#111; padding:18px; border-radius:10px; min-width:320px; max-width:420px; box-shadow:0 10px 30px rgba(2,6,23,0.3); }
-#adminTopupModal .m h3 { margin:0 0 8px 0; }
-#adminTopupModal .m .row { display:flex; gap:8px; margin-top:8px; }
-#adminTopupModal .m button { padding:8px 12px; border-radius:8px; cursor:pointer; border:0; }
 </style>
 
 <header class="admin-top" role="banner">
@@ -225,6 +280,11 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
             ['href' => $base . '/admin/chats.php', 'label' => 'Чаты', 'badge' => 0, 'class' => ''],
             ['href' => $base . '/admin/cars.php', 'label' => 'Бренд/Модель', 'badge' => 0, 'class' => ''],
             ['href' => $base . '/admin/cars_moderation.php', 'label' => 'Авто', 'badge' => $pendingCars, 'class' => 'btn-catalog'],
+
+            // Уведомления и Бухгалтерия как обычные nav-элементы
+            ['href' => $base . '/admin/notifications.php', 'label' => 'Уведомления', 'badge' => 0, 'class' => ''],
+            ['href' => $base . '/admin/accounting.php', 'label' => 'Бухгалтерия', 'badge' => 0, 'class' => ''],
+
             ['href' => $base . '/index.php', 'label' => 'Открыть сайт', 'badge' => 0, 'class' => '']
           ];
 
@@ -237,9 +297,22 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
               $active = isActiveLink($href, $currentPath) ? ' active' : '';
               $classAttr = trim(($extraClass ? $extraClass : '') . $active);
               $classHtml = $classAttr ? ' class="'.htmlspecialchars($classAttr).'"' : '';
-              echo '<a href="'.htmlspecialchars($href).'"' . $classHtml . '>' . htmlspecialchars($label);
-              if ($badge) echo " <span class='badge'>".htmlspecialchars($badge)."</span>";
-              echo '</a>';
+
+              // Вариант A: НЕ рендерим пустой span-бейдж — создаём его только если есть >0
+              if ($label === 'Чаты') {
+                  if ($badge > 0) {
+                      // если есть счётчик — рендерим с id для JS-обновления
+                      echo '<a href="'.htmlspecialchars($href).'"' . $classHtml . '>' . htmlspecialchars($label)
+                           . ' <span id="newChatsBadge" class="badge">'.htmlspecialchars($badge).'</span></a>';
+                  } else {
+                      // если 0 — рендерим простую ссылку без пустого span
+                      echo '<a href="'.htmlspecialchars($href).'"' . $classHtml . '>' . htmlspecialchars($label) . '</a>';
+                  }
+              } else {
+                  echo '<a href="'.htmlspecialchars($href).'"' . $classHtml . '>' . htmlspecialchars($label);
+                  if ($badge) echo " <span class='badge'>".htmlspecialchars($badge)."</span>";
+                  echo '</a>';
+              }
           }
         ?>
       </nav>
@@ -252,11 +325,7 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
 
         <div class="header-actions" style="margin-top:8px;">
           <div class="balance"><?= number_format((float)($user['balance'] ?? 0.0), 2, '.', ' ') ?> TMT</div>
-          <button id="adminTopupBtn" class="topup-btn" type="button">Пополнить</button>
-
-          <!-- Уведомления + Бухгалтерия -->
-          <button id="adminNotificationsBtn" type="button">Уведомления</button>
-          <button id="adminAccountingBtn" type="button">Бухгалтерия</button>
+          <button id="adminTopupBtn" class="topup-btn" type="button" aria-controls="adminTopupModal" aria-expanded="false">Пополнить</button>
 
           <a class="header-action logout" href="<?= htmlspecialchars($base . '/logout.php') ?>">Выйти</a>
         </div>
@@ -293,19 +362,28 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
   const confirmBtn = document.getElementById('adminTopupDemoConfirm');
   const amountInput = document.getElementById('adminTopupAmount');
 
+  // ensure modal starts hidden
+  if (modal) modal.setAttribute('aria-hidden','true');
+
   function showModal() {
     if (!modal) return;
-    modal.style.display = 'flex';
-    modal.setAttribute('aria-hidden', 'false');
+    modal.setAttribute('aria-hidden','false');
+    if (btn) { btn.setAttribute('aria-expanded','true'); btn.classList.add('active'); }
+    document.body.style.overflow = 'hidden'; // prevent background scroll
   }
   function hideModal() {
     if (!modal) return;
-    modal.style.display = 'none';
-    modal.setAttribute('aria-hidden', 'true');
+    modal.setAttribute('aria-hidden','true');
+    if (btn) { btn.setAttribute('aria-expanded','false'); btn.classList.remove('active'); }
+    document.body.style.overflow = ''; // restore
   }
 
   if (btn && modal) {
-    btn.addEventListener('click', showModal);
+    btn.addEventListener('click', function(){
+      // toggle
+      if (modal.getAttribute('aria-hidden') === 'true') showModal();
+      else hideModal();
+    });
     if (closeBtn) closeBtn.addEventListener('click', hideModal);
 
     modal.addEventListener('click', function(e){
@@ -354,27 +432,52 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
     }
   }
 
-  // --- Навигация: кнопки переходят на страницы ---
-  const notifBtn = document.getElementById('adminNotificationsBtn');
-  const accBtn = document.getElementById('adminAccountingBtn');
-
-  const notifUrl = <?= json_encode($base . '/admin/notifications.php') ?>;
-  const accUrl = <?= json_encode($base . '/admin/accounting.php') ?>;
-
-  if (notifBtn) {
-    notifBtn.addEventListener('click', function(){
-      window.location.href = notifUrl;
-    });
-  }
-
-  if (accBtn) {
-    accBtn.addEventListener('click', function(){
-      window.location.href = accUrl;
-    });
-  }
-
+  // Убедимся, что Escape закрывает модалку
   document.addEventListener('keydown', function(e){
-    if (e.key === 'Escape') hideModal();
+    if (e.key === 'Escape') {
+      hideModal();
+    }
   });
+
+  // small helper: безопасно установить/удалить бейдж новых чатов
+  window.setNewChatsCount = function(n) {
+    const nav = document.querySelector('.nav-admin');
+    if (!nav) return;
+    let badge = document.getElementById('newChatsBadge');
+    // если ноль — удаляем бейдж если он есть
+    if (!n || n <= 0) {
+      if (badge) badge.remove();
+      return;
+    }
+    // если бейдж ещё нет — найдем ссылку "Чаты" и добавим
+    if (!badge) {
+      // ищем ссылку по href (best-effort)
+      const links = nav.querySelectorAll('a');
+      let chatLink = null;
+      links.forEach(a=>{
+        if (!chatLink) {
+          try {
+            if (a.textContent.trim().startsWith('Чаты')) chatLink = a;
+          } catch(e){}
+        }
+      });
+      if (!chatLink) {
+        // fallback: если не нашли по тексту — возьмём первый
+        chatLink = links[0];
+      }
+      if (chatLink) {
+        const span = document.createElement('span');
+        span.id = 'newChatsBadge';
+        span.className = 'badge';
+        span.textContent = String(n);
+        chatLink.appendChild(document.createTextNode(' '));
+        chatLink.appendChild(span);
+      }
+    } else {
+      badge.textContent = String(n);
+    }
+  };
+
+  // Навигация: Уведомления и Бухгалтерия — обычные ссылки в nav, JS не нужен.
 })();
 </script>
