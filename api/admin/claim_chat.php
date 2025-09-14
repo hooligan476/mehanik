@@ -1,41 +1,74 @@
 <?php
-// api/admin/claim_chat.php
+// claim_chat.php
 header('Content-Type: application/json; charset=utf-8');
-if (session_status() === PHP_SESSION_NONE) session_start();
 
-// only admin/superadmin
-$role = $_SESSION['user']['role'] ?? null;
-if (empty($_SESSION['user']) || !in_array($role, ['admin','superadmin'], true)) {
-    http_response_code(403);
-    echo json_encode(['ok'=>false,'error'=>'forbidden']);
+// include middleware
+$included = false;
+$candidates = [
+    __DIR__ . '/../../../middleware.php',
+    __DIR__ . '/../../middleware.php',
+];
+foreach ($candidates as $c) {
+    if (file_exists($c)) { require_once $c; $included = true; break;}
+}
+if (!$included) { echo json_encode(['ok'=>false,'error'=>'middleware_not_found']); exit; }
+require_admin();
+
+// include db
+$dbIncluded = false;
+$dbCandidates = [
+    __DIR__ . '/../../../db.php',
+    __DIR__ . '/../../db.php',
+    __DIR__ . '/../db.php'
+];
+foreach ($dbCandidates as $f) {
+    if (file_exists($f)) { require_once $f; $dbIncluded = true; break; }
+}
+if (!isset($mysqli) && !isset($pdo)) { echo json_encode(['ok'=>false,'error'=>'db_not_found']); exit; }
+
+// only POST
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    echo json_encode(['ok'=>false,'error'=>'method']);
     exit;
 }
 
-require_once __DIR__ . '/../../db.php';
-
-$adminId = (int)($_SESSION['user']['id'] ?? 0);
-$chatId = isset($_POST['chat_id']) ? (int)$_POST['chat_id'] : 0;
-
-if ($chatId <= 0) {
-    http_response_code(422);
+$chat_id = isset($_POST['chat_id']) ? (int)$_POST['chat_id'] : 0;
+if ($chat_id <= 0) {
     echo json_encode(['ok'=>false,'error'=>'invalid_chat_id']);
     exit;
 }
 
+$adminId = (int)($_SESSION['user']['id'] ?? 0);
+if ($adminId <= 0) {
+    echo json_encode(['ok'=>false,'error'=>'not_auth']); exit;
+}
+
 try {
-    // Atomically claim only if not claimed and not closed
-    $st = $mysqli->prepare("UPDATE chats SET accepted_by = ?, accepted_at = NOW(), status = 'accepted' WHERE id = ? AND (accepted_by IS NULL OR accepted_by = 0) AND status <> 'closed' LIMIT 1");
-    $st->bind_param('ii', $adminId, $chatId);
-    $st->execute();
-    if ($st->affected_rows > 0) {
-        // get admin name to return
-        $name = $_SESSION['user']['name'] ?? 'admin#'.$adminId;
-        echo json_encode(['ok'=>true,'chat_id'=>$chatId,'accepted_by'=>$adminId,'admin_name'=>$name]);
-    } else {
-        echo json_encode(['ok'=>false,'error'=>'already_taken_or_closed']);
+    if (isset($mysqli) && $mysqli instanceof mysqli) {
+        $st = $mysqli->prepare("UPDATE chats SET accepted_by = ?, accepted_at = NOW(), status = 'accepted' WHERE id = ? AND (accepted_by IS NULL OR accepted_by = 0) AND status <> 'closed' LIMIT 1");
+        $st->bind_param('ii', $adminId, $chat_id);
+        $st->execute();
+        $affected = $st->affected_rows;
+        $st->close();
+        if ($affected > 0) {
+            echo json_encode(['ok'=>true,'chat_id'=>$chat_id]);
+            exit;
+        } else {
+            echo json_encode(['ok'=>false,'error'=>'already_taken_or_closed']);
+            exit;
+        }
+    } elseif (isset($pdo) && $pdo instanceof PDO) {
+        $st = $pdo->prepare("UPDATE chats SET accepted_by = :aid, accepted_at = NOW(), status = 'accepted' WHERE id = :id AND (accepted_by IS NULL OR accepted_by = 0) AND status <> 'closed' LIMIT 1");
+        $st->execute([':aid'=>$adminId, ':id'=>$chat_id]);
+        if ($st->rowCount() > 0) {
+            echo json_encode(['ok'=>true,'chat_id'=>$chat_id]);
+            exit;
+        } else {
+            echo json_encode(['ok'=>false,'error'=>'already_taken_or_closed']);
+            exit;
+        }
     }
-    $st->close();
 } catch (Throwable $e) {
-    http_response_code(500);
-    echo json_encode(['ok'=>false,'error'=>'db_error']);
+    echo json_encode(['ok'=>false,'error'=>'exception','msg'=>$e->getMessage()]);
+    exit;
 }

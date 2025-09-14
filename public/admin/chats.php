@@ -395,24 +395,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </div>
 <script>
 (function(){
-  // конфиг — адаптируй base если нужно
-  const base = '<?= htmlspecialchars($base ?? '/mehanik/public', ENT_QUOTES) ?>';
-  const listUrl = base + '/api/admin/new_chats_list.php';
-  const countUrl = base + '/api/admin/new_chats_count.php';
-  const claimUrl = base + '/api/admin/claim_chat.php';
+  // Жёстко используем корректный админский API-путь (у тебя: mehanik/api/admin)
+  const apiBase = '/mehanik/api/admin';
+
+  // Конфиг — URL API
+  const listUrl  = apiBase + '/new_chats_list.php';
+  const countUrl = apiBase + '/new_chats_count.php';
+  const claimUrl = apiBase + '/claim_chat.php';
+
+  const base = '<?= htmlspecialchars($base ?? '/mehanik/public', ENT_QUOTES) ?>'; // не используется для AJAX, но оставлен для совместимости
 
   // селекторы
-  const newTbody = document.querySelector('.section[aria-labelledby="newChats"] tbody');
-  // в header-е бейдж (если добавишь элемент с id='newChatsBadge') — обновим его
+  const newSection = document.querySelector('.section[aria-labelledby="newChats"]');
+  const newTbody = newSection ? newSection.querySelector('tbody') : null;
   const headerBadge = document.getElementById('newChatsBadge');
 
-  // рендер одной строки (без форм — кнопки работают через JS/AJAX)
+  function escapeHtml(s){
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]; });
+  }
+
   function renderRow(chat) {
     const id = Number(chat.id);
     const phone = chat.phone || '-';
     const status = chat.status || '';
     const created = chat.created_at || '';
-    // кнопки: Принять (AJAX), Открыть (перейти на reply), Удалить (если права — форма можно оставить, но для простоты оставлю переход на страницу)
     return `
       <tr data-chat-id="${id}">
         <td>${id}</td>
@@ -429,57 +436,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     `;
   }
 
-  function escapeHtml(s){
-    if (s === null || s === undefined) return '';
-    return String(s).replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]; });
-  }
-
-  // обновляет tbody полностью (простая реализация)
   async function refreshList() {
+    if (!newTbody) return;
     try {
-      const res = await fetch(listUrl, { credentials: 'same-origin' });
-      if (!res.ok) throw new Error('network');
+      const res = await fetch(listUrl, { credentials: 'same-origin', cache: 'no-store' });
+      if (!res.ok) {
+        console.warn('new_chats_list fetch failed', res.status);
+        return;
+      }
       const data = await res.json();
-      if (!data.ok) return;
+      if (!data || !data.ok) return;
       const list = data.list || [];
-      // render
-      if (!newTbody) return;
       if (list.length === 0) {
         newTbody.innerHTML = '<tr><td colspan="5" class="small-muted">Новых чатов нет.</td></tr>';
       } else {
         newTbody.innerHTML = list.map(renderRow).join('');
       }
-      attachButtons(); // повесим обработчики
+      attachButtons();
     } catch (e) {
-      // silent fail — можно залогировать в консоль
-      // console.warn('refreshList failed', e);
+      console.warn('refreshList error', e);
     }
   }
 
-  // обновляет бейдж в хедере
   async function refreshCount() {
     try {
-      const res = await fetch(countUrl, { credentials: 'same-origin' });
-      if (!res.ok) throw new Error('network');
+      const res = await fetch(countUrl, { credentials: 'same-origin', cache: 'no-store' });
+      if (!res.ok) {
+        console.warn('new_chats_count fetch failed', res.status);
+        return;
+      }
       const data = await res.json();
-      if (!data.ok) return;
+      if (!data || !data.ok) return;
       const count = Number(data.count || 0);
       if (headerBadge) {
         headerBadge.textContent = count > 0 ? String(count) : '';
         headerBadge.style.display = count > 0 ? 'inline-block' : 'none';
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      console.warn('refreshCount error', e);
+    }
   }
 
-  // повесим обработчики на кнопки внутри списка (делегирование не используем т.к. мы перезаписываем tbody)
   function attachButtons() {
     if (!newTbody) return;
     newTbody.querySelectorAll('.btn-open').forEach(btn => {
       btn.addEventListener('click', function(){
         const id = this.dataset.chatId;
         if (!id) return;
-        // переходим на просмотр: chats.php?reply=ID
-        window.location.href = base + '/admin/chats.php?reply=' + encodeURIComponent(id);
+        window.location.href = base.replace(/\/public$/, '') + '/public/admin/chats.php?reply=' + encodeURIComponent(id);
       });
     });
 
@@ -492,42 +496,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           const form = new FormData();
           form.append('chat_id', id);
           const res = await fetch(claimUrl, { method: 'POST', credentials: 'same-origin', body: form });
+          if (!res.ok) {
+            const txt = await res.text();
+            alert('Ошибка принятия: ' + (txt || res.status));
+            return;
+          }
           const data = await res.json();
           if (data && data.ok) {
-            // удалим строку из списка (чат теперь принят)
+            // строка удалится из списка
             const tr = newTbody.querySelector('tr[data-chat-id="'+id+'"]');
             if (tr) tr.remove();
-            // обновим бейдж
             refreshCount();
-            // можно сразу перейти в чат (раскомментируй если нужно)
-            // window.location.href = base + '/admin/chats.php?reply=' + encodeURIComponent(id);
+            // можно автоматически открыть чат:
+            // window.location.href = base.replace(/\/public$/, '') + '/public/admin/chats.php?reply=' + encodeURIComponent(id);
           } else {
             alert('Не удалось принять чат: ' + (data && data.error ? data.error : 'неизвестная ошибка'));
-            // на случай race: обновим список
+            // обновим список на случай race
             refreshList();
             refreshCount();
           }
         } catch (e) {
+          console.error('claim error', e);
           alert('Сетевая ошибка при принятии чата');
         }
       });
     });
   }
 
-  // polling loop
-  let intervalMs = 3000;
+  // polling
+  const POLL_MS = 3000;
   refreshList();
   refreshCount();
   const _pollInterval = setInterval(function(){
     refreshList();
     refreshCount();
-  }, intervalMs);
+  }, POLL_MS);
 
-  // cleanup on unload
   window.addEventListener('beforeunload', function(){ clearInterval(_pollInterval); });
 
 })();
 </script>
+
 
 </body>
 </html>
