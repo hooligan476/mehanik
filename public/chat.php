@@ -73,16 +73,17 @@ $userName = htmlspecialchars($_SESSION['user']['name'] ?? ($_SESSION['user']['ph
     body{font-family:Inter,Arial,Helvetica,sans-serif;background:#f6f7fb;margin:0;padding:20px}
     .chat-container { max-width:900px; margin:24px auto; padding:18px; background:var(--bg); border-radius:12px; box-shadow:0 6px 18px rgba(2,6,23,.06); display:flex; flex-direction:column; height:72vh; min-height:420px; }
     .chat-header { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eef2f6; padding-bottom:10px; gap:8px; }
-    #chatWindow { flex:1; overflow:auto; padding:12px; background:#fafafa; border-radius:8px; margin:12px 0; display:flex; flex-direction:column; gap:10px; }
+    /* УБРАЛИ «белую рамку» — фон окна сообщений теперь прозрачный, чтобы не было внутренней белой панели */
+    #chatWindow { flex:1; overflow:auto; padding:12px; background:transparent; border-radius:8px; margin:12px 0; display:flex; flex-direction:column; gap:10px; }
     .chat-form { display:flex; gap:8px; border-top:1px solid #eee; padding-top:10px; }
-    .chat-form input[type="text"]{ flex:1; padding:10px; border:1px solid #e6eef7; border-radius:8px; font-size:14px; }
+    .chat-form input[type="text"]{ flex:1; padding:10px; border:1px solid #e6eef7; border-radius:8px; font-size:14px; background:#fff; }
     .chat-form button { padding:10px 14px; border-radius:8px; border:0; background:#10b981; color:#fff; cursor:pointer; font-weight:700; }
     #closeChatBtn { background:#ef4444; padding:8px 12px; color:#fff; border-radius:8px; border:0; cursor:pointer; font-weight:700; }
     #openChatBtn { position: fixed; right:18px; bottom:18px; display:none; background:var(--accent); color:#fff; padding:12px 16px; border-radius:999px; border:0; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,.12); z-index:9999; }
     .msg { display:flex; flex-direction:column; max-width:85%; }
     .msg.user { margin-left:auto; align-items:flex-end; }
     .msg.support { margin-right:auto; align-items:flex-start; }
-    .bubble { padding:10px 12px; border-radius:12px; line-height:1.4; font-size:14px; word-break:break-word; }
+    .bubble { padding:10px 12px; border-radius:12px; line-height:1.4; font-size:14px; word-break:break-word; box-shadow: none; border: 0; }
     .bubble.user { background:var(--user); color:#fff; border-bottom-right-radius:4px; }
     .bubble.support { background:var(--support-bg); color:#111; border-bottom-left-radius:4px; }
     .meta { font-size:12px; color:var(--muted); margin-top:6px; }
@@ -122,7 +123,7 @@ $userName = htmlspecialchars($_SESSION['user']['name'] ?? ($_SESSION['user']['ph
           <div class="small-muted">Сообщений пока нет — напишите первое.</div>
         <?php endif; ?>
 
-        <?php foreach ($messages as $m): 
+        <?php foreach ($messages as $m):
             $cls = ($m['sender'] === 'support') ? 'support' : 'user';
         ?>
           <div class="msg <?= $cls ?>">

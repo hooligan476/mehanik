@@ -1,6 +1,7 @@
 <?php
 // public/admin/chats.php
 // Админ: управление чатами поддержки — новые / принятые и кнопка "Принять".
+// Модификация: AJAX для получения чата и отправки сообщений; правый drawer для просмотра чата.
 // Правка: только админ, который принял чат (или суперадмин), может отвечать/закрывать/удалять.
 
 require_once __DIR__.'/../../middleware.php';
@@ -29,7 +30,131 @@ try {
     // silent - если нет прав на ALTER или что-то ещё, просто пропустим
 }
 
-// === обработка действий до вывода HTML ===
+/**
+ * AJAX GET: вернуть чат и сообщения в JSON
+ * Запрос: GET /admin/chats.php?reply=<id>&ajax=1
+ */
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && !empty($_GET['reply']) && (!empty($_GET['ajax']) && $_GET['ajax'] === '1')) {
+    $chat_id = (int)$_GET['reply'];
+    header('Content-Type: application/json; charset=utf-8');
+
+    if ($chat_id <= 0) {
+        echo json_encode(['ok' => false, 'error' => 'Invalid chat id']);
+        exit;
+    }
+
+    // получим инфо о чате и кто его принял
+    $st = $mysqli->prepare("SELECT c.id, c.user_id, u.phone, c.status, c.accepted_by, c.accepted_at, a.name AS admin_name FROM chats c JOIN users u ON u.id = c.user_id LEFT JOIN users a ON a.id = c.accepted_by WHERE c.id = ? LIMIT 1");
+    $st->bind_param('i', $chat_id);
+    $st->execute();
+    $chatInfo = $st->get_result()->fetch_assoc();
+    $st->close();
+
+    if (!$chatInfo) {
+        echo json_encode(['ok' => false, 'error' => 'Chat not found']);
+        exit;
+    }
+
+    // fetch messages
+    $msgs = [];
+    if ($rs = $mysqli->prepare("SELECT id, sender, content, created_at FROM messages WHERE chat_id = ? ORDER BY id ASC")) {
+        $rs->bind_param('i', $chat_id);
+        $rs->execute();
+        $res = $rs->get_result();
+        while ($m = $res->fetch_assoc()) {
+            $msgs[] = [
+                'id' => (int)$m['id'],
+                'sender' => $m['sender'],
+                'content' => $m['content'],
+                'created_at' => $m['created_at']
+            ];
+        }
+        $rs->close();
+    }
+
+    $chatAcceptedBy = !empty($chatInfo['accepted_by']) ? (int)$chatInfo['accepted_by'] : 0;
+    $youCanAct = $isSuper || ($chatAcceptedBy > 0 && $chatAcceptedBy === $adminId);
+
+    $out = [
+        'ok' => true,
+        'chat' => [
+            'id' => (int)$chatInfo['id'],
+            'user_id' => (int)$chatInfo['user_id'],
+            'phone' => $chatInfo['phone'],
+            'status' => $chatInfo['status'],
+            'accepted_by' => $chatAcceptedBy,
+            'accepted_name' => $chatInfo['admin_name'] ?? null,
+            'accepted_at' => $chatInfo['accepted_at'] ?? null,
+        ],
+        'messages' => $msgs,
+        'youCanAct' => $youCanAct,
+        'isSuper' => $isSuper
+    ];
+
+    echo json_encode($out);
+    exit;
+}
+
+/**
+ * AJAX POST: отправить сообщение (support) и вернуть JSON
+ * Запрос: POST /admin/chats.php (body: chat_id, content, send=1, ajax=1)
+ */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['ajax']) && $_POST['ajax'] === '1' && !empty($_POST['send'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    $chat_id = (int)($_POST['chat_id'] ?? 0);
+    $content = trim((string)($_POST['content'] ?? ''));
+
+    if ($chat_id <= 0 || $content === '') {
+        echo json_encode(['ok' => false, 'error' => 'Invalid parameters']);
+        exit;
+    }
+
+    // кто назначен
+    $acceptedBy = 0;
+    if ($st2 = $mysqli->prepare("SELECT accepted_by FROM chats WHERE id = ? LIMIT 1")) {
+        $st2->bind_param('i', $chat_id);
+        $st2->execute();
+        $r = $st2->get_result()->fetch_assoc();
+        $acceptedBy = $r ? (int)($r['accepted_by'] ?? 0) : 0;
+        $st2->close();
+    }
+
+    if (!($isSuper || ($acceptedBy > 0 && $acceptedBy === $adminId))) {
+        echo json_encode(['ok' => false, 'error' => 'You are not assigned to this chat.']);
+        exit;
+    }
+
+    try {
+        $stmt = $mysqli->prepare("INSERT INTO messages(chat_id,sender,content,created_at) VALUES (?, 'support', ?, NOW())");
+        $stmt->bind_param('is', $chat_id, $content);
+        $stmt->execute();
+        $insertId = $stmt->insert_id;
+        $stmt->close();
+
+        // fetch created_at
+        $created_at = date('Y-m-d H:i:s');
+        if ($st3 = $mysqli->prepare("SELECT created_at FROM messages WHERE id = ? LIMIT 1")) {
+            $st3->bind_param('i', $insertId);
+            $st3->execute();
+            $r2 = $st3->get_result()->fetch_assoc();
+            if ($r2 && !empty($r2['created_at'])) $created_at = $r2['created_at'];
+            $st3->close();
+        }
+
+        echo json_encode(['ok' => true, 'message' => [
+            'id' => (int)$insertId,
+            'sender' => 'support',
+            'content' => $content,
+            'created_at' => $created_at
+        ]]);
+        exit;
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => 'DB error: ' . $e->getMessage()]);
+        exit;
+    }
+}
+
+/* === обработка POST-форм (non-AJAX) — оставлена прежней с редиректами === */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $chat_id = (int)($_POST['chat_id'] ?? 0);
 
@@ -39,7 +164,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Неправильный ID чата.';
         } else {
             try {
-                // Атомарный UPDATE: сработает только если accepted_by IS NULL или 0 и статус не closed
                 $st = $mysqli->prepare("UPDATE chats SET accepted_by = ?, accepted_at = NOW(), status = 'accepted' WHERE id = ? AND (accepted_by IS NULL OR accepted_by = 0) AND status <> 'closed' LIMIT 1");
                 $st->bind_param('ii', $adminId, $chat_id);
                 $st->execute();
@@ -55,29 +179,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Проверим, кто назначен на чат (accepted_by) — для последующих операций
-    $acceptedBy = null;
-    if ($chat_id > 0) {
-        try {
-            $st2 = $mysqli->prepare("SELECT accepted_by FROM chats WHERE id = ? LIMIT 1");
-            $st2->bind_param('i', $chat_id);
-            $st2->execute();
-            $res = $st2->get_result();
-            $r = $res ? $res->fetch_assoc() : null;
-            $acceptedBy = $r ? (int)($r['accepted_by'] ?? 0) : null;
-            $st2->close();
-        } catch (Throwable $e) {
-            // ignore
-        }
-    }
-
     // отправить сообщение — только если вы назначены на чат или вы суперадмин
-    if (!empty($_POST['send']) && !empty($_POST['content'])) {
+    if (!empty($_POST['send']) && !empty($_POST['content']) && empty($_POST['ajax'])) {
         $content = trim((string)$_POST['content']);
         if ($chat_id <= 0 || $content === '') {
             $err = 'Неверные параметры для отправки.';
         } else {
-            // если чат не назначен, отказ
+            $acceptedBy = null;
+            if ($chat_id > 0) {
+                try {
+                    $st2 = $mysqli->prepare("SELECT accepted_by FROM chats WHERE id = ? LIMIT 1");
+                    $st2->bind_param('i', $chat_id);
+                    $st2->execute();
+                    $res = $st2->get_result();
+                    $r = $res ? $res->fetch_assoc() : null;
+                    $acceptedBy = $r ? (int)($r['accepted_by'] ?? 0) : null;
+                    $st2->close();
+                } catch (Throwable $e) {
+                    // ignore
+                }
+            }
+
             if (!$isSuper && !($acceptedBy > 0 && $acceptedBy === $adminId)) {
                 $err = 'Вы не назначены на этот чат — примите его, чтобы отвечать.';
             } else {
@@ -100,6 +222,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($chat_id <= 0) {
             $err = 'Неверный ID для закрытия.';
         } else {
+            $acceptedBy = null;
+            if ($chat_id > 0) {
+                try {
+                    $st2 = $mysqli->prepare("SELECT accepted_by FROM chats WHERE id = ? LIMIT 1");
+                    $st2->bind_param('i', $chat_id);
+                    $st2->execute();
+                    $res = $st2->get_result();
+                    $r = $res ? $res->fetch_assoc() : null;
+                    $acceptedBy = $r ? (int)($r['accepted_by'] ?? 0) : null;
+                    $st2->close();
+                } catch (Throwable $e) {}
+            }
             if (!$isSuper && !($acceptedBy > 0 && $acceptedBy === $adminId)) {
                 $err = 'Только админ, который принял чат, может его закрыть.';
             } else {
@@ -121,6 +255,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($chat_id <= 0) {
             $err = 'Неверный ID для удаления.';
         } else {
+            $acceptedBy = null;
+            if ($chat_id > 0) {
+                try {
+                    $st2 = $mysqli->prepare("SELECT accepted_by FROM chats WHERE id = ? LIMIT 1");
+                    $st2->bind_param('i', $chat_id);
+                    $st2->execute();
+                    $res = $st2->get_result();
+                    $r = $res ? $res->fetch_assoc() : null;
+                    $acceptedBy = $r ? (int)($r['accepted_by'] ?? 0) : null;
+                    $st2->close();
+                } catch (Throwable $e) {}
+            }
             if (!$isSuper && !($acceptedBy > 0 && $acceptedBy === $adminId)) {
                 $err = 'Только админ, который принял чат, может удалить его.';
             } else {
@@ -144,8 +290,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // открыть чат для просмотра — оставляем доступ для просмотра всем админам,
-    // но действия внутри будут ограничены (см. ниже).
+    // открыть чат для просмотра (non-AJAX) — оставляем редирект
     if (!empty($_POST['reply'])) {
         header("Location: chats.php?reply=".$chat_id);
         exit;
@@ -178,13 +323,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .message.support { background:#ecf5ff; align-self:flex-end; }
     .message.user { background:#fff7e6; align-self:flex-start; }
     .msg-row { display:flex; flex-direction:column; gap:6px; }
-    .messages { display:flex; flex-direction:column; }
+    .messages { display:flex; flex-direction:column; max-height:420px; overflow:auto; padding-right:8px; }
     .reply-form { margin-top:12px; display:flex; gap:8px; align-items:center; }
     .reply-form input[type=text] { flex:1; padding:8px; border-radius:8px; border:1px solid #e6eef7; }
     .note { font-size:13px; color:#6b7280; margin-bottom:8px; }
     .badge { display:inline-block; padding:4px 8px; border-radius:999px; background:#eef2ff; color:#0b57a4; font-weight:700; font-size:12px; }
     .small-muted { color:#6b7280; font-size:13px; }
     .warning { color:#b45309; font-weight:700; }
+    /* Drawer styles */
+    #chatDrawer { position:fixed; right:0; top:0; bottom:0; width:420px; max-width:95%; background:#fff; box-shadow: -12px 0 30px rgba(2,6,23,0.15); z-index:1400; transform:translateX(110%); transition:transform .22s ease; display:flex; flex-direction:column; }
+    #chatDrawer.open { transform:translateX(0); }
+    #chatDrawer .drawer-header { padding:12px 14px; border-bottom:1px solid #eef2f6; display:flex; align-items:center; gap:8px; justify-content:space-between; }
+    #chatDrawer .drawer-body { padding:12px; overflow:auto; flex:1; display:flex; flex-direction:column; gap:8px; }
+    #chatDrawer .drawer-footer { padding:12px; border-top:1px solid #eef2f6; }
+    .drawer-close { background:#fff; border:1px solid #eee; padding:6px 8px; border-radius:8px; cursor:pointer; }
+    .muted-small { color:#6b7280; font-size:13px; }
   </style>
 </head>
 <body>
@@ -216,7 +369,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <thead><tr><th>ID</th><th>Пользователь</th><th>Статус</th><th>Создан</th><th>Действие</th></tr></thead>
         <tbody>
         <?php while ($row = $newRes->fetch_assoc()): ?>
-          <tr>
+          <tr data-chat-row="<?= (int)$row['id'] ?>">
             <td><?= (int)$row['id'] ?></td>
             <td><?= htmlspecialchars($row['phone']) ?></td>
             <td><span class="badge"><?= htmlspecialchars($row['status']) ?></span></td>
@@ -228,10 +381,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                   <button class="btn btn-accept" type="submit" name="accept" value="1" title="Принять чат">Принять</button>
                 </form>
 
-                <form method="post" style="display:inline">
-                  <input type="hidden" name="chat_id" value="<?= (int)$row['id'] ?>">
-                  <button class="btn btn-open" type="submit" name="reply" value="1">Открыть</button>
-                </form>
+                <button class="btn btn-open" data-chat-id="<?= (int)$row['id'] ?>">Открыть</button>
 
                 <!-- Удаление новых чатов теперь доступно только суперадмину (или после принятия) -->
                 <?php if ($isSuper): ?>
@@ -288,7 +438,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <thead><tr><th>ID</th><th>Пользователь</th><th>Принял</th><th>Статус</th><th>Принят</th><th>Действие</th></tr></thead>
         <tbody>
         <?php while ($r = $accRes->fetch_assoc()): ?>
-          <tr>
+          <tr data-chat-row="<?= (int)$r['id'] ?>">
             <td><?= (int)$r['id'] ?></td>
             <td><?= htmlspecialchars($r['phone']) ?></td>
             <td><?= htmlspecialchars($r['admin_name'] ?? ('#'.(int)$r['accepted_by'])) ?></td>
@@ -296,12 +446,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <td class="meta"><?= htmlspecialchars($r['accepted_at'] ?? $r['created_at']) ?></td>
             <td>
               <div class="row-actions">
-                <form method="post" style="display:inline">
-                  <input type="hidden" name="chat_id" value="<?= (int)$r['id'] ?>">
-                  <button class="btn btn-open" type="submit" name="reply" value="1">Открыть</button>
-                </form>
+                <button class="btn btn-open" data-chat-id="<?= (int)$r['id'] ?>">Открыть</button>
 
-                <!-- Закрыть / Удалить — только для админа, который принял, или суперадмина -->
+                <!-- Закрыть / Удалить — только для админа, который принял, или суперадмина (оставляем в списке) -->
                 <?php if ($isSuper || ((int)$r['accepted_by'] === $adminId)): ?>
                   <form method="post" style="display:inline">
                     <input type="hidden" name="chat_id" value="<?= (int)$r['id'] ?>">
@@ -326,21 +473,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php endif; ?>
   </div>
 
+  <!-- NOTE: прежний серверный блок просмотра чата (через ?reply=ID) оставлен для совместимости,
+       но теперь основное открытие чата выполняется через AJAX в правой панели -->
   <?php
-  // просмотр чата (если ?reply=ID)
-  if (!empty($_GET['reply'])) {
+  if (!empty($_GET['reply']) && empty($_GET['ajax'])) {
+      // Если пользователь открыл страницу с ?reply=ID непосредственно, оставляем прежний вывод как fallback.
       $chat_id = (int)$_GET['reply'];
-
-      // получим инфо о чате и кто его принял
       $st = $mysqli->prepare("SELECT c.id, c.user_id, u.phone, c.status, c.accepted_by, c.accepted_at, a.name AS admin_name FROM chats c JOIN users u ON u.id = c.user_id LEFT JOIN users a ON a.id = c.accepted_by WHERE c.id = ? LIMIT 1");
       $st->bind_param('i', $chat_id);
       $st->execute();
       $chatInfo = $st->get_result()->fetch_assoc();
       $st->close();
 
-      if (!$chatInfo) {
-          echo '<div class="section"><div class="note">Чат не найден.</div></div>';
-      } else {
+      if ($chatInfo) {
           echo '<div class="chat-box">';
           echo '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
           echo '<div><strong>Чат #'.(int)$chatInfo['id'].'</strong> — пользователь: <span class="small-muted">'.htmlspecialchars($chatInfo['phone']).'</span></div>';
@@ -351,7 +496,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           }
           echo '</div>';
 
-          // вывод сообщений
+          // вывод сообщений (серверный fallback)
           echo '<div class="messages">';
           $msgs = $mysqli->query("SELECT id, sender, content, created_at FROM messages WHERE chat_id=".(int)$chat_id." ORDER BY id ASC");
           while($m = $msgs->fetch_assoc()){
@@ -362,181 +507,245 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               echo '</div>';
           }
           echo '</div>';
-
-          // Доступные действия: если вы назначены (или суперадмин) — показать форму ответа и кнопки закрыть/удалить.
-          $chatAcceptedBy = !empty($chatInfo['accepted_by']) ? (int)$chatInfo['accepted_by'] : 0;
-          $youCanAct = $isSuper || ($chatAcceptedBy > 0 && $chatAcceptedBy === $adminId);
-
-          if ($youCanAct) {
-              echo '<form method="post" class="reply-form" style="margin-top:14px;">';
-              echo '<input type="hidden" name="chat_id" value="'.(int)$chat_id.'">';
-              echo '<input type="text" name="content" placeholder="Ответ..." required>';
-              echo '<button name="send" value="1" class="btn" style="background:#10b981;color:#fff;">Отправить</button>';
-              echo '</form>';
-
-              echo '<div style="margin-top:10px;display:flex;gap:8px;">';
-              echo '<form method="post" style="display:inline"><input type="hidden" name="chat_id" value="'.(int)$chat_id.'"><button class="btn btn-close" name="close" value="1">Закрыть чат</button></form>';
-              echo '<form method="post" style="display:inline" onsubmit="return confirm(\'Удалить чат вместе с сообщениями?\');"><input type="hidden" name="chat_id" value="'.(int)$chat_id.'"><button class="btn btn-delete" name="delete" value="1">Удалить</button></form>';
-              echo '</div>';
-          } else {
-              // Для непринявшего админа: показываем кнопку принять (если чат не принят) или сообщение, что вы не назначены.
-              if ($chatAcceptedBy === 0) {
-                  echo '<div style="margin-top:12px;"><form method="post" style="display:inline"><input type="hidden" name="chat_id" value="'.(int)$chat_id.'"><button class="btn btn-accept" name="accept" value="1">Принять чат</button></form></div>';
-              } else {
-                  echo '<div class="note" style="margin-top:12px;"><span class="warning">Вы не назначены на этот чат.</span> Действия доступны только назначенному админу.</div>';
-              }
-          }
-
           echo '</div>';
+      } else {
+          echo '<div class="section"><div class="note">Чат не найден.</div></div>';
       }
   }
   ?>
 
 </div>
+
+<!-- Drawer container (initially empty, JS will populate) -->
+<div id="chatDrawer" aria-hidden="true">
+  <div class="drawer-header">
+    <div id="drawerTitle"><strong>Чат</strong></div>
+    <div>
+      <button class="drawer-close" id="drawerCloseBtn" title="Закрыть панель">×</button>
+    </div>
+  </div>
+  <div class="drawer-body" id="drawerBody">
+    <!-- messages injected here -->
+  </div>
+  <div class="drawer-footer" id="drawerFooter">
+    <!-- reply form injected here -->
+  </div>
+</div>
+
 <script>
 (function(){
-  // Жёстко используем корректный админский API-путь (у тебя: mehanik/api/admin)
-  const apiBase = '/mehanik/api/admin';
-
-  // Конфиг — URL API
-  const listUrl  = apiBase + '/new_chats_list.php';
-  const countUrl = apiBase + '/new_chats_count.php';
-  const claimUrl = apiBase + '/claim_chat.php';
-
-  const base = '<?= htmlspecialchars($base ?? '/mehanik/public', ENT_QUOTES) ?>'; // не используется для AJAX, но оставлен для совместимости
-
-  // селекторы
-  const newSection = document.querySelector('.section[aria-labelledby="newChats"]');
-  const newTbody = newSection ? newSection.querySelector('tbody') : null;
-  const headerBadge = document.getElementById('newChatsBadge');
+  // API endpoints — claimUrl может быть внешним; используй собственный путь если нужно
+  const claimUrl = '/mehanik/api/admin/claim_chat.php'; // если у вас другой путь — поправьте
+  const chatsPageUrl = '/mehanik/public/admin/chats.php'; // для AJAX get (локальный путь)
+  const drawer = document.getElementById('chatDrawer');
+  const drawerBody = document.getElementById('drawerBody');
+  const drawerFooter = document.getElementById('drawerFooter');
+  const drawerTitle = document.getElementById('drawerTitle');
+  const closeBtn = document.getElementById('drawerCloseBtn');
 
   function escapeHtml(s){
     if (s === null || s === undefined) return '';
     return String(s).replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]; });
   }
 
-  function renderRow(chat) {
-    const id = Number(chat.id);
-    const phone = chat.phone || '-';
-    const status = chat.status || '';
-    const created = chat.created_at || '';
-    return `
-      <tr data-chat-id="${id}">
-        <td>${id}</td>
-        <td>${escapeHtml(phone)}</td>
-        <td><span class="badge">${escapeHtml(status)}</span></td>
-        <td class="meta">${escapeHtml(created)}</td>
-        <td>
-          <div class="row-actions">
-            <button class="btn btn-accept" data-chat-id="${id}" title="Принять чат">Принять</button>
-            <button class="btn btn-open" data-chat-id="${id}" title="Открыть">Открыть</button>
-          </div>
-        </td>
-      </tr>
-    `;
+  function openDrawer(){
+    if(!drawer) return;
+    drawer.classList.add('open');
+    drawer.setAttribute('aria-hidden','false');
   }
-
-  async function refreshList() {
-    if (!newTbody) return;
-    try {
-      const res = await fetch(listUrl, { credentials: 'same-origin', cache: 'no-store' });
-      if (!res.ok) {
-        console.warn('new_chats_list fetch failed', res.status);
-        return;
-      }
-      const data = await res.json();
-      if (!data || !data.ok) return;
-      const list = data.list || [];
-      if (list.length === 0) {
-        newTbody.innerHTML = '<tr><td colspan="5" class="small-muted">Новых чатов нет.</td></tr>';
-      } else {
-        newTbody.innerHTML = list.map(renderRow).join('');
-      }
-      attachButtons();
-    } catch (e) {
-      console.warn('refreshList error', e);
-    }
+  function closeDrawer(){
+    if(!drawer) return;
+    drawer.classList.remove('open');
+    drawer.setAttribute('aria-hidden','true');
+    drawerBody.innerHTML = '';
+    drawerFooter.innerHTML = '';
   }
+  closeBtn.addEventListener('click', closeDrawer);
 
-  async function refreshCount() {
-    try {
-      const res = await fetch(countUrl, { credentials: 'same-origin', cache: 'no-store' });
-      if (!res.ok) {
-        console.warn('new_chats_count fetch failed', res.status);
-        return;
-      }
-      const data = await res.json();
-      if (!data || !data.ok) return;
-      const count = Number(data.count || 0);
-      if (headerBadge) {
-        headerBadge.textContent = count > 0 ? String(count) : '';
-        headerBadge.style.display = count > 0 ? 'inline-block' : 'none';
-      }
-    } catch (e) {
-      console.warn('refreshCount error', e);
-    }
-  }
-
-  function attachButtons() {
-    if (!newTbody) return;
-    newTbody.querySelectorAll('.btn-open').forEach(btn => {
-      btn.addEventListener('click', function(){
-        const id = this.dataset.chatId;
-        if (!id) return;
-        window.location.href = base.replace(/\/public$/, '') + '/public/admin/chats.php?reply=' + encodeURIComponent(id);
-      });
+  // render messages array into drawerBody
+  function renderMessages(messages){
+    drawerBody.innerHTML = '';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'messages';
+    messages.forEach(m => {
+      const div = document.createElement('div');
+      div.className = 'message ' + (m.sender === 'support' ? 'support' : 'user');
+      const hdr = document.createElement('div');
+      hdr.style.fontSize = '13px';
+      hdr.style.fontWeight = '700';
+      hdr.textContent = m.sender;
+      const content = document.createElement('div');
+      content.innerHTML = escapeHtml(m.content).replace(/\n/g, '<br>');
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.style.marginTop = '6px';
+      meta.innerHTML = '<small>' + escapeHtml(m.created_at) + '</small>';
+      div.appendChild(hdr);
+      div.appendChild(content);
+      div.appendChild(meta);
+      wrapper.appendChild(div);
     });
+    drawerBody.appendChild(wrapper);
+    // scroll to bottom
+    setTimeout(()=> { wrapper.scrollTop = wrapper.scrollHeight; drawerBody.scrollTop = drawerBody.scrollHeight; }, 50);
+  }
 
-    newTbody.querySelectorAll('.btn-accept').forEach(btn => {
-      btn.addEventListener('click', async function(){
-        const id = this.dataset.chatId;
-        if (!id) return;
-        if (!confirm('Принять чат #' + id + '?')) return;
+  // render reply area. If youCanAct true - show input; else if chat not accepted show accept btn; else show info
+  function renderFooter(chat, youCanAct){
+    drawerFooter.innerHTML = '';
+    if (youCanAct) {
+      const form = document.createElement('div');
+      form.className = 'reply-form';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'Ответ...';
+      input.style.flex = '1';
+      input.id = 'drawerReplyInput';
+      const sendBtn = document.createElement('button');
+      sendBtn.className = 'btn';
+      sendBtn.style.background = '#10b981';
+      sendBtn.style.color = '#fff';
+      sendBtn.textContent = 'Отправить';
+      sendBtn.addEventListener('click', async function(){
+        const content = input.value.trim();
+        if (!content) return alert('Введите сообщение');
+        sendBtn.disabled = true;
         try {
-          const form = new FormData();
-          form.append('chat_id', id);
-          const res = await fetch(claimUrl, { method: 'POST', credentials: 'same-origin', body: form });
+          const fd = new FormData();
+          fd.append('chat_id', String(chat.id));
+          fd.append('content', content);
+          fd.append('send', '1');
+          fd.append('ajax', '1');
+          const res = await fetch(chatsPageUrl, { method: 'POST', credentials: 'same-origin', body: fd });
           if (!res.ok) {
-            const txt = await res.text();
-            alert('Ошибка принятия: ' + (txt || res.status));
+            alert('Ошибка отправки: ' + res.status);
+            sendBtn.disabled = false;
             return;
           }
           const data = await res.json();
-          if (data && data.ok) {
-            // строка удалится из списка
-            const tr = newTbody.querySelector('tr[data-chat-id="'+id+'"]');
-            if (tr) tr.remove();
-            refreshCount();
-            // можно автоматически открыть чат:
-            // window.location.href = base.replace(/\/public$/, '') + '/public/admin/chats.php?reply=' + encodeURIComponent(id);
-          } else {
-            alert('Не удалось принять чат: ' + (data && data.error ? data.error : 'неизвестная ошибка'));
-            // обновим список на случай race
-            refreshList();
-            refreshCount();
+          if (!data || !data.ok) {
+            alert('Ошибка: ' + (data && data.error ? data.error : 'неизвестная ошибка'));
+            sendBtn.disabled = false;
+            return;
           }
+          // append message to list
+          const msg = data.message;
+          // add to DOM
+          const wrap = drawerBody.querySelector('.messages');
+          if (wrap) {
+            const div = document.createElement('div');
+            div.className = 'message support';
+            const hdr = document.createElement('div'); hdr.style.fontSize='13px'; hdr.style.fontWeight='700'; hdr.textContent = msg.sender;
+            const contentDiv = document.createElement('div'); contentDiv.innerHTML = escapeHtml(msg.content).replace(/\n/g,'<br>');
+            const meta = document.createElement('div'); meta.className='meta'; meta.style.marginTop='6px'; meta.innerHTML = '<small>' + escapeHtml(msg.created_at) + '</small>';
+            div.appendChild(hdr); div.appendChild(contentDiv); div.appendChild(meta);
+            wrap.appendChild(div);
+            wrap.scrollTop = wrap.scrollHeight;
+          }
+          input.value = '';
+          sendBtn.disabled = false;
         } catch (e) {
-          console.error('claim error', e);
-          alert('Сетевая ошибка при принятии чата');
+          console.error('send error', e);
+          alert('Сетевая ошибка при отправке сообщения');
+          sendBtn.disabled = false;
         }
+      });
+      form.appendChild(input);
+      form.appendChild(sendBtn);
+      drawerFooter.appendChild(form);
+    } else {
+      // if chat not accepted and has no accepted_by -> show "Принять" button which calls claimUrl
+      if (!chat.accepted_by || chat.accepted_by === 0) {
+        const acceptWrap = document.createElement('div');
+        const acceptBtn = document.createElement('button');
+        acceptBtn.className = 'btn btn-accept';
+        acceptBtn.textContent = 'Принять чат';
+        acceptBtn.addEventListener('click', async function(){
+          if (!confirm('Принять чат #' + chat.id + '?')) return;
+          try {
+            const fd = new FormData();
+            fd.append('chat_id', String(chat.id));
+            // make request to claimUrl (assumed to return JSON)
+            const res = await fetch(claimUrl, { method:'POST', credentials:'same-origin', body: fd });
+            if (!res.ok) {
+              alert('Ошибка принятия: ' + res.status);
+              return;
+            }
+            const d = await res.json();
+            if (!d || !d.ok) {
+              alert('Не удалось принять: ' + (d && d.error ? d.error : 'неизвестная ошибка'));
+              return;
+            }
+            // reload chat in drawer
+            loadChat(chat.id);
+            // also remove row from "new" table if exists
+            const tr = document.querySelector('tr[data-chat-row="'+chat.id+'"]');
+            if (tr) {
+              // optionally move it to accepted list or mark - for simplicity, just update UI badge
+              const badge = tr.querySelector('.badge');
+              if (badge) badge.textContent = 'accepted';
+            }
+          } catch (e) {
+            console.error('claim error', e);
+            alert('Сетевая ошибка при принятии чата');
+          }
+        });
+        acceptWrap.appendChild(acceptBtn);
+        drawerFooter.appendChild(acceptWrap);
+      } else {
+        // if accepted by someone else
+        const note = document.createElement('div');
+        note.className = 'muted-small';
+        note.textContent = 'Действия доступны только назначенному админу.';
+        drawerFooter.appendChild(note);
+      }
+    }
+  }
+
+  // load chat by id (via AJAX)
+  async function loadChat(id){
+    try {
+      const url = chatsPageUrl + '?reply=' + encodeURIComponent(id) + '&ajax=1';
+      const res = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+      if (!res.ok) {
+        alert('Ошибка загрузки чата: ' + res.status);
+        return;
+      }
+      const data = await res.json();
+      if (!data || !data.ok) {
+        alert('Ошибка: ' + (data && data.error ? data.error : 'неизвестная ошибка'));
+        return;
+      }
+      const chat = data.chat;
+      drawerTitle.innerHTML = '<div><strong>Чат #' + chat.id + '</strong><div class="muted-small">' + escapeHtml(chat.phone) + '</div></div>';
+      renderMessages(data.messages || []);
+      renderFooter(chat, Boolean(data.youCanAct));
+      openDrawer();
+    } catch (e) {
+      console.error('loadChat error', e);
+      alert('Сетевая ошибка при загрузке чата');
+    }
+  }
+
+  // attach handlers to open buttons
+  function attachOpenButtons(){
+    document.querySelectorAll('.btn-open').forEach(btn => {
+      btn.addEventListener('click', function(){
+        const id = this.dataset.chatId || this.getAttribute('data-chat-id');
+        if (!id) return;
+        loadChat(Number(id));
       });
     });
   }
 
-  // polling
-  const POLL_MS = 3000;
-  refreshList();
-  refreshCount();
-  const _pollInterval = setInterval(function(){
-    refreshList();
-    refreshCount();
-  }, POLL_MS);
+  attachOpenButtons();
 
-  window.addEventListener('beforeunload', function(){ clearInterval(_pollInterval); });
+  // If new rows are dynamically refreshed, re-attach events (optional polling not implemented here)
+  // (You can call attachOpenButtons() after any DOM refresh to rebind.)
 
 })();
 </script>
 
-
+<script src="/mehanik/assets/js/main.js"></script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 <?php
-// mehanik/public/add-service.php (updated — rating removed, required checks added)
+// mehanik/public/add-service.php (Google Maps version — replace YOUR_GOOGLE_API_KEY with your key)
 session_start();
 require_once __DIR__ . '/../middleware.php';
 require_once __DIR__ . '/../db.php';
@@ -21,9 +21,7 @@ $error = $_GET['err'] ?? '';
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet" href="/mehanik/assets/css/header.css">
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
   <style>
-    /* Сжато — ваши стили */
     :root{--bg:#f7fafc;--card:#fff;--accent:#0b57a4;--muted:#e6e9ef}
     body{font-family:Inter,system-ui,Arial;background:var(--bg);color:#0f1724;margin:0}
     .page{max-width:980px;margin:20px auto;padding:16px}
@@ -46,7 +44,6 @@ $error = $_GET['err'] ?? '';
     .small-btn{padding:8px 10px;border-radius:10px;border:0;cursor:pointer;font-weight:700;background:#eef6ff;color:var(--accent)}
     .small-btn.del{background:#fff5f5;color:#b91c1c;border:1px solid #ffd6d6}
     .form-foot{margin-top:18px;display:flex;gap:8px;align-items:center;justify-content:flex-end}
-    /* Staff */
     .staff{margin-top:18px;border:1px dashed var(--muted);padding:14px;border-radius:10px;background:#fbfcfe}
     .staff-rows{display:flex;flex-direction:column;gap:10px;margin-top:12px}
     .staff-row{display:flex;gap:10px;align-items:center}
@@ -82,7 +79,6 @@ $error = $_GET['err'] ?? '';
         </div>
         <div class="col">
           <label class="block">Контактный телефон*:
-            <!-- placeholder ONLY, не value -->
             <input class="input" type="text" name="phone" required placeholder="+99371234567">
           </label>
         </div>
@@ -115,7 +111,6 @@ $error = $_GET['err'] ?? '';
         </label>
       </div>
 
-      <!-- STAFF -->
       <div class="staff" aria-live="polite">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div style="font-weight:700;">Сотрудники (обязательно — добавьте хотя бы одного)</div>
@@ -143,19 +138,76 @@ $error = $_GET['err'] ?? '';
 
 <footer style="padding:20px;text-align:center;color:#777;font-size:.9rem;">&copy; <?= date('Y') ?> Mehanik</footer>
 
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-/* Map */
-const map = L.map('map').setView([37.95,58.38],13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-let marker;
-map.on('click', function(e){
-  if(marker) marker.setLatLng(e.latlng); else marker = L.marker(e.latlng).addTo(map);
-  document.getElementById('latitude').value = e.latlng.lat;
-  document.getElementById('longitude').value = e.latlng.lng;
-});
+// Google Maps initializer and manual fallback
+function showManualCoordsFallback() {
+  var mapEl = document.getElementById('map');
+  if (mapEl) {
+    mapEl.innerHTML = '<div style="padding:18px;color:#444">Карта недоступна. Укажите координаты вручную ниже.</div>';
+  }
+  if (!document.getElementById('manualCoords')) {
+    var wrapper = document.createElement('div');
+    wrapper.id = 'manualCoords';
+    wrapper.style.marginTop = '12px';
+    wrapper.innerHTML = '\n      <label class="block">Широта: <input class="input" id="latitude_manual" placeholder="например 37.95"></label>\n      <label class="block">Долгота: <input class="input" id="longitude_manual" placeholder="например 58.38"></label>\n    ';
+    mapEl.parentNode.insertBefore(wrapper, mapEl.nextSibling);
+    var latH = document.getElementById('latitude');
+    var lngH = document.getElementById('longitude');
+    var latM = document.getElementById('latitude_manual');
+    var lngM = document.getElementById('longitude_manual');
+    if (latH && latH.value) latM.value = latH.value;
+    if (lngH && lngH.value) lngM.value = lngH.value;
+    latM.addEventListener('input', function(){ if (latH) latH.value = this.value; });
+    lngM.addEventListener('input', function(){ if (lngH) lngH.value = this.value; });
+  }
+}
 
-/* Prices widget (original, unchanged) */
+function initMap() {
+  try {
+    var center = { lat: 37.95, lng: 58.38 };
+    var map = new google.maps.Map(document.getElementById('map'), {
+      center: center,
+      zoom: 13,
+      streetViewControl: false
+    });
+
+    var latHidden = document.getElementById('latitude');
+    var lngHidden = document.getElementById('longitude');
+    var marker = null;
+
+    if (latHidden && lngHidden && latHidden.value && lngHidden.value) {
+      var lat0 = parseFloat(latHidden.value);
+      var lng0 = parseFloat(lngHidden.value);
+      if (!isNaN(lat0) && !isNaN(lng0)) {
+        marker = new google.maps.Marker({ position: { lat: lat0, lng: lng0 }, map: map });
+        map.setCenter({ lat: lat0, lng: lng0 });
+      }
+    }
+
+    map.addListener('click', function(e) {
+      var lat = e.latLng.lat();
+      var lng = e.latLng.lng();
+      if (marker) marker.setPosition(e.latLng); else marker = new google.maps.Marker({ position: e.latLng, map: map });
+      if (latHidden) latHidden.value = lat;
+      if (lngHidden) lngHidden.value = lng;
+    });
+
+    console.info('Google Maps initialized');
+  } catch (err) {
+    console.warn('Google Maps init error:', err);
+    showManualCoordsFallback();
+  }
+}
+
+// If Google Maps doesn't load within 6s, show fallback
+setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps === 'undefined') { console.warn('Google Maps not available, showing manual fallback'); showManualCoordsFallback(); } }, 6000);
+</script>
+
+<!-- Insert your API key below. Replace YOUR_GOOGLE_API_KEY with the real key when ready. -->
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_API_KEY&callback=initMap"></script>
+
+<!-- Prices widget -->
+<script>
 (function(){
   const rows = document.getElementById('pricesRows');
   const addBtn = document.getElementById('addPriceBtn');
@@ -169,298 +221,80 @@ map.on('click', function(e){
     const priceWrap = document.createElement('div');
     priceWrap.className = 'p-price';
 
-    const hin = document.createElement('input');
-    hin.type = 'hidden';
-    hin.name = 'prices[name][]';
-    hin.value = n;
+    const hin = document.createElement('input'); hin.type = 'hidden'; hin.name = 'prices[name][]'; hin.value = n;
+    const hip = document.createElement('input'); hip.type = 'hidden'; hip.name = 'prices[price][]'; hip.value = p;
 
-    const hip = document.createElement('input');
-    hip.type = 'hidden';
-    hip.name = 'prices[price][]';
-    hip.value = p;
-
-    const actions = document.createElement('div');
-    actions.className = 'p-actions';
-    const btnEdit = document.createElement('button');
-    btnEdit.type = 'button';
-    btnEdit.className = 'small-btn';
-    btnEdit.textContent = 'Исправить';
-    const btnDel = document.createElement('button');
-    btnDel.type = 'button';
-    btnDel.className = 'small-btn del';
-    btnDel.textContent = 'Удалить';
-    actions.appendChild(btnEdit);
-    actions.appendChild(btnDel);
+    const actions = document.createElement('div'); actions.className = 'p-actions';
+    const btnEdit = document.createElement('button'); btnEdit.type = 'button'; btnEdit.className = 'small-btn'; btnEdit.textContent = 'Исправить';
+    const btnDel = document.createElement('button'); btnDel.type = 'button'; btnDel.className = 'small-btn del'; btnDel.textContent = 'Удалить';
+    actions.appendChild(btnEdit); actions.appendChild(btnDel);
 
     function makeInputs(initialName, initialPrice) {
-      const nameInput = document.createElement('input');
-      nameInput.type = 'text';
-      nameInput.className = 'p-name';
-      nameInput.placeholder = 'Услуга';
-      nameInput.value = initialName || '';
-
-      const priceInput = document.createElement('input');
-      priceInput.type = 'text';
-      priceInput.className = 'p-price';
-      priceInput.placeholder = 'Цена';
-      priceInput.value = initialPrice || '';
-
+      const nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.className = 'p-name'; nameInput.placeholder = 'Услуга'; nameInput.value = initialName || '';
+      const priceInput = document.createElement('input'); priceInput.type = 'text'; priceInput.className = 'p-price'; priceInput.placeholder = 'Цена'; priceInput.value = initialPrice || '';
       return { nameInput, priceInput };
     }
 
-    const nameText = document.createElement('div');
-    nameText.textContent = n || '—';
-    const priceText = document.createElement('div');
-    priceText.textContent = p || '—';
+    const nameText = document.createElement('div'); nameText.textContent = n || '—';
+    const priceText = document.createElement('div'); priceText.textContent = p || '—';
 
-    nameWrap.appendChild(nameText);
-    priceWrap.appendChild(priceText);
-    r.appendChild(nameWrap);
-    r.appendChild(priceWrap);
-    r.appendChild(actions);
-    r.appendChild(hin);
-    r.appendChild(hip);
+    nameWrap.appendChild(nameText); priceWrap.appendChild(priceText);
+    r.appendChild(nameWrap); r.appendChild(priceWrap); r.appendChild(actions); r.appendChild(hin); r.appendChild(hip);
 
     function startEdit() {
-      if (r.dataset.editing === '1') return;
-      r.dataset.editing = '1';
-      const currentName = hin.value || '';
-      const currentPrice = hip.value || '';
+      if (r.dataset.editing === '1') return; r.dataset.editing = '1';
+      const currentName = hin.value || ''; const currentPrice = hip.value || '';
       const { nameInput, priceInput } = makeInputs(currentName, currentPrice);
-
-      r.replaceChild(nameInput, nameWrap);
-      r.replaceChild(priceInput, priceWrap);
-
-      btnEdit.textContent = 'Сохранить';
-      btnDel.textContent = 'Отмена';
-      btnDel.classList.remove('del');
-
-      const save = function() {
-        const newName = nameInput.value.trim();
-        const newPrice = priceInput.value.trim();
-        if (newName === '') { alert('Введите название услуги'); nameInput.focus(); return; }
-        nameText.textContent = newName;
-        priceText.textContent = newPrice !== '' ? newPrice : '—';
-        hin.value = newName;
-        hip.value = newPrice;
-        r.replaceChild(nameWrap, nameInput);
-        r.replaceChild(priceWrap, priceInput);
-        btnEdit.textContent = 'Исправить';
-        btnDel.textContent = 'Удалить';
-        btnDel.classList.add('del');
-        r.dataset.editing = '0';
-        btnEdit.onclick = startEdit;
-        btnDel.onclick = delOrCancel;
-      };
-
-      const cancel = function() {
-        r.replaceChild(nameWrap, nameInput);
-        r.replaceChild(priceWrap, priceInput);
-        btnEdit.textContent = 'Исправить';
-        btnDel.textContent = 'Удалить';
-        btnDel.classList.add('del');
-        r.dataset.editing = '0';
-        btnEdit.onclick = startEdit;
-        btnDel.onclick = delOrCancel;
-      };
-
-      btnEdit.onclick = save;
-      btnDel.onclick = cancel;
+      r.replaceChild(nameInput, nameWrap); r.replaceChild(priceInput, priceWrap);
+      btnEdit.textContent = 'Сохранить'; btnDel.textContent = 'Отмена'; btnDel.classList.remove('del');
+      const save = function() { const newName = nameInput.value.trim(); const newPrice = priceInput.value.trim(); if (newName === '') { alert('Введите название услуги'); nameInput.focus(); return; } nameText.textContent = newName; priceText.textContent = newPrice !== '' ? newPrice : '—'; hin.value = newName; hip.value = newPrice; r.replaceChild(nameWrap, nameInput); r.replaceChild(priceWrap, priceInput); btnEdit.textContent = 'Исправить'; btnDel.textContent = 'Удалить'; btnDel.classList.add('del'); r.dataset.editing = '0'; btnEdit.onclick = startEdit; btnDel.onclick = delOrCancel; };
+      const cancel = function() { r.replaceChild(nameWrap, nameInput); r.replaceChild(priceWrap, priceInput); btnEdit.textContent = 'Исправить'; btnDel.textContent = 'Удалить'; btnDel.classList.add('del'); r.dataset.editing = '0'; btnEdit.onclick = startEdit; btnDel.onclick = delOrCancel; };
+      btnEdit.onclick = save; btnDel.onclick = cancel;
     }
 
-    function delOrCancel() {
-      if (r.dataset.editing === '1') return;
-      if (!confirm('Удалить услугу?')) return;
-      r.remove();
-    }
-
-    btnEdit.onclick = startEdit;
-    btnDel.onclick = delOrCancel;
-
-    if (editable || (!n && !p)) {
-      setTimeout(startEdit, 10);
-    }
-
+    function delOrCancel() { if (r.dataset.editing === '1') return; if (!confirm('Удалить услугу?')) return; r.remove(); }
+    btnEdit.onclick = startEdit; btnDel.onclick = delOrCancel;
+    if (editable || (!n && !p)) { setTimeout(startEdit, 10); }
     return r;
   }
 
-  addBtn.addEventListener('click', function(){
-    rows.appendChild(createRow('', '', true));
-    const last = rows.lastElementChild;
-    if (last) last.scrollIntoView({behavior:'smooth', block:'center'});
-  });
-
-  document.addEventListener('DOMContentLoaded', function(){
-    if (rows.children.length === 0) rows.appendChild(createRow('', '', true));
-  });
+  addBtn.addEventListener('click', function(){ rows.appendChild(createRow('', '', true)); const last = rows.lastElementChild; if (last) last.scrollIntoView({behavior:'smooth', block:'center'}); });
+  document.addEventListener('DOMContentLoaded', function(){ if (rows.children.length === 0) rows.appendChild(createRow('', '', true)); });
 
   const form = document.getElementById('serviceForm');
   form.addEventListener('submit', function(e){
-    // if a price row is still in editing mode, try to save it
     const editing = rows.querySelector('[data-editing="1"]');
-    if (editing) {
-      const saveBtn = editing.querySelector('.p-actions .small-btn');
-      if (saveBtn) {
-        saveBtn.click();
-        if (editing.dataset.editing === '1') {
-          e.preventDefault();
-          return;
-        }
-      }
-    }
-
-    // ensure at least one price with name exists
+    if (editing) { const saveBtn = editing.querySelector('.p-actions .small-btn'); if (saveBtn) { saveBtn.click(); if (editing.dataset.editing === '1') { e.preventDefault(); return; } } }
     const priceNames = Array.from(document.querySelectorAll('input[name="prices[name][]"]')).map(n => n.value.trim()).filter(v => v !== '');
-    if (priceNames.length === 0) {
-      alert('Добавьте хотя бы одну услугу с названием и сохраните её.');
-      e.preventDefault();
-      return;
-    }
-
-    // validate map coords
-    const lat = document.getElementById('latitude').value;
-    const lng = document.getElementById('longitude').value;
-    if (!lat || !lng) {
-      alert('Пожалуйста, укажите местоположение на карте (щелкните по карте).');
-      e.preventDefault();
-      return;
-    }
-
-    // validate required top-level fields (HTML5 required is set, but double-check)
+    if (priceNames.length === 0) { alert('Добавьте хотя бы одну услугу с названием и сохраните её.'); e.preventDefault(); return; }
+    const lat = document.getElementById('latitude').value; const lng = document.getElementById('longitude').value;
+    if (!lat || !lng) { alert('Пожалуйста, укажите местоположение (щелкните по карте или укажите координаты вручную).'); e.preventDefault(); return; }
     const requiredFields = ['name','contact_name','phone','email','description','address'];
-    for (let fieldName of requiredFields) {
-      const el = document.querySelector('[name="'+fieldName+'"]');
-      if (!el || el.value.trim() === '') {
-        alert('Заполните поле: ' + fieldName.replace('_',' '));
-        e.preventDefault();
-        return;
-      }
-    }
-
-    // ensure logo file chosen
-    const logoInput = document.querySelector('input[name="logo"]');
-    if (!logoInput || logoInput.files.length === 0) {
-      alert('Загрузите логотип (обязательно).');
-      e.preventDefault();
-      return;
-    }
-
-    // ensure at least one photo chosen
-    const photosInput = document.querySelector('input[name="photos[]"]');
-    if (!photosInput || photosInput.files.length === 0) {
-      alert('Загрузите хотя бы одну фотографию (обязательно).');
-      e.preventDefault();
-      return;
-    }
-
-    // validate staff: at least one staff row, and for each: name, position, photo required
-    const staffRows = document.querySelectorAll('.staff-row');
-    if (staffRows.length === 0) {
-      alert('Добавьте хотя бы одного сотрудника.');
-      e.preventDefault();
-      return;
-    }
-    for (let i = 0; i < staffRows.length; i++) {
-      const row = staffRows[i];
-      const nameInput = row.querySelector('input[name="staff[name][]"]');
-      const posInput = row.querySelector('input[name="staff[position][]"]');
-      const photoInput = row.querySelector('input[name="staff_photo[]"]');
-
-      if (!nameInput || nameInput.value.trim() === '') {
-        alert('Укажите имя для каждого сотрудника.');
-        e.preventDefault();
-        return;
-      }
-      if (!posInput || posInput.value.trim() === '') {
-        alert('Укажите должность для каждого сотрудника.');
-        e.preventDefault();
-        return;
-      }
-      if (!photoInput || photoInput.files.length === 0) {
-        alert('Загрузите фото для каждого сотрудника.');
-        e.preventDefault();
-        return;
-      }
-    }
-
-    // all checks passed — allow submit
+    for (let fieldName of requiredFields) { const el = document.querySelector('[name="'+fieldName+'"]'); if (!el || el.value.trim() === '') { alert('Заполните поле: ' + fieldName.replace('_',' ')); e.preventDefault(); return; } }
+    const logoInput = document.querySelector('input[name="logo"]'); if (!logoInput || logoInput.files.length === 0) { alert('Загрузите логотип (обязательно).'); e.preventDefault(); return; }
+    const photosInput = document.querySelector('input[name="photos[]"]'); if (!photosInput || photosInput.files.length === 0) { alert('Загрузите хотя бы одну фотографию (обязательно).'); e.preventDefault(); return; }
+    const staffRows = document.querySelectorAll('.staff-row'); if (staffRows.length === 0) { alert('Добавьте хотя бы одного сотрудника.'); e.preventDefault(); return; }
+    for (let i = 0; i < staffRows.length; i++) { const row = staffRows[i]; const nameInput = row.querySelector('input[name="staff[name][]"]'); const posInput = row.querySelector('input[name="staff[position][]"]'); const photoInput = row.querySelector('input[name="staff_photo[]"]'); if (!nameInput || nameInput.value.trim() === '') { alert('Укажите имя для каждого сотрудника.'); e.preventDefault(); return; } if (!posInput || posInput.value.trim() === '') { alert('Укажите должность для каждого сотрудника.'); e.preventDefault(); return; } if (!photoInput || photoInput.files.length === 0) { alert('Загрузите фото для каждого сотрудника.'); e.preventDefault(); return; } }
   });
 })();
+</script>
 
-/* STAFF widget -- rating removed; name, position and photo are required fields (client-side) */
+<!-- Staff widget -->
+<script>
 (function(){
   const rows = document.getElementById('staffRows');
   const addBtn = document.getElementById('addStaffBtn');
-
   function createStaffRow(name = '', position = '') {
-    const r = document.createElement('div');
-    r.className = 'staff-row';
-
-    // photo container (file input)
-    const photoWrap = document.createElement('div');
-    photoWrap.className = 's-photo';
-    const photoInput = document.createElement('input');
-    photoInput.type = 'file';
-    photoInput.name = 'staff_photo[]';
-    photoInput.accept = 'image/*';
-    photoInput.required = true;
-    photoWrap.appendChild(photoInput);
-
-    // name
-    const nameWrap = document.createElement('div');
-    nameWrap.className = 's-name';
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.name = 'staff[name][]';
-    nameInput.placeholder = 'Имя сотрудника';
-    nameInput.className = 'input';
-    nameInput.value = name;
-    nameInput.required = true;
-    nameWrap.appendChild(nameInput);
-
-    // position
-    const posWrap = document.createElement('div');
-    posWrap.className = 's-pos';
-    const posInput = document.createElement('input');
-    posInput.type = 'text';
-    posInput.name = 'staff[position][]';
-    posInput.placeholder = 'Должность';
-    posInput.className = 'input';
-    posInput.value = position;
-    posInput.required = true;
-    posWrap.appendChild(posInput);
-
-    // actions
-    const actions = document.createElement('div');
-    actions.className = 'staff-actions';
-    const btnRemove = document.createElement('button');
-    btnRemove.type = 'button';
-    btnRemove.className = 'small-btn remove';
-    btnRemove.textContent = 'Удалить';
-    btnRemove.onclick = function(){
-      if (!confirm('Удалить сотрудника?')) return;
-      r.remove();
-    };
-    actions.appendChild(btnRemove);
-
-    r.appendChild(photoWrap);
-    r.appendChild(nameWrap);
-    r.appendChild(posWrap);
-    r.appendChild(actions);
-
+    const r = document.createElement('div'); r.className = 'staff-row';
+    const photoWrap = document.createElement('div'); photoWrap.className = 's-photo'; const photoInput = document.createElement('input'); photoInput.type = 'file'; photoInput.name = 'staff_photo[]'; photoInput.accept = 'image/*'; photoInput.required = true; photoWrap.appendChild(photoInput);
+    const nameWrap = document.createElement('div'); nameWrap.className = 's-name'; const nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.name = 'staff[name][]'; nameInput.placeholder = 'Имя сотрудника'; nameInput.className = 'input'; nameInput.value = name; nameInput.required = true; nameWrap.appendChild(nameInput);
+    const posWrap = document.createElement('div'); posWrap.className = 's-pos'; const posInput = document.createElement('input'); posInput.type = 'text'; posInput.name = 'staff[position][]'; posInput.placeholder = 'Должность'; posInput.className = 'input'; posInput.value = position; posInput.required = true; posWrap.appendChild(posInput);
+    const actions = document.createElement('div'); actions.className = 'staff-actions'; const btnRemove = document.createElement('button'); btnRemove.type = 'button'; btnRemove.className = 'small-btn remove'; btnRemove.textContent = 'Удалить'; btnRemove.onclick = function(){ if (!confirm('Удалить сотрудника?')) return; r.remove(); }; actions.appendChild(btnRemove);
+    r.appendChild(photoWrap); r.appendChild(nameWrap); r.appendChild(posWrap); r.appendChild(actions);
     return r;
   }
-
-  addBtn.addEventListener('click', function(){
-    rows.appendChild(createStaffRow('',''));
-    const last = rows.lastElementChild;
-    if (last) last.scrollIntoView({behavior:'smooth', block:'center'});
-  });
-
-  document.addEventListener('DOMContentLoaded', function(){
-    // Add one staff row by default to encourage user (since staff is required)
-    if (rows.children.length === 0) rows.appendChild(createStaffRow('',''));
-  });
+  addBtn.addEventListener('click', function(){ rows.appendChild(createStaffRow('','')); const last = rows.lastElementChild; if (last) last.scrollIntoView({behavior:'smooth', block:'center'}); });
+  document.addEventListener('DOMContentLoaded', function(){ if (rows.children.length === 0) rows.appendChild(createStaffRow('','')); });
 })();
 </script>
 
