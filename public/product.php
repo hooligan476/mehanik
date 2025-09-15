@@ -28,12 +28,22 @@ $sql = "
   LEFT JOIN components    c  ON c.id  = p.component_id
   WHERE p.id = ?
 ";
-$stmt = $mysqli->prepare($sql);
-$stmt->bind_param('i', $id);
-$stmt->execute();
-$res = $stmt->get_result();
-$product = $res->fetch_assoc();
-$stmt->close();
+if (isset($mysqli) && $mysqli instanceof mysqli) {
+    $stmt = $mysqli->prepare($sql);
+    $stmt->bind_param('i', $id);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $product = $res->fetch_assoc();
+    $stmt->close();
+} elseif (isset($pdo) && $pdo instanceof PDO) {
+    $st = $pdo->prepare($sql);
+    $st->execute([$id]);
+    $product = $st->fetch(PDO::FETCH_ASSOC);
+} else {
+    http_response_code(500);
+    echo "DB connection error.";
+    exit;
+}
 
 if (!$product) {
     http_response_code(404);
@@ -70,18 +80,82 @@ if ($statusNormalized !== 'approved' && !$is_owner && !$is_admin) {
     exit;
 }
 
-// Фото
+// Главная фотография (product.photo) — вычисляем URL
 $photoRaw = $product['photo'] ?? '';
-if ($photoRaw) {
-    if (preg_match('~^https?://~i', $photoRaw) || str_starts_with($photoRaw, '/')) {
-        $photoUrl = $photoRaw;
-    } else {
-        $photoUrl = rtrim($config['base_url'], '/') . '/uploads/products/' . $photoRaw;
+$baseUrl = rtrim($config['base_url'] ?? '', '/');
+
+function buildPublicPath($raw, $baseUrl) {
+    $raw = (string)$raw;
+    if ($raw === '') return null;
+    if (preg_match('~^https?://~i', $raw) || strpos($raw, '/') === 0) {
+        return $raw;
     }
-} else {
-    $photoUrl = null;
+    return ($baseUrl !== '' ? $baseUrl : '') . '/uploads/products/' . ltrim($raw, '/');
 }
 
+$photoUrl = buildPublicPath($photoRaw, $baseUrl);
+
+// Logo
+$logoRaw = $product['logo'] ?? '';
+$logoUrl = buildPublicPath($logoRaw, $baseUrl);
+
+// Подгружаем дополнительные фото из product_photos (если таблица есть)
+$galleryUrls = [];
+if (isset($mysqli) && $mysqli instanceof mysqli) {
+    // check table exists
+    $res = $mysqli->query("SHOW TABLES LIKE 'product_photos'");
+    if ($res && $res->num_rows > 0) {
+        $stmt2 = $mysqli->prepare("SELECT file_path FROM product_photos WHERE product_id = ? ORDER BY id ASC");
+        if ($stmt2) {
+            $stmt2->bind_param('i', $id);
+            $stmt2->execute();
+            $r2 = $stmt2->get_result();
+            while ($row = $r2->fetch_assoc()) {
+                $fp = $row['file_path'] ?? '';
+                if ($fp === '') continue;
+                $galleryUrls[] = buildPublicPath($fp, $baseUrl);
+            }
+            $stmt2->close();
+        }
+    }
+} elseif (isset($pdo) && $pdo instanceof PDO) {
+    try {
+        $st = $pdo->query("SHOW TABLES LIKE 'product_photos'");
+        $exists = (bool)$st->fetchColumn();
+        if ($exists) {
+            $st2 = $pdo->prepare("SELECT file_path FROM product_photos WHERE product_id = :pid ORDER BY id ASC");
+            $st2->execute([':pid' => $id]);
+            $rows = $st2->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($rows as $row) {
+                $fp = $row['file_path'] ?? '';
+                if ($fp === '') continue;
+                $galleryUrls[] = buildPublicPath($fp, $baseUrl);
+            }
+        }
+    } catch (Throwable $e) {
+        // ignore, gallery remains empty
+    }
+}
+
+// Убедимся, что главный фото URL представлен в галерее первым (если есть)
+if ($photoUrl) {
+    // если photoUrl не в массиве, добавим в начало
+    if (!in_array($photoUrl, $galleryUrls, true)) {
+        array_unshift($galleryUrls, $photoUrl);
+    } else {
+        // если есть в массиве — переместим его в начало
+        $idx = array_search($photoUrl, $galleryUrls, true);
+        if ($idx !== false && $idx !== 0) {
+            array_splice($galleryUrls, $idx, 1);
+            array_unshift($galleryUrls, $photoUrl);
+        }
+    }
+}
+
+// Если нет ни одного фото — покажем placeholder
+$hasAnyPhoto = !empty($galleryUrls);
+
+// reject reason
 $rejectReason = $product['reject_reason'] ?? '';
 ?>
 <!doctype html>
@@ -97,6 +171,9 @@ $rejectReason = $product['reject_reason'] ?? '';
 .card-body { padding:20px; }
 .photo { background:#f7f7f9; display:flex; align-items:center; justify-content:center; min-height:320px; }
 .photo img { max-width:100%; max-height:520px; object-fit:contain; }
+.thumbs { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+.thumb { width:78px; height:78px; border-radius:8px; overflow:hidden; border:1px solid #eee; cursor:pointer; background:#fafafa; display:flex; align-items:center; justify-content:center; }
+.thumb img { width:100%; height:100%; object-fit:cover; display:block; }
 .status-msg { padding:12px 14px; border-radius:10px; font-weight:600; margin: 0 0 14px 0; }
 .status-approved { background:#e7f8ea; color:#116b1d; border:1px solid #bfe9c6; }
 .status-rejected { background:#ffeaea; color:#8f1a1a; border:1px solid #ffbcbc; }
@@ -108,6 +185,7 @@ $rejectReason = $product['reject_reason'] ?? '';
 .price { font-weight:700; font-size:1.4rem; }
 .section-title { margin:18px 0 8px; font-size:1.05rem; font-weight:700; }
 .desc { background:#fafbff; border:1px dashed #e7e9f3; border-radius:12px; padding:14px; }
+.logo { display:block; margin-bottom:12px; }
 .btn { display:inline-block; padding:8px 16px; background:#116b1d; color:#fff; border-radius:6px; text-decoration:none; margin-top:12px; }
 </style>
 </head>
@@ -134,18 +212,34 @@ $rejectReason = $product['reject_reason'] ?? '';
 <div class="product-wrap">
   <!-- Фото -->
   <div class="card">
-    <div class="photo">
-      <?php if ($photoUrl): ?>
-        <img src="<?= htmlspecialchars($photoUrl) ?>" alt="<?= htmlspecialchars($product['name']) ?>">
+    <div class="photo" id="photoWrapper">
+      <?php if ($hasAnyPhoto): ?>
+        <img id="mainPhoto" src="<?= htmlspecialchars($galleryUrls[0]) ?>" alt="<?= htmlspecialchars($product['name']) ?>">
       <?php else: ?>
-        <img src="/mehanik/assets/no-photo.png" alt="Нет фото">
+        <img id="mainPhoto" src="/mehanik/assets/no-photo.png" alt="Нет фото">
       <?php endif; ?>
     </div>
+
+    <?php if ($hasAnyPhoto && count($galleryUrls) > 1): ?>
+      <div style="padding:12px;">
+        <div class="thumbs" id="thumbs">
+          <?php foreach ($galleryUrls as $idx => $g): ?>
+            <div class="thumb" data-idx="<?= $idx ?>">
+              <img src="<?= htmlspecialchars($g) ?>" alt="Фото <?= $idx+1 ?>">
+            </div>
+          <?php endforeach; ?>
+        </div>
+      </div>
+    <?php endif; ?>
   </div>
 
   <!-- Описание -->
   <div class="card">
     <div class="card-body">
+      <?php if ($logoUrl): ?>
+        <img class="logo" src="<?= htmlspecialchars($logoUrl) ?>" alt="Логотип" style="max-width:140px; max-height:80px; object-fit:contain;">
+      <?php endif; ?>
+
       <div style="margin-bottom:8px;">
         <?php foreach (['brand_name','model_name','complex_part_name','component_name'] as $field): ?>
           <?php if (!empty($product[$field])): ?>
@@ -158,8 +252,8 @@ $rejectReason = $product['reject_reason'] ?? '';
         <div class="row"><strong>Артикул:</strong> <?= htmlspecialchars($product['sku'] ?? '') ?></div>
         <div class="row"><strong>Производитель:</strong> <?= htmlspecialchars($product['manufacturer'] ?? '-') ?></div>
         <div class="row"><strong>Состояние:</strong> <?= htmlspecialchars($product['quality'] ?? '-') ?></div>
-        <div class="row"><strong>Качество:</strong> <?= number_format((float)($product['rating'] ?? 0),1) ?>/10</div>
-        <div class="row"><strong>Годы выпуска:</strong> <?= ($product['year_from'] ?: '—') ?> — <?= ($product['year_to'] ?: '—') ?></div>
+        <div class="row"><strong>Качество:</strong> <?= number_format((float)($product['rating'] ?? 0),1) ?></div>
+        <div class="row"><strong>Годы выпуска:</strong> <?= ($product['year_from'] ? htmlspecialchars($product['year_from']) : '—') ?> — <?= ($product['year_to'] ? htmlspecialchars($product['year_to']) : '—') ?></div>
         <div class="row"><strong>Наличие:</strong> <?= (int)($product['availability'] ?? 0) ?> шт.</div>
         <div class="row price"><strong>Цена:</strong> <?= number_format((float)($product['price'] ?? 0), 2) ?> TMT</div>
         <div class="row"><strong>Добавлено:</strong> <?= $product['created_at'] ? date('d.m.Y H:i', strtotime($product['created_at'])) : '-' ?></div>
@@ -189,5 +283,30 @@ $rejectReason = $product['reject_reason'] ?? '';
     </div>
   </div>
 </div>
+
+<script>
+// gallery thumbnail click -> swap main image
+(function(){
+  const thumbs = document.getElementById('thumbs');
+  const main = document.getElementById('mainPhoto');
+  if (!thumbs || !main) return;
+  thumbs.addEventListener('click', function(e){
+    let t = e.target;
+    // find .thumb
+    while (t && !t.classList.contains('thumb')) t = t.parentElement;
+    if (!t) return;
+    const idx = t.getAttribute('data-idx');
+    if (idx === null) return;
+    const imgs = thumbs.querySelectorAll('img');
+    const src = imgs[idx] ? imgs[idx].src : null;
+    if (src) {
+      main.src = src;
+      // optionally update active thumb styles
+      thumbs.querySelectorAll('.thumb').forEach(th => th.style.boxShadow = '');
+      t.style.boxShadow = '0 4px 14px rgba(11,87,164,0.14)';
+    }
+  });
+})();
+</script>
 </body>
 </html>
