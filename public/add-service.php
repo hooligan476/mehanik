@@ -1,5 +1,5 @@
 <?php
-// mehanik/public/add-service.php (Google Maps version — replace YOUR_GOOGLE_API_KEY with your key)
+// mehanik/public/add-service.php (Google Maps + manual coords)
 session_start();
 require_once __DIR__ . '/../middleware.php';
 require_once __DIR__ . '/../db.php';
@@ -96,10 +96,23 @@ $error = $_GET['err'] ?? '';
         <input class="input" type="text" name="address" placeholder="Город, улица, дом" required>
       </label>
 
-      <label class="block">Местоположение (щелкните по карте чтобы поставить метку)*:</label>
+      <label class="block">Местоположение (щелкните по карте чтобы поставить метку или введите вручную):</label>
       <div id="map" style="height:320px;border:1px solid #ddd;border-radius:8px;"></div>
-      <input type="hidden" name="latitude" id="latitude" required>
-      <input type="hidden" name="longitude" id="longitude" required>
+
+      <!-- Hidden fields that will actually be submitted. NOT required - coordinates optional -->
+      <input type="hidden" name="latitude" id="latitude">
+      <input type="hidden" name="longitude" id="longitude">
+
+      <!-- Visible manual inputs (user-visible, NOT submitted directly) -->
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;align-items:center;">
+        <label style="flex:1;min-width:160px;">Широта:
+          <input class="input" type="text" id="latitude_manual" placeholder="например 37.9500" />
+        </label>
+        <label style="flex:1;min-width:160px;">Долгота:
+          <input class="input" type="text" id="longitude_manual" placeholder="например 58.3800" />
+        </label>
+        <div style="min-width:220px;color:#6b7280;font-size:.95rem;">Можно кликнуть по карте или ввести координаты вручную.</div>
+      </div>
 
       <div style="display:flex; gap:12px; margin-top:12px; flex-wrap:wrap;">
         <label class="block" style="flex:1;">Логотип*:
@@ -143,23 +156,9 @@ $error = $_GET['err'] ?? '';
 function showManualCoordsFallback() {
   var mapEl = document.getElementById('map');
   if (mapEl) {
-    mapEl.innerHTML = '<div style="padding:18px;color:#444">Карта недоступна. Укажите координаты вручную ниже.</div>';
+    mapEl.innerHTML = '<div style="padding:18px;color:#444">Карта недоступна. Введите координаты вручную ниже.</div>';
   }
-  if (!document.getElementById('manualCoords')) {
-    var wrapper = document.createElement('div');
-    wrapper.id = 'manualCoords';
-    wrapper.style.marginTop = '12px';
-    wrapper.innerHTML = '\n      <label class="block">Широта: <input class="input" id="latitude_manual" placeholder="например 37.95"></label>\n      <label class="block">Долгота: <input class="input" id="longitude_manual" placeholder="например 58.38"></label>\n    ';
-    mapEl.parentNode.insertBefore(wrapper, mapEl.nextSibling);
-    var latH = document.getElementById('latitude');
-    var lngH = document.getElementById('longitude');
-    var latM = document.getElementById('latitude_manual');
-    var lngM = document.getElementById('longitude_manual');
-    if (latH && latH.value) latM.value = latH.value;
-    if (lngH && lngH.value) lngM.value = lngH.value;
-    latM.addEventListener('input', function(){ if (latH) latH.value = this.value; });
-    lngM.addEventListener('input', function(){ if (lngH) lngH.value = this.value; });
-  }
+  // manual inputs are always present in this version, so nothing else required here
 }
 
 function initMap() {
@@ -173,14 +172,31 @@ function initMap() {
 
     var latHidden = document.getElementById('latitude');
     var lngHidden = document.getElementById('longitude');
+    var latManual = document.getElementById('latitude_manual');
+    var lngManual = document.getElementById('longitude_manual');
     var marker = null;
 
+    // If hidden values already set (e.g., editing), reflect them on the map and manual inputs
     if (latHidden && lngHidden && latHidden.value && lngHidden.value) {
       var lat0 = parseFloat(latHidden.value);
       var lng0 = parseFloat(lngHidden.value);
       if (!isNaN(lat0) && !isNaN(lng0)) {
         marker = new google.maps.Marker({ position: { lat: lat0, lng: lng0 }, map: map });
         map.setCenter({ lat: lat0, lng: lng0 });
+        if (latManual) latManual.value = lat0;
+        if (lngManual) lngManual.value = lng0;
+      }
+    } else {
+      // If manual inputs have values, try to center map to them
+      if (latManual && lngManual && latManual.value && lngManual.value) {
+        var latm = parseFloat(latManual.value);
+        var lngm = parseFloat(lngManual.value);
+        if (!isNaN(latm) && !isNaN(lngm)) {
+          marker = new google.maps.Marker({ position: { lat: latm, lng: lngm }, map: map });
+          map.setCenter({ lat: latm, lng: lngm });
+          if (latHidden) latHidden.value = latm;
+          if (lngHidden) lngHidden.value = lngm;
+        }
       }
     }
 
@@ -190,6 +206,8 @@ function initMap() {
       if (marker) marker.setPosition(e.latLng); else marker = new google.maps.Marker({ position: e.latLng, map: map });
       if (latHidden) latHidden.value = lat;
       if (lngHidden) lngHidden.value = lng;
+      if (latManual) latManual.value = lat;
+      if (lngManual) lngManual.value = lng;
     });
 
     console.info('Google Maps initialized');
@@ -199,8 +217,38 @@ function initMap() {
   }
 }
 
-// If Google Maps doesn't load within 6s, show fallback
+// If Google Maps doesn't load within 6s, show fallback message (manual inputs already visible)
 setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps === 'undefined') { console.warn('Google Maps not available, showing manual fallback'); showManualCoordsFallback(); } }, 6000);
+
+// Sync manual inputs <-> hidden inputs
+(function(){
+  var latHidden = document.getElementById('latitude');
+  var lngHidden = document.getElementById('longitude');
+  var latManual = document.getElementById('latitude_manual');
+  var lngManual = document.getElementById('longitude_manual');
+
+  function setHiddenFromManual() {
+    if (!latHidden || !lngHidden || !latManual || !lngManual) return;
+    var lat = latManual.value.trim();
+    var lng = lngManual.value.trim();
+    // accept empty values (coordinates optional)
+    latHidden.value = lat;
+    lngHidden.value = lng;
+  }
+
+  function setManualFromHidden() {
+    if (!latHidden || !lngHidden || !latManual || !lngManual) return;
+    if (latHidden.value) latManual.value = latHidden.value;
+    if (lngHidden.value) lngManual.value = lngHidden.value;
+  }
+
+  // user edits manual inputs -> update hidden fields
+  if (latManual) latManual.addEventListener('input', setHiddenFromManual);
+  if (lngManual) lngManual.addEventListener('input', setHiddenFromManual);
+
+  // on page load, ensure manual inputs reflect hidden
+  document.addEventListener('DOMContentLoaded', setManualFromHidden);
+})();
 </script>
 
 <!-- Insert your API key below. Replace YOUR_GOOGLE_API_KEY with the real key when ready. -->
@@ -267,8 +315,10 @@ setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps =
     if (editing) { const saveBtn = editing.querySelector('.p-actions .small-btn'); if (saveBtn) { saveBtn.click(); if (editing.dataset.editing === '1') { e.preventDefault(); return; } } }
     const priceNames = Array.from(document.querySelectorAll('input[name="prices[name][]"]')).map(n => n.value.trim()).filter(v => v !== '');
     if (priceNames.length === 0) { alert('Добавьте хотя бы одну услугу с названием и сохраните её.'); e.preventDefault(); return; }
-    const lat = document.getElementById('latitude').value; const lng = document.getElementById('longitude').value;
-    if (!lat || !lng) { alert('Пожалуйста, укажите местоположение (щелкните по карте или укажите координаты вручную).'); e.preventDefault(); return; }
+
+    // NOTE: coordinates are OPTIONAL in this version — no blocking validation here.
+    // If you want to force coordinates, re-enable validation: check hidden inputs #latitude/#longitude here.
+
     const requiredFields = ['name','contact_name','phone','email','description','address'];
     for (let fieldName of requiredFields) { const el = document.querySelector('[name="'+fieldName+'"]'); if (!el || el.value.trim() === '') { alert('Заполните поле: ' + fieldName.replace('_',' ')); e.preventDefault(); return; } }
     const logoInput = document.querySelector('input[name="logo"]'); if (!logoInput || logoInput.files.length === 0) { alert('Загрузите логотип (обязательно).'); e.preventDefault(); return; }
