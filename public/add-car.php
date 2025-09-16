@@ -1,6 +1,5 @@
 <?php
 // public/add-car.php
-// Добавить авто — форма + серверная обработка (с брендами/моделями, тип ТС, VIN, скрытый номер, выбор главного фото)
 require_once __DIR__ . '/../middleware.php';
 require_auth();
 require_once __DIR__ . '/../db.php';
@@ -11,22 +10,59 @@ $minYear = $currentYear - 25;
 $user_id = $_SESSION['user']['id'] ?? 0;
 $user_phone = $_SESSION['user']['phone'] ?? '';
 
-// load brands from DB (id,name)
+// detect AJAX (like in other handlers)
+$isAjax = (
+  (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
+  || (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false)
+);
+
+// load brands (id,name)
 $brands = [];
-if (isset($mysqli) && $mysqli instanceof mysqli) {
-    try {
+try {
+    if (isset($mysqli) && $mysqli instanceof mysqli) {
         $r = $mysqli->query("SELECT id, name FROM brands ORDER BY name");
         while ($row = $r->fetch_assoc()) $brands[] = $row;
-    } catch (Throwable $e) { /* ignore */ }
-} elseif (isset($pdo) && $pdo instanceof PDO) {
-    try {
+    } elseif (isset($pdo) && $pdo instanceof PDO) {
         $st = $pdo->query("SELECT id, name FROM brands ORDER BY name");
         $brands = $st->fetchAll(PDO::FETCH_ASSOC);
-    } catch (Throwable $e) { /* ignore */ }
+    }
+} catch (Throwable $_) {
+    $brands = [];
 }
 
-// available vehicle types (displayed). bodies are loaded by API or fallback.
-$vehicle_types = [
+// Try to load vehicle types/bodies from DB, otherwise fallback
+$types_from_db = [];
+$bodies_by_type_id = [];
+$use_db_types = false;
+try {
+    if (isset($mysqli) && $mysqli instanceof mysqli) {
+        $res = $mysqli->query("SHOW TABLES LIKE 'vehicle_types'");
+        if ($res && $res->num_rows > 0) {
+            $use_db_types = true;
+            $r = $mysqli->query("SELECT id, `key`, name, `order` FROM vehicle_types ORDER BY `order` ASC, name ASC");
+            while ($row = $r->fetch_assoc()) $types_from_db[(int)$row['id']] = $row;
+            $r2 = $mysqli->query("SELECT * FROM vehicle_bodies ORDER BY vehicle_type_id ASC, `order` ASC, name ASC");
+            while ($b = $r2->fetch_assoc()) $bodies_by_type_id[(int)$b['vehicle_type_id']][] = $b;
+        }
+    } elseif (isset($pdo) && $pdo instanceof PDO) {
+        $st = $pdo->query("SHOW TABLES LIKE 'vehicle_types'");
+        $has = $st->fetch(PDO::FETCH_NUM);
+        if ($has) {
+            $use_db_types = true;
+            $st2 = $pdo->query("SELECT id, `key`, name, `order` FROM vehicle_types ORDER BY `order` ASC, name ASC");
+            $rows = $st2->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($rows as $r) $types_from_db[(int)$r['id']] = $r;
+            $st3 = $pdo->query("SELECT * FROM vehicle_bodies ORDER BY vehicle_type_id ASC, `order` ASC, name ASC");
+            $rows2 = $st3->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($rows2 as $b) $bodies_by_type_id[(int)$b['vehicle_type_id']][] = $b;
+        }
+    }
+} catch (Throwable $_) {
+    $use_db_types = false;
+}
+
+// Fallback (if DB missing)
+$vehicle_types_fallback = [
     'passenger' => 'Легковые',
     'cargo' => 'Грузовые',
     'agro' => 'Агро техника',
@@ -34,61 +70,145 @@ $vehicle_types = [
     'motorcycle' => 'Мото/скутеры',
     'other' => 'Другое'
 ];
+$vehicle_bodies_fallback = [
+    'passenger' => [
+        ['id'=>'sedan','name'=>'Седан'],
+        ['id'=>'hatch','name'=>'Хэтчбек'],
+        ['id'=>'wagon','name'=>'Универсал'],
+        ['id'=>'suv','name'=>'SUV / Внедорожник'],
+        ['id'=>'coupe','name'=>'Купе'],
+        ['id'=>'minivan','name'=>'Минивэн'],
+        ['id'=>'pickup','name'=>'Пикап'],
+    ],
+    'cargo' => [
+        ['id'=>'box','name'=>'Фургон'],
+        ['id'=>'flat','name'=>'Платформа'],
+        ['id'=>'tanker','name'=>'Цистерна'],
+    ],
+    'agro' => [
+        ['id'=>'tractor','name'=>'Трактор'],
+        ['id'=>'combine','name'=>'Комбайн'],
+    ],
+    'construction' => [
+        ['id'=>'bulldozer','name'=>'Бульдозер'],
+        ['id'=>'excavator','name'=>'Экскаватор'],
+    ],
+    'motorcycle' => [
+        ['id'=>'bike','name'=>'Мотоцикл'],
+        ['id'=>'scooter','name'=>'Скутер'],
+    ],
+    'other' => [
+        ['id'=>'other','name'=>'Другое'],
+    ],
+];
 
-// POST handling
+// Build select data for server-render and JS
+$vehicle_types_select = [];
+$vehicle_bodies_js = [];
+
+if ($use_db_types && count($types_from_db) > 0) {
+    foreach ($types_from_db as $tid => $t) {
+        $vehicle_types_select[$tid] = $t['name'];
+        $vehicle_bodies_js[$tid] = [];
+        foreach ($bodies_by_type_id[$tid] ?? [] as $b) {
+            $vehicle_bodies_js[$tid][] = ['id' => (int)$b['id'], 'name' => $b['name'], 'key' => $b['key'] ?? null];
+        }
+    }
+} else {
+    foreach ($vehicle_types_fallback as $k => $v) {
+        $vehicle_types_select[$k] = $v;
+        $vehicle_bodies_js[$k] = $vehicle_bodies_fallback[$k] ?? [];
+    }
+}
+
+// Helper for sending JSON responses
+function jsonOk($data=[]) {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(array_merge(['ok'=>true], $data), JSON_UNESCAPED_UNICODE);
+    exit;
+}
+function jsonError($msg='Ошибка') {
+    header('Content-Type: application/json; charset=utf-8', true, 500);
+    echo json_encode(['ok'=>false,'error'=>$msg], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// POST handling (saving)
 $errors = [];
 $success = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Accept both id-based selects (brand_id/model_id) and legacy text fields
+    // accept id selects or legacy text
     $brand_id = isset($_POST['brand_id']) && $_POST['brand_id'] !== '' ? (int)$_POST['brand_id'] : null;
     $model_id = isset($_POST['model_id']) && $_POST['model_id'] !== '' ? (int)$_POST['model_id'] : null;
     $brand_text = trim($_POST['brand'] ?? '');
     $model_text = trim($_POST['model'] ?? '');
 
-    // Strings to save into cars.brand and cars.model (table may expect strings)
-    $brand_save = null;
-    $model_save = null;
-
-    // If ID provided, try to lookup names
-    if ($brand_id && isset($mysqli) && $mysqli instanceof mysqli) {
-        $st = $mysqli->prepare("SELECT name FROM brands WHERE id = ? LIMIT 1");
-        if ($st) { $st->bind_param('i', $brand_id); $st->execute(); $res = $st->get_result(); $r = $res->fetch_assoc(); if ($r) $brand_save = $r['name']; $st->close(); }
-    } elseif ($brand_id && isset($pdo) && $pdo instanceof PDO) {
-        try {
-            $st = $pdo->prepare("SELECT name FROM brands WHERE id = :id LIMIT 1");
-            $st->execute([':id'=>$brand_id]);
-            $r = $st->fetch(PDO::FETCH_ASSOC);
-            if ($r) $brand_save = $r['name'];
-        } catch (Throwable $_) {}
+    // resolve brand/model names (prefer loaded $brands to avoid extra query)
+    $brand_save = '';
+    if ($brand_id) {
+        foreach ($brands as $b) {
+            if ((int)$b['id'] === (int)$brand_id) { $brand_save = $b['name']; break; }
+        }
     }
     if (!$brand_save) $brand_save = $brand_text;
 
-    if ($model_id && isset($mysqli) && $mysqli instanceof mysqli) {
-        $st = $mysqli->prepare("SELECT name FROM models WHERE id = ? LIMIT 1");
-        if ($st) { $st->bind_param('i', $model_id); $st->execute(); $res = $st->get_result(); $r = $res->fetch_assoc(); if ($r) $model_save = $r['name']; $st->close(); }
-    } elseif ($model_id && isset($pdo) && $pdo instanceof PDO) {
+    $model_save = '';
+    if ($model_id) {
+        // try to resolve via DB
         try {
-            $st = $pdo->prepare("SELECT name FROM models WHERE id = :id LIMIT 1");
-            $st->execute([':id'=>$model_id]);
-            $r = $st->fetch(PDO::FETCH_ASSOC);
-            if ($r) $model_save = $r['name'];
-        } catch (Throwable $_) {}
+            if (isset($mysqli) && $mysqli instanceof mysqli) {
+                $st = $mysqli->prepare("SELECT name FROM models WHERE id = ? LIMIT 1");
+                if ($st) { $st->bind_param('i', $model_id); $st->execute(); $res = $st->get_result(); $r = $res->fetch_assoc(); if ($r) $model_save = $r['name']; $st->close(); }
+            } elseif (isset($pdo) && $pdo instanceof PDO) {
+                $st = $pdo->prepare("SELECT name FROM models WHERE id = :id LIMIT 1");
+                $st->execute([':id'=>$model_id]);
+                $r = $st->fetch(PDO::FETCH_ASSOC);
+                if ($r) $model_save = $r['name'];
+            }
+        } catch (Throwable $_) { /* ignore */ }
     }
     if (!$model_save) $model_save = $model_text;
 
+    // other fields
     $year = (int)($_POST['year'] ?? 0);
-    $vehicle_type = trim($_POST['vehicle_type'] ?? '');
-    $body = trim($_POST['body'] ?? '');
-    // body_type submitted by JS is name or id; keep as string
+    $vehicle_type_raw = trim($_POST['vehicle_type'] ?? '');
+    $body_raw = trim($_POST['body'] ?? '');
     $mileage = (int)($_POST['mileage'] ?? 0);
     $transmission = trim($_POST['transmission'] ?? '');
     $fuel = trim($_POST['fuel'] ?? '');
     $price = (float)($_POST['price'] ?? 0);
     $description = trim($_POST['description'] ?? '');
-    // contact_phone is filled from session via hidden input (user can't change)
     $contact_phone = trim($_POST['contact_phone'] ?? $user_phone);
-
     $vin = trim($_POST['vin'] ?? '');
+
+    // Convert vehicle_type_raw and body_raw to values to store
+    $vehicle_type_save = '';
+    $body_save = '';
+    if ($use_db_types) {
+        $vt_id = is_numeric($vehicle_type_raw) ? (int)$vehicle_type_raw : null;
+        if ($vt_id && isset($types_from_db[$vt_id])) {
+            $trow = $types_from_db[$vt_id];
+            $vehicle_type_save = ($trow['key'] && trim($trow['key']) !== '') ? $trow['key'] : $trow['name'];
+            // body - may be numeric id from DB or string
+            if (is_numeric($body_raw)) {
+                $b_id = (int)$body_raw;
+                $found = null;
+                foreach ($bodies_by_type_id[$vt_id] ?? [] as $b) {
+                    if ((int)$b['id'] === $b_id) { $found = $b; break; }
+                }
+                if ($found) $body_save = $found['name'];
+            } else {
+                $body_save = $body_raw;
+            }
+        } else {
+            // fallback to raw
+            $vehicle_type_save = $vehicle_type_raw;
+            $body_save = $body_raw;
+        }
+    } else {
+        $vehicle_type_save = $vehicle_type_raw;
+        $body_save = $body_raw;
+    }
 
     // validation
     if ($brand_save === '') $errors[] = 'Бренд обязателен';
@@ -96,7 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($year < $minYear || $year > $currentYear) $errors[] = "Год должен быть в диапазоне {$minYear}—{$currentYear}";
     if ($price < 0) $errors[] = 'Цена некорректна';
 
-    // Handle uploads: accept 'photo' (main) and 'photos[]' (others), up to 6 total.
+    // process files (photo main as 'photo', extras as 'photos[]')
     $uploadDir = __DIR__ . '/../uploads/cars/';
     if (!is_dir($uploadDir)) @mkdir($uploadDir, 0755, true);
     $allowed_exts = ['jpg','jpeg','png','webp'];
@@ -104,19 +224,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $savedMain = null;
     $savedExtras = [];
 
-    // If user sent single main file as 'photo'
+    // single main 'photo'
     if (!empty($_FILES['photo']['tmp_name']) && is_uploaded_file($_FILES['photo']['tmp_name'])) {
         $orig = basename($_FILES['photo']['name'] ?? '');
         $ext = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
-        if (in_array($ext, $allowed_exts, true) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+        if (in_array($ext, $allowed_exts, true) && ($_FILES['photo']['error'] ?? UPLOAD_ERR_OK) === UPLOAD_ERR_OK) {
             $name = time() . '_' . bin2hex(random_bytes(6)) . '_main.' . $ext;
-            if (move_uploaded_file($_FILES['photo']['tmp_name'], $uploadDir . $name)) {
+            if (@move_uploaded_file($_FILES['photo']['tmp_name'], $uploadDir . $name)) {
                 $savedMain = 'uploads/cars/' . $name;
             }
         }
     }
 
-    // Then process photos[] (others)
+    // photos[] extras
     if (!empty($_FILES['photos']) && is_array($_FILES['photos']['tmp_name'])) {
         $cnt = count($_FILES['photos']['tmp_name']);
         for ($i=0; $i<$cnt && count($savedExtras) < $max_files; $i++) {
@@ -127,18 +247,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $ext = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
             if (!in_array($ext, $allowed_exts, true)) continue;
             $name = time() . '_' . bin2hex(random_bytes(6)) . "_{$i}." . $ext;
-            if (move_uploaded_file($_FILES['photos']['tmp_name'][$i], $uploadDir . $name)) {
+            if (@move_uploaded_file($_FILES['photos']['tmp_name'][$i], $uploadDir . $name)) {
                 $savedExtras[] = 'uploads/cars/' . $name;
             }
         }
     }
 
-    // If no main was provided but we have extras, pick first as main
     if ($savedMain === null && count($savedExtras) > 0) {
         $savedMain = array_shift($savedExtras);
     }
 
-    // If VIN provided but DB has no vin column, append to description
+    // VIN: if DB lacks column, prepend to description
     $useVinColumn = false;
     try {
         if (isset($mysqli) && $mysqli instanceof mysqli) {
@@ -151,11 +270,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (Throwable $_) { $useVinColumn = false; }
 
     if (!$useVinColumn && $vin !== '') {
-        // prepend VIN to description so it's not lost
         $description = "VIN: " . $vin . "\n\n" . $description;
     }
 
-    // Similarly check for vehicle_type column
+    // vehicle_type column check
     $useVehicleTypeColumn = false;
     try {
         if (isset($mysqli) && $mysqli instanceof mysqli) {
@@ -167,20 +285,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } catch (Throwable $_) { $useVehicleTypeColumn = false; }
 
+    // If no errors - insert
     if (empty($errors)) {
         try {
-            // Build INSERT dynamically to include optional columns if they exist
+            // columns and values arrays
             $cols = [
                 'user_id','brand','model','year','body','mileage','transmission','fuel','price','photo','description','contact_phone'
             ];
-            $placeholders = array_fill(0, count($cols), '?');
-            $types = 'isssisisdsss'; // tentative: i (user_id), s, s, i, s, i, s, s, d, s, s, s
             $values = [
                 $user_id,
                 $brand_save,
                 $model_save,
                 $year,
-                $body,
+                $body_save,
                 $mileage,
                 $transmission,
                 $fuel,
@@ -189,89 +306,87 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $description,
                 $contact_phone
             ];
+            $types = 'isssisisdsss'; // corresponds to values above
 
             if ($useVinColumn) {
                 $cols[] = 'vin';
-                $placeholders[] = '?';
-                $types .= 's';
                 $values[] = $vin;
+                $types .= 's';
             }
             if ($useVehicleTypeColumn) {
                 $cols[] = 'vehicle_type';
-                $placeholders[] = '?';
+                $values[] = $vehicle_type_save;
                 $types .= 's';
-                $values[] = $vehicle_type;
             }
 
-            // always set status and created_at
+            // status + created_at
             $cols[] = 'status';
-            $placeholders[] = '?';
-            $types .= 's';
             $values[] = 'pending';
+            $types .= 's';
 
-            $cols[] = 'created_at';
-            $placeholders[] = 'NOW()'; // literal NOW(), not bound
-            // remove last '?' placeholder because we put NOW() literal
-            // actually placeholders array must be strings; handle NOW() specially
-            // rebuild placeholders properly:
-            $phs = array_fill(0, count($cols), '?');
-            // we will replace last placeholder with NOW()
-            $phs[count($phs)-1] = 'NOW()';
+            $cols[] = 'created_at'; // literal NOW()
 
-            // Prepare SQL
-            $sql = "INSERT INTO cars (" . implode(',', $cols) . ") VALUES (" . implode(',', $phs) . ")";
-            // For binding we need to remove the NOW() parameter from types/values if present
-            // types currently corresponds to all except created_at (we didn't append type for it)
-            // So types and values are correct.
+            // placeholders: last is NOW()
+            $placeholders = array_fill(0, count($cols), '?');
+            $placeholders[count($placeholders)-1] = 'NOW()';
+
+            $sql = "INSERT INTO cars (" . implode(',', $cols) . ") VALUES (" . implode(',', $placeholders) . ")";
 
             if (isset($mysqli) && $mysqli instanceof mysqli) {
                 $stmt = $mysqli->prepare($sql);
                 if (!$stmt) throw new Exception('Prepare failed: ' . $mysqli->error);
 
-                // bind dynamically
-                $bind_names[] = $types;
-                for ($i = 0; $i < count($values); $i++) {
-                    $bind_name = 'bind' . $i;
-                    $$bind_name = $values[$i];
-                    $bind_names[] = &$$bind_name;
+                // bind params dynamically (exclude last created_at)
+                $bindParams = [];
+                $bindParams[] = $types;
+                for ($i=0; $i < count($values); $i++) {
+                    $varname = 'p' . $i;
+                    $$varname = $values[$i];
+                    $bindParams[] = &$$varname;
                 }
-                // call_user_func_array expects array of references
-                if (!call_user_func_array([$stmt, 'bind_param'], $bind_names)) {
+                if (!call_user_func_array([$stmt, 'bind_param'], $bindParams)) {
                     throw new Exception('Bind failed: ' . $stmt->error);
                 }
                 $ok = $stmt->execute();
                 if (!$ok) throw new Exception('Execute failed: ' . $stmt->error);
+                $newId = $stmt->insert_id;
                 $stmt->close();
-                $success = 'Автомобиль успешно добавлен и отправлен на модерацию.';
-                header('Location: ' . $basePublic . '/my-cars.php?msg=' . urlencode($success));
+
+                if ($isAjax) jsonOk(['id'=>$newId]);
+                header('Location: ' . $basePublic . '/my-cars.php?msg=' . urlencode('Автомобиль добавлен и отправлен на модерацию.'));
                 exit;
             } elseif (isset($pdo) && $pdo instanceof PDO) {
-                // PDO branch - build named placeholders but we used NOW() literal already
+                // build named placeholders excluding created_at
+                $insertCols = array_slice($cols, 0, -1); // exclude created_at
                 $named = [];
                 $params = [];
-                foreach ($cols as $k => $col) {
-                    if ($col === 'created_at') continue;
-                    $ph = ":p{$k}";
+                foreach ($insertCols as $k => $col) {
+                    $ph = ':p' . $k;
                     $named[] = $ph;
                     $params[$ph] = $values[$k];
                 }
-                // build SQL with NOW()
-                $insertCols = array_filter($cols, function($c){ return $c !== 'created_at'; });
                 $sql2 = "INSERT INTO cars (" . implode(',', $insertCols) . ", created_at) VALUES (" . implode(',', array_keys($params)) . ", NOW())";
                 $st = $pdo->prepare($sql2);
                 if (!$st->execute(array_values($params))) throw new Exception('Execute failed (PDO)');
-                $success = 'Автомобиль успешно добавлен и отправлен на модерацию.';
-                header('Location: ' . $basePublic . '/my-cars.php?msg=' . urlencode($success));
+                $newId = (int)$pdo->lastInsertId();
+                if ($isAjax) jsonOk(['id'=>$newId]);
+                header('Location: ' . $basePublic . '/my-cars.php?msg=' . urlencode('Автомобиль добавлен и отправлен на модерацию.'));
                 exit;
             } else {
-                $errors[] = 'Нет подключения к базе данных.';
+                throw new Exception('Нет подключения к БД');
             }
+
         } catch (Throwable $e) {
             $errors[] = 'Ошибка при сохранении: ' . $e->getMessage();
+            if ($isAjax) jsonError($errors[count($errors)-1]);
         }
+    } else {
+        // validation errors
+        if ($isAjax) jsonError(implode('; ', $errors));
     }
 }
 
+function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES|ENT_SUBSTITUTE, 'UTF-8'); }
 ?><!doctype html>
 <html lang="ru">
 <head>
@@ -281,7 +396,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <link rel="stylesheet" href="/mehanik/assets/css/header.css">
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
   <style>
-    /* Локальные стили формы (стройно и похоже на остальной UI) */
+    /* локальные стили */
     .page { max-width:1100px; margin:18px auto; padding:14px; box-sizing:border-box; }
     .card { background:#fff; border-radius:10px; box-shadow:0 8px 24px rgba(2,6,23,0.06); overflow:hidden; }
     .card-body { padding:18px; }
@@ -303,6 +418,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .preview-item button { font-size:11px; padding:5px 7px; border-radius:6px; border:0; cursor:pointer; background:rgba(0,0,0,0.6); color:#fff; }
     .preview-item .main-badge { position:absolute; right:6px; top:6px; background:#0b57a4;color:#fff;padding:4px 6px;border-radius:6px;font-size:11px; }
     .small { font-size:.9rem; color:#6b7280; }
+    .dropzone { padding:10px; border:1px dashed #e6e9ef; border-radius:8px; cursor:pointer; text-align:center; color:#6b7280; background:#fff; }
+    .dropzone.dragover { background:#f0f8ff; border-color:#b6e0ff; color:#044a75; }
   </style>
 </head>
 <body>
@@ -315,10 +432,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <p class="muted" style="margin:0 0 12px;">Поля с * обязательны. Бренд и модель подтянутся из каталога (если есть).</p>
 
       <?php if (!empty($errors)): ?>
-        <div class="error"><?= htmlspecialchars(implode(' · ', $errors)) ?></div>
+        <div class="error"><?= h(implode(' · ', $errors)) ?></div>
       <?php endif; ?>
       <?php if ($success): ?>
-        <div class="ok"><?= htmlspecialchars($success) ?></div>
+        <div class="ok"><?= h($success) ?></div>
       <?php endif; ?>
 
       <form id="addCarForm" method="post" enctype="multipart/form-data" novalidate>
@@ -327,8 +444,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <label class="block">Тип ТС *</label>
             <select id="vehicle_type" name="vehicle_type" required>
               <option value="">— выберите тип —</option>
-              <?php foreach ($vehicle_types as $k => $v): ?>
-                <option value="<?= htmlspecialchars($k) ?>"><?= htmlspecialchars($v) ?></option>
+              <?php foreach ($vehicle_types_select as $val => $label): ?>
+                <option value="<?= h((string)$val) ?>"><?= h($label) ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -345,7 +462,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <select id="brand" name="brand_id" required>
               <option value="">— выберите бренд —</option>
               <?php foreach ($brands as $b): ?>
-                <option value="<?= (int)$b['id'] ?>"><?= htmlspecialchars($b['name']) ?></option>
+                <option value="<?= (int)$b['id'] ?>"><?= h($b['name']) ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -408,7 +525,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
           <div>
             <label class="block">Фотографии (макс.6)</label>
-            <div id="dropzone" class="dropzone" style="padding:10px;border:1px dashed #e6e9ef;border-radius:8px;cursor:pointer;text-align:center;">Перетащите фото сюда или нажмите для выбора</div>
+            <div id="dropzone" class="dropzone">Перетащите фото сюда или нажмите для выбора</div>
             <input id="p_photos" type="file" name="photos[]" accept="image/*" multiple style="display:none">
             <div class="small">Рекомендуется не больше 6 фото. Выберите главное фото звёздочкой (★).</div>
             <div id="previews" class="photo-preview" aria-hidden="true"></div>
@@ -416,9 +533,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
           <div>
             <!-- hidden contact phone to prevent tampering -->
-            <input type="hidden" name="contact_phone" value="<?= htmlspecialchars($user_phone) ?>">
+            <input type="hidden" name="contact_phone" value="<?= h($user_phone) ?>">
             <label class="block">Контактный телефон</label>
-            <div class="small"><?= htmlspecialchars($user_phone ?: 'Не указан') ?></div>
+            <div class="small"><?= h($user_phone ?: 'Не указан') ?></div>
             <div class="small">Номер берётся из вашего профиля и не может быть изменён в форме.</div>
           </div>
 
@@ -435,6 +552,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <script>
 (function(){
+  // Preloaded data from server: map vehicle_type_value => bodies[]
+  window.VEHICLE_BODIES_BY_TYPE = <?= json_encode($vehicle_bodies_js, JSON_UNESCAPED_UNICODE) ?>;
+
   const brandEl = document.getElementById('brand');
   const modelEl = document.getElementById('model');
   const vehicleTypeEl = document.getElementById('vehicle_type');
@@ -458,39 +578,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
   }
 
-  async function loadBodies(vtype) {
-    bodyEl.innerHTML = '<option value="">Загрузка...</option>';
-    if (!vtype) { bodyEl.innerHTML = '<option value="">— выберите кузов —</option>'; return; }
-    try {
-      const res = await fetch(`/mehanik/api/get-bodies.php?vehicle_type=${encodeURIComponent(vtype)}`);
-      if (!res.ok) throw new Error('network');
-      const data = await res.json();
-      bodyEl.innerHTML = '<option value="">— выберите кузов —</option>';
-      (Array.isArray(data) ? data : []).forEach(b => {
-        const o = document.createElement('option'); o.value = b.id ?? b.key ?? b.value ?? b.name; o.textContent = b.name ?? b.label ?? b.value;
-        bodyEl.appendChild(o);
-      });
-    } catch (e) {
-      // fallback mapping
-      console.warn('get-bodies failed, using fallback', e);
-      const fallback = {
-        passenger: [{id:'sedan',name:'Седан'},{id:'hatch',name:'Хэтчбек'},{id:'wagon',name:'Универсал'},{id:'suv',name:'SUV'}],
-        cargo: [{id:'box',name:'Фургон'},{id:'flat',name:'Платформа'},{id:'tanker',name:'Цистерна'}],
-        agro: [{id:'tractor',name:'Трактор'},{id:'combine',name:'Комбайн'}],
-        construction: [{id:'bulldozer',name:'Бульдозер'},{id:'excavator',name:'Экскаватор'}],
-        motorcycle: [{id:'bike',name:'Мотоцикл'},{id:'scooter',name:'Скутер'}],
-        other: [{id:'other',name:'Другое'}]
-      };
-      const items = fallback[vtype] || [];
-      bodyEl.innerHTML = '<option value="">— выберите кузов —</option>';
-      items.forEach(b => { const o = document.createElement('option'); o.value = b.id; o.textContent = b.name; bodyEl.appendChild(o); });
+  function populateBodiesFor(typeValue) {
+    bodyEl.innerHTML = '<option value="">— выберите кузов —</option>';
+    if (!typeValue) return;
+    const items = window.VEHICLE_BODIES_BY_TYPE[typeValue] || [];
+    if (items.length === 0) {
+      // try API fallback
+      fetch(`/mehanik/api/get-bodies.php?vehicle_type=${encodeURIComponent(typeValue)}`)
+        .then(r => r.ok ? r.json() : Promise.reject('no') )
+        .then(data => {
+          (Array.isArray(data) ? data : []).forEach(b => {
+            const o = document.createElement('option'); o.value = b.id ?? b.key ?? b.name; o.textContent = b.name ?? b.label ?? b.value;
+            bodyEl.appendChild(o);
+          });
+        })
+        .catch(()=>{ /* ignore */ });
+      return;
     }
+    items.forEach(b => {
+      const o = document.createElement('option'); o.value = b.id ?? b.key ?? b.name; o.textContent = b.name;
+      bodyEl.appendChild(o);
+    });
   }
 
-  brandEl && brandEl.addEventListener('change', () => loadModels(brandEl.value));
-  vehicleTypeEl && vehicleTypeEl.addEventListener('change', () => loadBodies(vehicleTypeEl.value));
+  if (brandEl) brandEl.addEventListener('change', () => loadModels(brandEl.value));
+  if (vehicleTypeEl) vehicleTypeEl.addEventListener('change', () => populateBodiesFor(vehicleTypeEl.value));
 
-  // photos with main selection
+  // photos + main selection
   const dropzone = document.getElementById('dropzone');
   const photosInput = document.getElementById('p_photos');
   const previews = document.getElementById('previews');
@@ -504,9 +618,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     files.forEach((f, idx) => {
       const w = document.createElement('div'); w.className = 'preview-item';
       const img = document.createElement('img'); w.appendChild(img);
-      const fr = new FileReader();
-      fr.onload = e => img.src = e.target.result;
-      fr.readAsDataURL(f);
+      const fr = new FileReader(); fr.onload = e => img.src = e.target.result; fr.readAsDataURL(f);
 
       const actions = document.createElement('div'); actions.className = 'actions';
       const btnMain = document.createElement('button'); btnMain.type='button'; btnMain.textContent='★'; btnMain.title='Сделать главным';
@@ -550,10 +662,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
   photosInput.addEventListener('change', (e) => { addIncoming(e.target.files); photosInput.value=''; });
 
-  // on submit, build FormData: append rest of inputs, and append main as 'photo' and others as 'photos[]'
+  // on submit -> build FormData and send (XHR) so photos included properly
   const form = document.getElementById('addCarForm');
   form.addEventListener('submit', function(e){
-    // front validation: brand/model/year/price
+    // front validation
     const brand = document.getElementById('brand').value;
     const model = document.getElementById('model').value;
     const year = parseInt(document.getElementById('year').value || '0', 10);
@@ -562,13 +674,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!brand || !model) { e.preventDefault(); alert('Пожалуйста выберите бренд и модель'); return false; }
     if (!year || year < minY || year > maxY) { e.preventDefault(); alert('Выберите корректный год'); return false; }
 
-    // build FormData and send via XHR so we can attach files properly (main + extras)
     e.preventDefault();
-
     const fd = new FormData();
     Array.from(form.elements).forEach(el => {
       if (!el.name) return;
-      if (el.type === 'file') return; // files handled below
+      if (el.type === 'file') return;
       if ((el.type === 'checkbox' || el.type === 'radio') && !el.checked) return;
       fd.append(el.name, el.value);
     });
@@ -579,7 +689,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       else fd.append('photos[]', f, f.name);
     });
 
-    // send via XHR
     const xhr = new XMLHttpRequest();
     xhr.open('POST', form.action, true);
     xhr.setRequestHeader('X-Requested-With','XMLHttpRequest');
@@ -589,15 +698,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const j = JSON.parse(xhr.responseText || '{}');
-          if (j && j.ok && j.id) {
-            window.location.href = '/mehanik/public/product.php?id=' + encodeURIComponent(j.id);
+          if (j && j.ok) {
+            // success — go to my-cars
+            window.location.href = '<?= $basePublic ?>/my-cars.php';
             return;
           } else if (j && j.error) {
             alert('Ошибка: ' + j.error);
             return;
           }
         } catch (err) {
-          // fallback: reload page (server may have redirected)
+          // fallback - reload
           location.reload();
         }
       } else {

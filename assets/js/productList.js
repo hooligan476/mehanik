@@ -1,6 +1,4 @@
-// assets/js/productList.js
-// Универсальный рендерер карточек + загрузчик товаров и lookups из /mehanik/api/products.php
-
+// assets/js/productList.js (обновлённая версия)
 (function () {
   const base = '/mehanik';
 
@@ -12,9 +10,7 @@
 
   function buildPhotoUrl(p) {
     if (!p) return base + '/assets/no-photo.png';
-    // если абсолютный или начинается с / — возьмём как есть
     if (p.startsWith('http://') || p.startsWith('https://') || p.startsWith('/')) return p;
-    // иначе считаем, что в БД хранится имя файла
     return base + '/uploads/products/' + p;
   }
 
@@ -22,19 +18,16 @@
     const photo = buildPhotoUrl(p.photo);
     const imgHtml = `<div class="card-photo"><img src="${escapeHtml(photo)}" alt="${escapeHtml(p.name)}"></div>`;
     const price = (p.price || p.price === 0) ? Number(p.price).toFixed(2) : '0.00';
-    const brandModel = [p.brand_name, p.model_name].filter(Boolean).join(' ');
+    const brandModel = [p.brand_name ?? p.brand, p.model_name ?? p.model].filter(Boolean).join(' ');
     const sku = p.sku ? ` · ${escapeHtml(p.sku)}` : '';
     const productUrl = `${base}/public/product.php?id=${encodeURIComponent(p.id)}`;
-
-    // УБРАЛИ ПОЛЕ ОПИСАНИЯ (pc-desc) как просил
-
     return `
       <article class="card product-card">
         ${imgHtml}
         <div class="card-body">
           <h4 class="pc-title">${escapeHtml(p.name || '—')}</h4>
           <div class="pc-meta">
-            <span class="pc-price">${price} TMT</span>
+            <span class="pc-price">${price} ₽</span>
             <span class="pc-sku">ID: ${escapeHtml(String(p.id))}${sku}</span>
           </div>
           <div class="pc-sub">${escapeHtml(brandModel)}</div>
@@ -55,163 +48,198 @@
     container.innerHTML = items.map(productCard).join('');
   }
 
-  // Заполняет селекты lookups: brands/models/complex_parts/components
+  // расширенный fillLookups: brands/models/complex_parts/components + vehicle types/bodies/fuel/gearboxes/years
   function fillLookups(lookups) {
     if (!lookups) return;
-
     const $ = s => document.querySelector(s);
+
     const prev = {
       brand: $('#brand') ? $('#brand').value : '',
       model: $('#model') ? $('#model').value : '',
+      brand_part: $('#brand_part') ? $('#brand_part').value : '',
+      model_part: $('#model_part') ? $('#model_part').value : '',
       complex_part: $('#complex_part') ? $('#complex_part').value : '',
-      component: $('#component') ? $('#component').value : ''
+      component: $('#component') ? $('#component').value : '',
+      fuel_type: $('#fuel_type') ? $('#fuel_type').value : '',
+      gearbox: $('#gearbox') ? $('#gearbox').value : '',
+      vehicle_type: $('#vehicle_type') ? $('#vehicle_type').value : '',
+      vehicle_body: $('#vehicle_body') ? $('#vehicle_body').value : ''
     };
 
     // brands
-    if (Array.isArray(lookups.brands) && document.querySelector('#brand')) {
-      const sel = document.querySelector('#brand');
-      sel.innerHTML = `<option value="">Все бренды</option>` +
-        lookups.brands.map(b => `<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join('');
+    if (Array.isArray(lookups.brands) && $('#brand')) {
+      const sel = $('#brand');
+      sel.innerHTML = `<option value="">Все бренды</option>` + lookups.brands.map(b => `<option value="${escapeHtml(b.id ?? b.value ?? b.name ?? b)}">${escapeHtml(b.name ?? b)}</option>`).join('');
       if (prev.brand) sel.value = prev.brand;
     }
+    if (Array.isArray(lookups.brands) && $('#brand_part')) {
+      const sel = $('#brand_part');
+      sel.innerHTML = `<option value="">Все бренды</option>` + lookups.brands.map(b => `<option value="${escapeHtml(b.id ?? b.value ?? b.name ?? b)}">${escapeHtml(b.name ?? b)}</option>`).join('');
+      if (prev.brand_part) sel.value = prev.brand_part;
+    }
 
-    // models (with brand relation if provided)
-    if (Array.isArray(lookups.models) && document.querySelector('#model')) {
-      const sel = document.querySelector('#model');
-      const brandSel = document.querySelector('#brand');
-
-      const fillModels = (brandId) => {
-        // Если бренд не выбран — показываем подсказку и блокируем селект
-        if (!brandId) {
-          sel.innerHTML = `<option value="">Сначала выберите бренд</option>`;
-          sel.disabled = true;
-          sel.value = '';
-          return;
-        }
-
-        // Наполняем только модели выбранного бренда
-        const filtered = lookups.models
-          .filter(m => String(m.brand_id) === String(brandId))
-          .map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`);
-
-        sel.innerHTML = `<option value="">Все модели</option>` + filtered.join('');
+    // models: expect lookups.models array with brand_id
+    if (Array.isArray(lookups.models) && $('#model')) {
+      const sel = $('#model');
+      const brandSel = $('#brand');
+      const fillModels = (brandId, prevModel) => {
+        if (!brandId) { sel.innerHTML = `<option value="">Сначала выберите бренд</option>`; sel.disabled = true; return; }
+        const filtered = lookups.models.filter(m => String(m.brand_id) === String(brandId));
+        sel.innerHTML = `<option value="">Все модели</option>` + filtered.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`).join('');
         sel.disabled = filtered.length === 0;
-        // восстановим предыдущую модель только если она присутствует в текущем списке
-        if (prev.model && Array.from(sel.options).some(o => o.value === prev.model)) {
-          sel.value = prev.model;
-        } else {
-          sel.selectedIndex = 0;
-        }
+        if (prevModel && Array.from(sel.options).some(o => o.value === prevModel)) sel.value = prevModel;
       };
+      if (brandSel && brandSel.value) fillModels(brandSel.value, prev.model);
+      else { sel.innerHTML = `<option value="">Сначала выберите бренд</option>`; sel.disabled = true; }
+      if (brandSel) brandSel.addEventListener('change', () => { fillModels(brandSel.value); if (typeof runFilter === 'function') runFilter(); });
+    }
 
-      // Инициализация (если бренд уже выбран)
-      if (brandSel && brandSel.value) fillModels(brandSel.value);
-      else {
-        sel.innerHTML = `<option value="">Сначала выберите бренд</option>`;
-        sel.disabled = true;
-      }
-
-      if (brandSel) {
-        brandSel.addEventListener('change', () => {
-          fillModels(brandSel.value);
-        });
-      }
+    if (Array.isArray(lookups.models) && $('#model_part')) {
+      const sel = $('#model_part');
+      const brandSel = $('#brand_part');
+      const fillModels = (brandId, prevModel) => {
+        if (!brandId) { sel.innerHTML = `<option value="">Сначала выберите бренд</option>`; sel.disabled = true; return; }
+        const filtered = lookups.models.filter(m => String(m.brand_id) === String(brandId));
+        sel.innerHTML = `<option value="">Все модели</option>` + filtered.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`).join('');
+        sel.disabled = filtered.length === 0;
+        if (prevModel && Array.from(sel.options).some(o => o.value === prevModel)) sel.value = prevModel;
+      };
+      if (brandSel && brandSel.value) fillModels(brandSel.value, prev.model_part);
+      else { sel.innerHTML = `<option value="">Сначала выберите бренд</option>`; sel.disabled = true; }
+      if (brandSel) brandSel.addEventListener('change', () => { fillModels(brandSel.value); if (typeof runFilter === 'function') runFilter(); });
     }
 
     // complex parts
-    if (Array.isArray(lookups.complex_parts) && document.querySelector('#complex_part')) {
-      const sel = document.querySelector('#complex_part');
-      sel.innerHTML = `<option value="">Все комплексные части</option>` +
-        lookups.complex_parts.map(cp => `<option value="${escapeHtml(cp.id)}">${escapeHtml(cp.name)}</option>`).join('');
+    if (Array.isArray(lookups.complex_parts) && $('#complex_part')) {
+      const sel = $('#complex_part');
+      sel.innerHTML = `<option value="">Все комплексные части</option>` + lookups.complex_parts.map(cp => `<option value="${escapeHtml(cp.id)}">${escapeHtml(cp.name)}</option>`).join('');
       if (prev.complex_part) sel.value = prev.complex_part;
     }
-
-    // components (depend on complex_part)
-    if (Array.isArray(lookups.components) && document.querySelector('#component')) {
-      const sel = document.querySelector('#component');
-      const cpSel = document.querySelector('#complex_part');
-
-      const fillComps = (cpId) => {
-        // Если комплексная часть не выбрана — показываем подсказку и блокируем селект
-        if (!cpId) {
-          sel.innerHTML = `<option value="">Сначала выберите комплексную часть</option>`;
-          sel.disabled = true;
-          sel.value = '';
-          return;
-        }
-
-        const filtered = lookups.components
-          .filter(c => String(c.complex_part_id) === String(cpId))
-          .map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`);
-
-        sel.innerHTML = `<option value="">Все компоненты</option>` + filtered.join('');
+    // components depending on complex_part
+    if (Array.isArray(lookups.components) && $('#component')) {
+      const sel = $('#component');
+      const cpSel = $('#complex_part');
+      const fillComps = (cpId, prevComp) => {
+        if (!cpId) { sel.innerHTML = `<option value="">Сначала выберите комплексную часть</option>`; sel.disabled = true; return; }
+        const filtered = lookups.components.filter(c => String(c.complex_part_id) === String(cpId));
+        sel.innerHTML = `<option value="">Все компоненты</option>` + filtered.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
         sel.disabled = filtered.length === 0;
-
-        if (prev.component && Array.from(sel.options).some(o => o.value === prev.component)) {
-          sel.value = prev.component;
-        } else {
-          sel.selectedIndex = 0;
-        }
+        if (prevComp && Array.from(sel.options).some(o => o.value === prevComp)) sel.value = prevComp;
       };
+      if (cpSel && cpSel.value) fillComps(cpSel.value, prev.component);
+      else { sel.innerHTML = `<option value="">Сначала выберите комплексную часть</option>`; sel.disabled = true; }
+      if (cpSel) cpSel.addEventListener('change', () => { fillComps(cpSel.value); if (typeof runFilter === 'function') runFilter(); });
+    }
 
-      if (cpSel && cpSel.value) fillComps(cpSel.value);
-      else {
-        sel.innerHTML = `<option value="">Сначала выберите комплексную часть</option>`;
-        sel.disabled = true;
-      }
+    // vehicle types/bodies/fuel/gearboxes
+    if (Array.isArray(lookups.vehicle_types) && document.querySelector('#vehicle_type')) {
+      const sel = document.querySelector('#vehicle_type');
+      sel.innerHTML = `<option value="">Все типы</option>` + lookups.vehicle_types.map(x => `<option value="${escapeHtml(x.id ?? x.key ?? x.name ?? x)}">${escapeHtml(x.name ?? x)}</option>`).join('');
+      if (prev.vehicle_type) sel.value = prev.vehicle_type;
+    }
+    if (Array.isArray(lookups.vehicle_bodies) && document.querySelector('#vehicle_body')) {
+      const sel = document.querySelector('#vehicle_body');
+      sel.innerHTML = `<option value="">Все кузова</option>` + lookups.vehicle_bodies.map(x => `<option value="${escapeHtml(x.id ?? x.key ?? x.name ?? x)}">${escapeHtml(x.name ?? x)}</option>`).join('');
+      if (prev.vehicle_body) sel.value = prev.vehicle_body;
+    }
+    if (Array.isArray(lookups.fuel_types) && document.querySelector('#fuel_type')) {
+      const sel = document.querySelector('#fuel_type');
+      sel.innerHTML = `<option value="">Любое</option>` + lookups.fuel_types.map(x => `<option value="${escapeHtml(x.id ?? x.key ?? x.name ?? x)}">${escapeHtml(x.name ?? x)}</option>`).join('');
+      if (prev.fuel_type) sel.value = prev.fuel_type;
+    }
+    if (Array.isArray(lookups.gearboxes) && document.querySelector('#gearbox')) {
+      const sel = document.querySelector('#gearbox');
+      sel.innerHTML = `<option value="">Любая</option>` + lookups.gearboxes.map(x => `<option value="${escapeHtml(x.id ?? x.key ?? x.name ?? x)}">${escapeHtml(x.name ?? x)}</option>`).join('');
+      if (prev.gearbox) sel.value = prev.gearbox;
+    }
 
-      if (cpSel) cpSel.addEventListener('change', () => fillComps(cpSel.value));
+    // if API returned vehicle_years we could convert to selects — currently year_from/year_to are inputs
+    if (Array.isArray(lookups.vehicle_years)) {
+      // no-op for now (optionally fill year_from/year_to datalist)
     }
   }
 
-  // Функция-помощник: собирает непустые параметры из объекта filters
+  // small helper: build query params from filters object
   function buildQueryFromFilters(filters) {
     const params = new URLSearchParams();
-    if (!filters) return params; // пустой
-    // если передали URLSearchParams — скопируем непустые
+    if (!filters) return params;
     if (filters instanceof URLSearchParams) {
-      for (const [k, v] of filters.entries()) {
-        if (v !== null && v !== undefined && String(v).trim() !== '') params.append(k, v);
-      }
+      for (const [k, v] of filters.entries()) if (v !== null && String(v).trim() !== '') params.append(k, v);
       return params;
     }
-    // объект
-    for (const k of Object.keys(filters)) {
+    Object.keys(filters).forEach(k => {
       const v = filters[k];
-      if (v !== null && v !== undefined && String(v).trim() !== '') {
-        params.append(k, String(v).trim());
-      }
-    }
+      if (v !== null && v !== undefined && String(v).trim() !== '') params.append(k, String(v).trim());
+    });
     return params;
   }
 
-  // Загружает товары + lookups. filters - объект {brand, model, ...} или URLSearchParams
+  // heurистика для определения типа товара по полям записи
+  function productMatchesType(item, type) {
+    if (!type) return true;
+    const t = String(type).toLowerCase();
+    // check explicit flags / fields
+    const fields = [
+      item.type, item.kind, item.category, item.product_type, item.item_type,
+      item.is_part, item.is_auto, item.is_vehicle
+    ];
+    // normalize booleans
+    for (const f of fields) {
+      if (typeof f === 'string') {
+        const s = f.toLowerCase();
+        if ((t === 'auto' || t === 'авто' || t === 'car' || t === 'vehicle') && (s === 'auto' || s === 'vehicle' || s === 'car')) return true;
+        if ((t === 'part' || t === 'запчасть' || t === 'part') && (s === 'part' || s === 'component' || s === 'part')) return true;
+      } else if (typeof f === 'boolean') {
+        if ((t === 'auto' && (f === true && (item.is_vehicle || item.is_auto))) ) {}
+      }
+    }
+    // check boolean fields explicitly
+    if (t === 'part' || t === 'запчасть') {
+      // try common flags
+      if (item.is_part === true || item.is_part === 1 || String(item.is_part) === '1') return true;
+      // check category fields
+      const cat = (item.category || item.type || item.kind || '').toString().toLowerCase();
+      if (cat.includes('part') || cat.includes('component') || cat.includes('запчаст')) return true;
+      return false;
+    }
+    if (t === 'auto' || t === 'авто' || t === 'vehicle') {
+      if (item.is_part === true || item.is_part === 1 || String(item.is_part) === '1') return false;
+      const cat = (item.category || item.type || item.kind || '').toString().toLowerCase();
+      if (cat.includes('car') || cat.includes('auto') || cat.includes('vehicle') || cat.includes('машин') || cat.includes('авто')) return true;
+      // fallback: if item has brand/model/year fields it's likely an auto
+      if (item.brand_name || item.model_name || item.year) return true;
+      return false;
+    }
+    return true;
+  }
+
+  // loadProducts: поддерживает client-side фильтрацию по type (на случай, если сервер вернул смешанные записи)
   async function loadProducts(filters = {}) {
     const container = document.getElementById('products');
     if (!container) return null;
-
     try {
       const params = buildQueryFromFilters(filters);
-      const qs = params.toString();
-      const url = '/mehanik/api/products.php' + (qs ? ('?' + qs) : '');
-      const res = await fetch(url);
+      const url = '/mehanik/api/products.php' + (params.toString() ? ('?' + params.toString()) : '');
+      const res = await fetch(url, { credentials: 'same-origin' });
       if (!res.ok) throw new Error('network');
       const data = await res.json();
 
-      // data может быть: { ok, products, lookups } или просто array / object
-      let products = [];
-      if (Array.isArray(data)) {
-        products = data;
-      } else if (data && Array.isArray(data.products)) {
-        products = data.products;
-      } else if (data && data.products && typeof data.products === 'object') {
-        // иногда products может быть объект с ключами — превратим в массив
-        products = Object.values(data.products);
-      }
+      // если есть lookups — подставим (позволит безопасно наполнять селекты)
+      if (data && data.lookups) fillLookups(data.lookups);
 
-      // если есть lookups — подставим в селекты
-      if (data && data.lookups) {
-        fillLookups(data.lookups);
+      // извлечём products
+      let products = [];
+      if (Array.isArray(data)) products = data;
+      else if (data && Array.isArray(data.products)) products = data.products;
+      else if (data && data.items && Array.isArray(data.items)) products = data.items;
+      else if (data && typeof data === 'object' && data.products && typeof data.products === 'object') products = Object.values(data.products);
+
+      // client-side фильтрация по type (если filters.type задан)
+      let t = null;
+      if (filters instanceof URLSearchParams) t = filters.get('type');
+      else if (filters && typeof filters === 'object') t = filters.type;
+      if (t) {
+        products = products.filter(it => productMatchesType(it, t));
       }
 
       renderProducts(container, products);
@@ -223,7 +251,6 @@
     }
   }
 
-  // экспорт в глобальную область
   window.productList = {
     productCard,
     renderProducts,

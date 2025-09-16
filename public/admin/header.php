@@ -279,8 +279,6 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
             ['href' => $base . '/admin/products.php', 'label' => 'Запчасти', 'badge' => $pendingProducts, 'class' => ''],
             ['href' => $base . '/admin/chats.php', 'label' => 'Чаты', 'badge' => 0, 'class' => ''],
             ['href' => $base . '/admin/cars.php', 'label' => 'Бренд/Модель', 'badge' => 0, 'class' => ''],
-            // <-- добавлен новый пункт ТипТс/Кузов
-            ['href' => $base . '/admin/vehicle-types.php', 'label' => 'ТипТс/Кузов', 'badge' => 0, 'class' => ''],
             ['href' => $base . '/admin/cars_moderation.php', 'label' => 'Авто', 'badge' => $pendingCars, 'class' => 'btn-catalog'],
 
             // Уведомления и Бухгалтерия как обычные nav-элементы
