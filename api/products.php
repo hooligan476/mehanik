@@ -1,212 +1,178 @@
 <?php
-// api/products.php (debug / verbose version)
-// Замените временно на эту версию для диагностики.
-
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
+// /mehanik/api/products.php
+ini_set('display_errors', 0);
 error_reporting(E_ALL);
 
-require_once __DIR__.'/../db.php';
+require_once __DIR__ . '/../db.php';
+if (session_status() === PHP_SESSION_NONE) session_start();
+
 header('Content-Type: application/json; charset=utf-8');
 
 $logFile = '/tmp/mehanik_products_error.log';
-function dbglog($msg) {
-    global $logFile;
-    @file_put_contents($logFile, date('[Y-m-d H:i:s] ') . $msg . PHP_EOL, FILE_APPEND | LOCK_EX);
-}
+function dbglog($m){ global $logFile; @file_put_contents($logFile, date('[Y-m-d H:i:s] ').$m.PHP_EOL, FILE_APPEND|LOCK_EX); }
 
 try {
     if (!isset($mysqli) || !($mysqli instanceof mysqli)) {
-        $err = "DB connection \$mysqli not found or invalid.";
+        $err = "DB connection missing.";
         dbglog($err);
-        echo json_encode(['ok' => false, 'error' => $err], JSON_UNESCAPED_UNICODE);
+        echo json_encode(['ok'=>false,'error'=>$err], JSON_UNESCAPED_UNICODE);
         exit;
     }
 
-    // input parsing
-    $brand = isset($_GET['brand']) && $_GET['brand'] !== '' ? (int)$_GET['brand'] : null;
-    $model = isset($_GET['model']) && $_GET['model'] !== '' ? (int)$_GET['model'] : null;
-    $year_from = isset($_GET['year_from']) && $_GET['year_from'] !== '' ? (int)$_GET['year_from'] : null;
-    $year_to = isset($_GET['year_to']) && $_GET['year_to'] !== '' ? (int)$_GET['year_to'] : null;
-    $cpart = isset($_GET['complex_part']) && $_GET['complex_part'] !== '' ? (int)$_GET['complex_part'] : null;
-    $comp = isset($_GET['component']) && $_GET['component'] !== '' ? (int)$_GET['component'] : null;
-    $q = trim($_GET['q'] ?? '');
-    $type = isset($_GET['type']) ? trim($_GET['type']) : '';
+    $getInt = function($k){ return (isset($_GET[$k]) && $_GET[$k] !== '') ? (int)$_GET[$k] : null; };
+    $getStr = function($k){ return isset($_GET[$k]) ? trim((string)$_GET[$k]) : ''; };
 
-    $sql = "SELECT p.*, b.name as brand_name, m.name as model_name, cp.name as cpart_name, c.name as comp_name
+    $brand        = $getInt('brand');
+    $brand_part   = $getInt('brand_part');
+    $model        = $getInt('model');
+    $model_part   = $getInt('model_part');
+    $year_from    = $getInt('year_from');
+    $year_to      = $getInt('year_to');
+    $cpart        = $getInt('complex_part');
+    $comp         = $getInt('component');
+    $q            = $getStr('q');
+    $type         = strtolower($getStr('type')); // all|auto|part
+    $price_from   = isset($_GET['price_from']) && $_GET['price_from'] !== '' ? (float)$_GET['price_from'] : null;
+    $price_to     = isset($_GET['price_to']) && $_GET['price_to'] !== '' ? (float)$_GET['price_to'] : null;
+    $fuel_type    = $getStr('fuel_type');
+    $gearbox      = $getStr('gearbox');
+    $vehicle_type = $getStr('vehicle_type');
+    $vehicle_body = $getStr('vehicle_body');
+    $part_quality = $getStr('part_quality');
+    $mine         = isset($_GET['mine']) && $_GET['mine'] === '1';
+    $recommend    = isset($_GET['recommendation']) && $_GET['recommendation'] === '1';
+
+    if (!$brand && $brand_part) $brand = $brand_part;
+    if (!$model && $model_part) $model = $model_part;
+
+    // recommendation quick path
+    if ($recommend) {
+        $tbl = 'products';
+        if (in_array($type, ['auto','car','vehicle'])) $tbl = 'cars';
+        $qrec = "SELECT * FROM `{$tbl}` WHERE status = 'approved' AND COALESCE(recommended,0)=1 ORDER BY id DESC LIMIT 40";
+        $r = $mysqli->query($qrec);
+        $items = $r ? $r->fetch_all(MYSQLI_ASSOC) : [];
+        echo json_encode(['ok'=>true,'products'=>$items], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    // base select (products table; we assume cars are stored in products too in same schema — adapt if needed)
+    $sql = "SELECT p.*, b.name AS brand_name, m.name AS model_name, cp.name AS complex_part_name, c.name AS component_name
             FROM products p
-            LEFT JOIN brands b ON b.id=p.brand_id
-            LEFT JOIN models m ON m.id=p.model_id
-            LEFT JOIN complex_parts cp ON cp.id=p.complex_part_id
-            LEFT JOIN components c ON c.id=p.component_id
+            LEFT JOIN brands b ON b.id = p.brand_id
+            LEFT JOIN models m ON m.id = p.model_id
+            LEFT JOIN complex_parts cp ON cp.id = p.complex_part_id
+            LEFT JOIN components c ON c.id = p.component_id
             WHERE p.status = 'approved'";
 
-    $params = [];
-    $types = '';
+    $params = []; $types = '';
 
-    if ($brand) { $sql .= " AND p.brand_id=?"; $params[]=$brand; $types.='i'; }
-    if ($model) { $sql .= " AND p.model_id=?"; $params[]=$model; $types.='i'; }
-    if ($year_from) { $sql .= " AND (p.year_from IS NULL OR p.year_from<=?)"; $params[]=$year_from; $types.='i'; }
-    if ($year_to) { $sql .= " AND (p.year_to IS NULL OR p.year_to>=?)"; $params[]=$year_to; $types.='i'; }
-    if ($cpart) { $sql .= " AND p.complex_part_id=?"; $params[]=$cpart; $types.='i'; }
-    if ($comp) { $sql .= " AND p.component_id=?"; $params[]=$comp; $types.='i'; }
+    if ($mine && !empty($_SESSION['user']['id'])) { $sql .= " AND p.user_id = ?"; $params[] = (int)$_SESSION['user']['id']; $types .= 'i'; }
+    if ($brand) { $sql .= " AND p.brand_id = ?"; $params[] = $brand; $types .= 'i'; }
+    if ($model) { $sql .= " AND p.model_id = ?"; $params[] = $model; $types .= 'i'; }
+    if ($year_from !== null) { $sql .= " AND (p.year_from IS NULL OR p.year_from <= ?)"; $params[] = $year_from; $types .= 'i'; }
+    if ($year_to !== null) { $sql .= " AND (p.year_to IS NULL OR p.year_to >= ?)"; $params[] = $year_to; $types .= 'i'; }
+    if ($cpart) { $sql .= " AND p.complex_part_id = ?"; $params[] = $cpart; $types .= 'i'; }
+    if ($comp)  { $sql .= " AND p.component_id = ?"; $params[] = $comp; $types .= 'i'; }
+    if ($price_from !== null) { $sql .= " AND (p.price IS NULL OR p.price >= ?)"; $params[] = $price_from; $types .= 'd'; }
+    if ($price_to !== null)   { $sql .= " AND (p.price IS NULL OR p.price <= ?)"; $params[] = $price_to; $types .= 'd'; }
 
-    // server-side type filtering (auto / part)
-    if ($type !== '') {
-        $t = strtolower($type);
-        if ($t === 'auto' || $t === 'vehicle' || $t === 'car') {
-            $sql .= " AND (
-                (p.is_part IS NULL OR p.is_part = 0)
-                OR LOWER(IFNULL(p.item_type, '')) IN ('auto','vehicle','car')
-                OR LOWER(IFNULL(p.type, '')) IN ('auto','vehicle','car')
-                OR (p.brand_id IS NOT NULL OR p.model_id IS NOT NULL OR p.year_from IS NOT NULL OR p.year_to IS NOT NULL)
-            )";
-        } elseif ($t === 'part' || $t === 'parts' || $t === 'component') {
-            $sql .= " AND (
-                (p.is_part = 1)
-                OR LOWER(IFNULL(p.item_type, '')) IN ('part','component')
-                OR LOWER(IFNULL(p.type, '')) IN ('part','component')
-                OR p.complex_part_id IS NOT NULL
-                OR p.component_id IS NOT NULL
-            )";
-        } else {
-            // comma-separated list handling
-            $parts = array_map('trim', explode(',', $type));
-            $conds = [];
-            foreach ($parts as $pt) {
-                if ($pt === '') continue;
-                if (in_array(strtolower($pt), ['auto','vehicle','car'])) {
-                    $conds[] = "((p.is_part IS NULL OR p.is_part = 0) OR LOWER(IFNULL(p.item_type, '')) IN ('auto','vehicle','car'))";
-                } elseif (in_array(strtolower($pt), ['part','component'])) {
-                    $conds[] = "((p.is_part = 1) OR LOWER(IFNULL(p.item_type, '')) IN ('part','component') OR p.complex_part_id IS NOT NULL)";
-                }
-            }
-            if ($conds) {
-                $sql .= ' AND (' . implode(' OR ', $conds) . ')';
-            }
+    if ($fuel_type !== '') {
+        $sql .= " AND (p.fuel_type = ? OR p.fuel_type_id = ? OR LOWER(IFNULL(p.fuel_type,'')) = LOWER(?))";
+        $params[] = $fuel_type; $params[] = $fuel_type; $params[] = $fuel_type; $types .= 'sss';
+    }
+    if ($gearbox !== '') {
+        $sql .= " AND (p.gearbox = ? OR p.gearbox_id = ? OR LOWER(IFNULL(p.gearbox,'')) = LOWER(?))";
+        $params[] = $gearbox; $params[] = $gearbox; $params[] = $gearbox; $types .= 'sss';
+    }
+    if ($vehicle_type !== '') {
+        $sql .= " AND (p.vehicle_type = ? OR p.vehicle_type_id = ? OR LOWER(IFNULL(p.vehicle_type,'')) = LOWER(?))";
+        $params[] = $vehicle_type; $params[] = $vehicle_type; $params[] = $vehicle_type; $types .= 'sss';
+    }
+    if ($vehicle_body !== '') {
+        $sql .= " AND (p.vehicle_body = ? OR p.vehicle_body_id = ? OR LOWER(IFNULL(p.vehicle_body,'')) = LOWER(?))";
+        $params[] = $vehicle_body; $params[] = $vehicle_body; $params[] = $vehicle_body; $types .= 'sss';
+    }
+    if ($part_quality !== '') {
+        $sql .= " AND (p.quality = ? OR p.part_quality = ? OR LOWER(IFNULL(p.quality,'')) = LOWER(?))";
+        $params[] = $part_quality; $params[] = $part_quality; $params[] = $part_quality; $types .= 'sss';
+    }
+
+    // type filter
+    if ($type !== '' && $type !== 'all') {
+        if (in_array($type, ['auto','car','vehicle'])) {
+            $sql .= " AND (p.complex_part_id IS NULL AND p.component_id IS NULL)";
+        } elseif (in_array($type, ['part','parts','component'])) {
+            $sql .= " AND (p.complex_part_id IS NOT NULL OR p.component_id IS NOT NULL)";
         }
     }
 
-    // search
     if ($q !== '') {
         if (ctype_digit($q)) {
-            $sql .= " AND (p.id=? OR p.sku LIKE CONCAT('%',?,'%'))";
-            $params[] = (int)$q; $types .= 'i';
-            $params[] = $q; $types .= 's';
+            $sql .= " AND (p.id = ? OR p.sku LIKE CONCAT('%', ?, '%') OR p.name LIKE CONCAT('%', ?, '%'))";
+            $params[] = (int)$q; $params[] = $q; $params[] = $q; $types .= 'iss';
         } else {
-            $sql .= " AND (p.name LIKE CONCAT('%',?,'%') OR p.sku LIKE CONCAT('%',?,'%'))";
+            $sql .= " AND (p.name LIKE CONCAT('%', ?, '%') OR p.sku LIKE CONCAT('%', ?, '%'))";
             $params[] = $q; $params[] = $q; $types .= 'ss';
         }
     }
 
     $sql .= " ORDER BY p.id DESC LIMIT 200";
 
-    // prepare
     $stmt = $mysqli->prepare($sql);
-    if ($stmt === false) {
-        $err = "DB prepare failed: " . $mysqli->error . " -- SQL: " . $sql;
-        dbglog($err);
-        echo json_encode(['ok'=>false,'error'=>$err,'sql'=>$sql], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
+    if ($stmt === false) { $err = "DB prepare failed: ".$mysqli->error; dbglog($err); echo json_encode(['ok'=>false,'error'=>$err,'sql'=>$sql], JSON_UNESCAPED_UNICODE); exit; }
 
-    // bind params
     if (!empty($params)) {
-        $bind_names = [];
-        $bind_names[] = $types;
-        for ($i = 0; $i < count($params); $i++) {
-            $bind_name = 'bind' . $i;
-            $$bind_name = $params[$i];
-            $bind_names[] = &$$bind_name;
-        }
-        // call bind_param
-        if (!call_user_func_array([$stmt, 'bind_param'], $bind_names)) {
-            $err = "bind_param failed: " . $stmt->error . " -- types: " . $types . " params: " . json_encode($params);
-            dbglog($err);
-            echo json_encode(['ok'=>false,'error'=>$err,'sql'=>$sql,'params'=>$params,'types'=>$types], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
+        $bind = []; $bind[] = $types;
+        for ($i=0;$i<count($params);$i++){ $name='b'.$i; $$name = $params[$i]; $bind[] = &$$name; }
+        if (!@call_user_func_array([$stmt,'bind_param'], $bind)) { $err = "bind_param failed: ".$stmt->error; dbglog($err); echo json_encode(['ok'=>false,'error'=>$err], JSON_UNESCAPED_UNICODE); exit; }
     }
 
-    if (!$stmt->execute()) {
-        $err = "Execute failed: " . $stmt->error . " -- SQL: " . $sql;
-        dbglog($err);
-        echo json_encode(['ok'=>false,'error'=>$err,'sql'=>$sql], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
+    if (!$stmt->execute()) { $err = "Execute failed: ".$stmt->error; dbglog($err); echo json_encode(['ok'=>false,'error'=>$err], JSON_UNESCAPED_UNICODE); exit; }
 
-    // get_result may not be available on some php builds; try fallback
     $rows = [];
-    if (method_exists($stmt, 'get_result')) {
+    if (method_exists($stmt,'get_result')) {
         $res = $stmt->get_result();
         while ($r = $res->fetch_assoc()) $rows[] = $r;
+        if ($res) $res->free();
     } else {
-        // fallback using bind_result
         $meta = $stmt->result_metadata();
         if ($meta) {
-            $fields = [];
-            $out = [];
-            while ($f = $meta->fetch_field()) {
-                $fields[] = $f->name;
-                $out[$f->name] = null;
-                $bindParams[] = &$out[$f->name];
-            }
+            $fields=[]; $out=[]; $bindParams=[];
+            while ($f=$meta->fetch_field()) { $fields[]=$f->name; $out[$f->name]=null; $bindParams[]=&$out[$f->name]; }
             if (!empty($bindParams)) {
-                call_user_func_array([$stmt, 'bind_result'], $bindParams);
-                while ($stmt->fetch()) {
-                    $row = [];
-                    foreach ($fields as $fname) $row[$fname] = $out[$fname];
-                    $rows[] = $row;
-                }
+                call_user_func_array([$stmt,'bind_result'],$bindParams);
+                while ($stmt->fetch()) { $row=[]; foreach($fields as $fn) $row[$fn]=$out[$fn]; $rows[]=$row; }
             }
+            $meta->free();
         }
     }
     $stmt->close();
 
-    $response = [
-        'ok' => true,
-        'products' => $rows,
-        'lookups' => [
-            'brands' => [],
-            'models' => [],
-            'complex_parts' => [],
-            'components' => [],
-            'vehicle_types' => [],
-            'vehicle_bodies' => [],
-            'fuel_types' => [],
-            'gearboxes' => [],
-            'vehicle_years' => []
-        ]
-    ];
+    // build lookups (non-fatal)
+    $response = ['ok'=>true, 'products'=>$rows, 'lookups'=>[
+        'brands'=>[],'models'=>[],'complex_parts'=>[],'components'=>[],
+        'vehicle_types'=>[],'vehicle_bodies'=>[],'fuel_types'=>[],'gearboxes'=>[],'vehicle_years'=>[]
+    ]];
 
-    // lookups (safe queries)
-    $try = function($sqlq, $appendTo) use ($mysqli, &$response, $logFile) {
-        $r = $mysqli->query($sqlq);
-        if ($r) {
-            while ($row = $r->fetch_assoc()) $response['lookups'][$appendTo][] = $row;
-            $r->free();
-        } else {
-            dbglog("Lookup query failed: {$sqlq} -- " . $mysqli->error);
-        }
-    };
+    $try = function($sqlq,$key) use ($mysqli,&$response){ $r=$mysqli->query($sqlq); if($r){ while($row=$r->fetch_assoc()) $response['lookups'][$key][] = $row; $r->free(); } };
 
     $try("SELECT id, name FROM brands ORDER BY name", 'brands');
     $try("SELECT id, name, brand_id FROM models ORDER BY name", 'models');
     $try("SELECT id, name FROM complex_parts ORDER BY name", 'complex_parts');
     $try("SELECT id, name, complex_part_id FROM components ORDER BY name", 'components');
-
-    // optional additional lookups — if tables missing, failures are logged but not fatal
-    $try("SELECT id, `key`, name, `order` FROM vehicle_types ORDER BY `order` ASC, name ASC", 'vehicle_types');
-    $try("SELECT id, vehicle_type_id, `key`, name, `order` FROM vehicle_bodies ORDER BY vehicle_type_id ASC, `order` ASC, name ASC", 'vehicle_bodies');
-    $try("SELECT id, `key`, name, `order` FROM fuel_types WHERE COALESCE(active,1)=1 ORDER BY `order` ASC, name ASC", 'fuel_types');
-    $try("SELECT id, `key`, name, `order` FROM gearboxes WHERE COALESCE(active,1)=1 ORDER BY `order` ASC, name ASC", 'gearboxes');
+    $try("SELECT id, `key`, name FROM vehicle_types ORDER BY name", 'vehicle_types');
+    $try("SELECT id, vehicle_type_id, `key`, name FROM vehicle_bodies ORDER BY name", 'vehicle_bodies');
+    $try("SELECT id, `key`, name FROM fuel_types ORDER BY name", 'fuel_types');
+    $try("SELECT id, `key`, name FROM gearboxes ORDER BY name", 'gearboxes');
     $try("SELECT id, `year` FROM vehicle_years ORDER BY `year` DESC", 'vehicle_years');
 
     echo json_encode($response, JSON_UNESCAPED_UNICODE);
+    exit;
 
 } catch (Throwable $e) {
-    $msg = "Unhandled exception: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine();
-    dbglog($msg);
-    echo json_encode(['ok'=>false,'error'=>$msg,'trace'=>$e->getTraceAsString()], JSON_UNESCAPED_UNICODE);
+    $m = "Unhandled: ".$e->getMessage();
+    dbglog($m);
+    echo json_encode(['ok'=>false,'error'=>$m,'trace'=>$e->getTraceAsString()], JSON_UNESCAPED_UNICODE);
     exit;
 }
