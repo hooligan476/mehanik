@@ -21,7 +21,6 @@ $err = $_GET['err'] ?? '';
   <meta charset="utf-8">
   <title>Мои авто — Mehanik</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <link rel="stylesheet" href="/mehanik/assets/css/header.css">
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
   <style>
     .page { max-width:1200px; margin:18px auto; padding:14px; }

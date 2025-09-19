@@ -157,6 +157,14 @@ $hasAnyPhoto = !empty($galleryUrls);
 
 // reject reason
 $rejectReason = $product['reject_reason'] ?? '';
+
+// prepare product url for linking (used for SKU link)
+$productUrl = '/mehanik/public/product.php?id=' . urlencode($id);
+
+// prepare display SKU (remove leading SKU- if present)
+$rawSku = trim((string)($product['sku'] ?? ''));
+$displaySku = $rawSku === '' ? '' : preg_replace('/^SKU-/i', '', $rawSku);
+
 ?>
 <!doctype html>
 <html lang="ru">
@@ -187,6 +195,11 @@ $rejectReason = $product['reject_reason'] ?? '';
 .desc { background:#fafbff; border:1px dashed #e7e9f3; border-radius:12px; padding:14px; }
 .logo { display:block; margin-bottom:12px; }
 .btn { display:inline-block; padding:8px 16px; background:#116b1d; color:#fff; border-radius:6px; text-decoration:none; margin-top:12px; }
+
+/* SKU row styles */
+.sku-row { display:flex; gap:10px; align-items:center; }
+.sku-text { font-weight:700; color:#0b57a4; text-decoration:underline; }
+.sku-copy { padding:6px 8px; border-radius:6px; border:1px solid #e6e9ef; background:#fff; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -249,7 +262,18 @@ $rejectReason = $product['reject_reason'] ?? '';
       </div>
 
       <div class="details" style="margin-top:8px;">
-        <div class="row"><strong>Артикул:</strong> <?= htmlspecialchars($product['sku'] ?? '') ?></div>
+        <div class="row">
+          <strong>Артикул:</strong>
+          <?php if ($displaySku !== ''): ?>
+            <div class="sku-row" style="margin-top:6px;">
+              <a class="sku-text" id="skuLink" href="<?= htmlspecialchars($productUrl) ?>" title="Перейти к товару"><?= htmlspecialchars($displaySku) ?></a>
+              <button type="button" id="copySkuBtn" class="sku-copy" aria-label="Копировать артикул">📋</button>
+            </div>
+          <?php else: ?>
+            <div style="margin-top:6px;" class="muted">—</div>
+          <?php endif; ?>
+        </div>
+
         <div class="row"><strong>Производитель:</strong> <?= htmlspecialchars($product['manufacturer'] ?? '-') ?></div>
         <div class="row"><strong>Состояние:</strong> <?= htmlspecialchars($product['quality'] ?? '-') ?></div>
         <div class="row"><strong>Качество:</strong> <?= number_format((float)($product['rating'] ?? 0),1) ?></div>
@@ -306,6 +330,48 @@ $rejectReason = $product['reject_reason'] ?? '';
       t.style.boxShadow = '0 4px 14px rgba(11,87,164,0.14)';
     }
   });
+})();
+
+// SKU copy button (uses Clipboard API with fallback)
+(function(){
+  const copyBtn = document.getElementById('copySkuBtn');
+  const skuTextEl = document.getElementById('skuLink');
+  if (!copyBtn || !skuTextEl) return;
+  copyBtn.addEventListener('click', function(){
+    const text = skuTextEl.textContent.trim();
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(()=> {
+        const prev = copyBtn.textContent;
+        copyBtn.textContent = '✓';
+        setTimeout(()=> copyBtn.textContent = prev, 1200);
+      }).catch(()=> fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  });
+
+  function fallbackCopy(text) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'absolute';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) {
+        copyBtn.textContent = '✓';
+        setTimeout(()=> copyBtn.textContent = '📋', 1200);
+      } else {
+        alert('Не удалось скопировать артикул');
+      }
+    } catch(e) {
+      alert('Копирование не поддерживается в этом браузере');
+    }
+  }
 })();
 </script>
 </body>

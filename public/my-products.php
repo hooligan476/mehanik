@@ -24,50 +24,93 @@ $err = $_GET['err'] ?? '';
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Мои товары — Mehanik</title>
 
-  <link rel="stylesheet" href="/mehanik/assets/css/header.css">
-  <link rel="stylesheet" href="/mehanik/assets/css/style.css">
-
   <style>
-    :root{ --card-bg:#ffffff; --muted:#6b7280; --accent:#0b57a4; --danger:#ef4444; --ok:#15803d; --pending:#b45309; }
-    .page-wrap{ max-width:1200px; margin:18px auto; padding:12px; }
-    .topbar-row{ display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
-    .page-title{ margin:0; font-size:1.5rem; display:flex;align-items:center;gap:12px; font-weight:700; }
-    .tools { margin-left:auto; display:flex; gap:10px; align-items:center; }
+:root{
+  --bg: #f6f8fb;
+  --card-bg: #ffffff;
+  --muted: #6b7280;
+  --accent: #0b57a4;
+  --danger: #ef4444;
+  --ok: #15803d;
+  --pending: #b45309;
+  --glass: rgba(255,255,255,0.6);
+  --radius: 10px;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial, sans-serif;color:#0f172a}
+.page-wrap{max-width:1200px;margin:18px auto;padding:12px}
+.topbar-row{display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.page-title{margin:0;font-size:1.25rem;display:flex;align-items:center;gap:12px;font-weight:700}
+.tools{margin-left:auto;display:flex;gap:8px;align-items:center}
 
-    .layout { display:grid; grid-template-columns:320px 1fr; gap:18px; }
-    @media (max-width:1100px){ .layout{grid-template-columns:1fr;} }
+/* Layout */
+.layout{display:grid;grid-template-columns:280px 1fr;gap:18px}
+@media(max-width:1000px){.layout{grid-template-columns:1fr}}
 
-    .sidebar { background:#fff;padding:14px;border-radius:12px;box-shadow:0 8px 24px rgba(2,6,23,0.04); }
-    .form-row{margin-top:10px;display:flex;flex-direction:column;gap:6px}
-    .form-row label{font-weight:700}
-    .form-row select,.form-row input{padding:8px;border-radius:8px;border:1px solid #eef3f8}
-    .controls-row{display:flex;gap:8px;align-items:center;margin-top:12px}
+/* Sidebar */
+.sidebar{background:var(--card-bg);padding:14px;border-radius:12px;box-shadow:0 8px 24px rgba(2,6,23,0.04)}
+.form-row{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.form-row label{font-weight:700;color:#334155}
+.form-row select,.form-row input{padding:8px;border-radius:8px;border:1px solid #e6eef7;background:linear-gradient(#fff,#fbfdff)}
+.controls-row{display:flex;gap:8px;align-items:center;margin-top:12px}
 
-    .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:18px; }
-    @media (max-width:992px){ .grid { grid-template-columns: repeat(2,1fr); } }
-    @media (max-width:600px){ .grid { grid-template-columns: 1fr; } }
+/* Products list — force vertical list style */
+#products, .products{display:flex;flex-direction:column;gap:10px;padding:6px 0}
 
-    .prod-card { background: var(--card-bg); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; box-shadow: 0 8px 20px rgba(2,6,23,0.06); transition: transform .14s ease, box-shadow .14s ease; min-height: 320px; }
-    .prod-card:hover { transform: translateY(-6px); box-shadow: 0 14px 30px rgba(2,6,23,0.10); }
-    .thumb { height:180px; background:#f5f7fb; display:flex; align-items:center; justify-content:center; }
-    .thumb img { max-width:100%; max-height:100%; object-fit:contain; display:block; }
-    .card-body { padding:14px; flex:1; display:flex; flex-direction:column; gap:8px; }
-    .title { font-weight:700; font-size:1.05rem; margin:0 0 4px; color:#0f172a; }
-    .meta { color:var(--muted); font-size:0.95rem; }
-    .price { font-weight:800; font-size:1.05rem; color:var(--accent); }
-    .badges { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px; }
-    .badge { padding:6px 10px; border-radius:999px; font-weight:700; font-size:.82rem; color:#fff; display:inline-block; }
-    .badge.ok{ background:var(--ok); } .badge.rej{ background:var(--danger); } .badge.pending{ background:var(--pending); }
-    .card-footer { padding:12px; border-top:1px solid #f1f3f6; display:flex; justify-content:space-between; align-items:center; gap:8px; }
-    .actions a, .actions button { text-decoration:none; display:inline-flex; align-items:center; gap:6px; padding:8px 10px; border-radius:8px; font-size:.92rem; border:0; cursor:pointer; }
-    .btn-view { background:#eef6ff; color:var(--accent); border:1px solid rgba(11,87,164,0.08); }
-    .btn-edit { background:#fff7ed; color:#a16207; border:1px solid rgba(161,98,7,0.08); }
-    .btn-delete { background:#fff6f6; color:var(--danger); border:1px solid rgba(239,68,68,0.06); }
+/* Universal compact card used on this page */
+.prod-card, .card{display:flex;flex-direction:row;align-items:center;gap:12px;padding:10px;border-radius:12px;background:var(--card-bg);box-shadow:0 6px 18px rgba(2,6,23,0.06);border:1px solid rgba(15,23,42,0.04);transition:transform .12s ease,box-shadow .12s ease;overflow:hidden}
+.prod-card:hover,.card:hover{transform:translateY(-6px);box-shadow:0 14px 30px rgba(2,6,23,0.10)}
 
-    .no-products { text-align:center; padding:40px 10px; color:var(--muted); background:#fff; border-radius:10px; box-shadow:0 6px 18px rgba(2,6,23,0.04); }
-    .btn { display:inline-block; background:#0b57a4; color:#fff; padding:8px 12px; border-radius:8px; text-decoration:none; font-weight:600; cursor:pointer; border:0; }
-    .btn-ghost { background:#6b7280; color:#fff; }
-  </style>
+/* Thumbnail */
+.thumb, .card img{flex:0 0 96px;width:96px;height:64px;border-radius:8px;overflow:hidden;background:#f7f9fc;display:flex;align-items:center;justify-content:center}
+.thumb img, .card img{width:auto;height:100%;object-fit:contain;display:block}
+
+/* Main content */
+.card-body, .product-content{padding:0 6px 0 0;flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:4px}
+.title{font-size:1rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#0f172a}
+.product-sub,.meta{font-size:0.88rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* SKU link / copy */
+.sku-wrap{display:flex;align-items:center;gap:8px;margin-top:4px}
+.sku-link{font-weight:600;color:var(--accent);text-decoration:underline;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn-copy-sku{padding:4px 8px;border-radius:6px;border:1px solid #e6e9ef;background:#fff;cursor:pointer;font-size:0.9rem}
+
+/* price & id column */
+.price-row{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.price{font-weight:800;font-size:0.98rem;color:var(--accent);white-space:nowrap}
+
+/* badges compact */
+.badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.badge{padding:5px 8px;border-radius:999px;font-weight:700;font-size:0.78rem;color:#fff}
+.badge.ok{background:var(--ok)}.badge.rej{background:var(--danger)}.badge.pending{background:var(--pending)}
+.badges .meta{background:#f3f5f8;padding:6px 8px;border-radius:8px;color:#334155}
+
+/* Footer / actions */
+.card-footer{border-top:0;padding:0;margin-left:12px;display:flex;gap:8px;align-items:center;justify-content:flex-end;min-width:150px;flex:0 0 auto}
+.actions{display:flex;gap:8px;align-items:center}
+.actions a,.actions button{padding:6px 8px;border-radius:8px;border:0;cursor:pointer;font-size:0.88rem}
+.btn-view{background:#eef6ff;color:var(--accent);border:1px solid rgba(11,87,164,0.06)}
+.btn-edit{background:#fff7ed;color:#a16207;border:1px solid rgba(161,98,7,0.06)}
+.btn-delete{background:#fff6f6;color:var(--danger);border:1px solid rgba(239,68,68,0.06)}
+.btn-super{background:linear-gradient(180deg,#fff8ed,#fff3df);border:1px solid #ffd28a;font-weight:700}
+.btn-premium{background:linear-gradient(180deg,#fbf7ff,#f6f1ff);border:1px solid #d7b8ff;font-weight:700}
+
+/* No-products placeholder */
+.no-products{text-align:center;padding:28px;border-radius:10px;background:var(--card-bg);box-shadow:0 6px 18px rgba(2,6,23,0.04);color:var(--muted)}
+
+/* Small screens: stack card vertically */
+@media(max-width:700px){
+  .prod-card,.card{flex-direction:column;align-items:stretch;padding:12px}
+  .thumb{width:100%;height:140px;flex:0 0 auto}
+  .card-footer{margin-left:0;justify-content:flex-start;padding-top:8px}
+}
+
+/* Utility helpers */
+.muted{color:var(--muted);padding:12px}
+.notice{padding:10px;border-radius:8px;margin-bottom:10px}
+.notice.ok{background:#ecfdf5;color:#065f46}
+.notice.err{background:#fff1f2;color:#9f1239}
+</style>
 </head>
 <body>
 
@@ -193,24 +236,161 @@ window.fetchJSON = async function(url, opts = {}){ try{ const resp = await fetch
   async function applyFilters(){ const filters = collectFilters(); if(window.productList && typeof productList.loadProducts === 'function'){ try{ await productList.loadProducts(filters); return; }catch(e){ console.warn('productList.loadProducts error', e); } }
     try{ const params = new URLSearchParams(filters); const resp = await fetch('/mehanik/api/products.php?'+params.toString(), { credentials:'same-origin' }); if(resp.ok){ const json = await resp.json(); const items = json.products ?? json.items ?? json; renderProducts(Array.isArray(items)?items:[]); } }catch(e){ console.warn(e); } }
 
-  function renderProducts(items){ container.innerHTML = ''; if(!items||!items.length){ container.innerHTML = '<div class="no-products"><p style="font-weight:700;margin:0 0 8px;">По вашему запросу ничего не найдено</p><p style="margin:0;color:#6b7280">Попробуйте изменить фильтры или добавить товар.</p></div>'; return; }
-    for(const it of items){ const card = document.createElement('article'); card.className='prod-card'; const thumb = document.createElement('div'); thumb.className='thumb'; const a = document.createElement('a'); a.href = '/mehanik/public/product.php?id='+encodeURIComponent(it.id); a.style.display='block'; a.style.width='100%'; a.style.height='100%'; const img = document.createElement('img'); img.alt = it.name || 'Товар'; img.src = (it.photo && (it.photo.indexOf('/')===0 || /^https?:\/\//i.test(it.photo))) ? it.photo : (it.photo ? (window.uploadsPrefix + it.photo) : window.noPhoto); a.appendChild(img); thumb.appendChild(a);
-      const body = document.createElement('div'); body.className='card-body'; const row = document.createElement('div'); row.style.display='flex'; row.style.justifyContent='space-between'; row.style.gap='12px'; const left = document.createElement('div'); left.style.flex='1'; const title = document.createElement('div'); title.className='title'; title.textContent = it.name || 'Без названия'; const meta = document.createElement('div'); meta.className='meta'; meta.textContent = it.manufacturer || '-'; left.appendChild(title); left.appendChild(meta);
-      const right = document.createElement('div'); right.style.textAlign='right'; const price = document.createElement('div'); price.className='price'; price.textContent = it.price ? (Number(it.price).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' TMT') : '-'; const idMeta = document.createElement('div'); idMeta.className='meta'; idMeta.style.marginTop='6px'; idMeta.style.fontSize='.9rem'; idMeta.textContent = 'ID: ' + (it.id||'-'); right.appendChild(price); right.appendChild(idMeta); row.appendChild(left); row.appendChild(right); body.appendChild(row);
+  function renderProducts(items){
+    // render with compact, list-friendly structure (uses .prod-card/.thumb/.card-body/.card-footer)
+    container.innerHTML = '';
+    if(!items||!items.length){
+      container.innerHTML = '<div class="no-products"><p style="font-weight:700;margin:0 0 8px;">По вашему запросу ничего не найдено</p><p style="margin:0;color:#6b7280">Попробуйте изменить фильтры или добавить товар.</p></div>';
+      return;
+    }
 
-      const badges = document.createElement('div'); badges.className='badges'; const status = document.createElement('div'); status.className='badge ' + ((it.status==='approved')? 'ok' : (String(it.status).toLowerCase().indexOf('reject')!==-1? 'rej':'pending')); status.textContent = (it.status==='approved')? 'Подтвержён' : (String(it.status).toLowerCase().indexOf('reject')!==-1? 'Отклонён' : 'На модерации'); const avail = document.createElement('div'); avail.className='meta'; avail.style.background='#f3f5f8'; avail.style.padding='6px 8px'; avail.style.borderRadius='8px'; avail.style.color='#334155'; avail.textContent = 'Наличие: ' + (it.availability ? String(it.availability) : '0'); const added = document.createElement('div'); added.className='meta'; added.style.background='#f3f5f8'; added.style.padding='6px 8px'; added.style.borderRadius='8px'; added.style.color='#334155'; added.textContent = 'Добавлен: ' + (it.created_at ? new Date(it.created_at).toLocaleDateString() : '-'); badges.appendChild(status); badges.appendChild(avail); badges.appendChild(added); body.appendChild(badges);
+    const frag = document.createDocumentFragment();
 
-      const footer = document.createElement('div'); footer.className='card-footer'; const actions = document.createElement('div'); actions.className='actions'; const view = document.createElement('a'); view.className='btn-view'; view.href = '/mehanik/public/product.php?id='+encodeURIComponent(it.id); view.textContent = '👁 Просмотр'; actions.appendChild(view);
-      // Редактировать/удалять — только если текущий пользователь является владельцем
-      if(String(it.user_id) === String(window.currentUserId)){
-        const edit = document.createElement('a'); edit.className='btn-edit'; edit.href = '/mehanik/public/edit-product.php?id='+encodeURIComponent(it.id); edit.textContent = '✏ Редактировать'; actions.appendChild(edit);
-        const del = document.createElement('button'); del.className='btn-delete'; del.type='button'; del.textContent = '🗑 Удалить'; del.addEventListener('click', async function(){ if(!confirm('Удалить товар «'+(it.name||'')+'»?')) return; try{ const fd = new FormData(); fd.append('id', it.id); const resp = await fetch('/mehanik/api/delete-product.php', { method:'POST', credentials:'same-origin', body: fd }); if(resp.ok){ const j = await resp.json(); if(j && j.success){ alert('Удалено'); applyFilters(); } else { alert(j && j.error ? j.error : 'Ошибка при удалении'); } } else alert('Ошибка сети'); }catch(e){ alert('Ошибка: '+e.message); } }); actions.appendChild(del);
+    for(const it of items){
+      const card = document.createElement('article');
+      card.className = 'prod-card';
+      card.setAttribute('data-id', String(it.id || ''));
+
+      // thumb
+      const thumb = document.createElement('div');
+      thumb.className = 'thumb';
+      const a = document.createElement('a');
+      a.href = '/mehanik/public/product.php?id='+encodeURIComponent(it.id);
+      a.style.display='block'; a.style.width='100%'; a.style.height='100%';
+      const img = document.createElement('img');
+      img.alt = it.name || 'Товар';
+      img.src = (it.photo && (it.photo.indexOf('/')===0 || /^https?:\/\//i.test(it.photo))) ? it.photo : (it.photo ? (window.uploadsPrefix + it.photo) : window.noPhoto);
+      a.appendChild(img);
+      thumb.appendChild(a);
+
+      // body
+      const body = document.createElement('div'); body.className='card-body';
+
+      // top row: left(title/meta) + right(price/id)
+      const topRow = document.createElement('div'); topRow.className='price-row';
+      const left = document.createElement('div'); left.style.flex='1'; left.style.minWidth='0';
+      const title = document.createElement('div'); title.className='title'; title.textContent = it.name || 'Без названия';
+      title.title = it.name || '';
+      const meta = document.createElement('div'); meta.className='meta'; meta.textContent = it.manufacturer || (it.brand || '-') ;
+      left.appendChild(title); left.appendChild(meta);
+
+      // --- SKU: display without leading SKU- , add link + copy button ---
+      const rawSku = (it.sku || it.article || it.code || '').toString();
+      const displaySku = rawSku.replace(/^SKU-/i, '').trim();
+      if (displaySku) {
+        const skuWrap = document.createElement('div');
+        skuWrap.className = 'sku-wrap';
+
+        const skuLink = document.createElement('a');
+        skuLink.className = 'sku-link';
+        skuLink.href = it.url || ('/mehanik/public/product.php?id='+encodeURIComponent(it.id));
+        skuLink.textContent = displaySku;
+        skuLink.title = 'Перейти к товару';
+        skuWrap.appendChild(skuLink);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'btn-copy-sku';
+        copyBtn.textContent = '📋';
+        copyBtn.title = 'Копировать артикул';
+        copyBtn.addEventListener('click', function(e){
+          e.preventDefault();
+          const text = displaySku;
+          if (!text) return;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(()=> {
+              const prev = copyBtn.textContent;
+              copyBtn.textContent = '✓';
+              setTimeout(()=> copyBtn.textContent = prev, 1200);
+            }).catch(()=> fallbackCopy(text, copyBtn));
+          } else {
+            fallbackCopy(text, copyBtn);
+          }
+        });
+        skuWrap.appendChild(copyBtn);
+
+        left.appendChild(skuWrap);
       }
 
-      footer.appendChild(actions); const ownerWrap = document.createElement('div'); ownerWrap.style.textAlign='right'; ownerWrap.style.fontSize='.85rem'; ownerWrap.style.color='#6b7280'; footer.appendChild(ownerWrap);
+      function fallbackCopy(text, btn){
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'absolute';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand('copy');
+          document.body.removeChild(ta);
+          if (ok) {
+            const prev = btn.textContent;
+            btn.textContent = '✓';
+            setTimeout(()=> btn.textContent = prev, 1200);
+          } else {
+            alert('Не удалось скопировать артикул');
+          }
+        } catch(e) {
+          alert('Копирование не поддерживается в этом браузере');
+        }
+      }
 
-      card.appendChild(thumb); card.appendChild(body); card.appendChild(footer); container.appendChild(card);
+      const right = document.createElement('div'); right.style.textAlign='right'; right.style.minWidth='110px';
+      const price = document.createElement('div'); price.className='price';
+      price.textContent = it.price ? (Number(it.price).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' TMT') : '-';
+      const idMeta = document.createElement('div'); idMeta.className='meta'; idMeta.style.marginTop='6px'; idMeta.style.fontSize='.85rem'; idMeta.textContent = 'ID: ' + (it.id||'-');
+      right.appendChild(price); right.appendChild(idMeta);
+
+      topRow.appendChild(left); topRow.appendChild(right);
+      body.appendChild(topRow);
+
+      // badges (compact)
+      const badges = document.createElement('div'); badges.className='badges';
+      const statusText = (it.status==='approved')? 'Подтвержён' : (String(it.status).toLowerCase().indexOf('reject')!==-1? 'Отклонён' : 'На модерации');
+      const status = document.createElement('div'); status.className='badge ' + ((it.status==='approved')? 'ok' : (String(it.status).toLowerCase().indexOf('reject')!==-1? 'rej':'pending'));
+      status.textContent = statusText;
+      const avail = document.createElement('div'); avail.className='meta'; avail.style.background='#f3f5f8'; avail.style.padding='6px 8px'; avail.style.borderRadius='8px'; avail.style.color='#334155'; avail.textContent = 'Наличие: ' + (it.availability ? String(it.availability) : '0');
+      const added = document.createElement('div'); added.className='meta'; added.style.background='#f3f5f8'; added.style.padding='6px 8px'; added.style.borderRadius='8px'; added.style.color='#334155'; added.textContent = 'Добавлен: ' + (it.created_at ? new Date(it.created_at).toLocaleDateString() : '-');
+      badges.appendChild(status); badges.appendChild(avail); badges.appendChild(added);
+      body.appendChild(badges);
+
+      // footer / actions
+      const footer = document.createElement('div'); footer.className='card-footer';
+      const actions = document.createElement('div'); actions.className='actions';
+
+      const view = document.createElement('a'); view.className='btn-view'; view.href = '/mehanik/public/product.php?id='+encodeURIComponent(it.id); view.textContent = '👁 Просмотр'; actions.appendChild(view);
+
+      const superBtn = document.createElement('button'); superBtn.className='btn-super'; superBtn.type='button'; superBtn.setAttribute('aria-label','Super выделение'); superBtn.textContent = '★ Super';
+      superBtn.addEventListener('click', function(e){ e.preventDefault(); alert('Super: заглушка — позже подключим оплату/выделение.'); });
+      actions.appendChild(superBtn);
+
+      const premiumBtn = document.createElement('button'); premiumBtn.className='btn-premium'; premiumBtn.type='button'; premiumBtn.setAttribute('aria-label','Premium выделение'); premiumBtn.textContent = '✨ Premium';
+      premiumBtn.addEventListener('click', function(e){ e.preventDefault(); alert('Premium: заглушка — позже подключим оплату/выделение.'); });
+      actions.appendChild(premiumBtn);
+
+      if(String(it.user_id) === String(window.currentUserId)){
+        const edit = document.createElement('a'); edit.className='btn-edit'; edit.href = '/mehanik/public/edit-product.php?id='+encodeURIComponent(it.id); edit.textContent = '✏ Редактировать'; actions.appendChild(edit);
+        const del = document.createElement('button'); del.className='btn-delete'; del.type='button'; del.textContent = '🗑 Удалить';
+        del.addEventListener('click', async function(){
+          if(!confirm('Удалить товар «'+(it.name||'')+'»?')) return;
+          try{
+            const fd = new FormData(); fd.append('id', it.id);
+            const resp = await fetch('/mehanik/api/delete-product.php', { method:'POST', credentials:'same-origin', body: fd });
+            if(resp.ok){ const j = await resp.json(); if(j && j.success){ alert('Удалено'); applyFilters(); } else { alert(j && j.error ? j.error : 'Ошибка при удалении'); } } else alert('Ошибка сети');
+          }catch(e){ alert('Ошибка: '+(e && e.message ? e.message : e)); }
+        });
+        actions.appendChild(del);
+      }
+
+      footer.appendChild(actions);
+      const ownerWrap = document.createElement('div'); ownerWrap.style.textAlign='right'; ownerWrap.style.fontSize='.85rem'; ownerWrap.style.color='#6b7280'; footer.appendChild(ownerWrap);
+
+      card.appendChild(thumb); card.appendChild(body); card.appendChild(footer);
+      frag.appendChild(card);
     }
+
+    container.appendChild(frag);
+
   }
 
   // события

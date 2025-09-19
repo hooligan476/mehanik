@@ -1,5 +1,5 @@
 <?php
-// mehanik/public/add-product.php
+// mehanik/public/add-product.php (updated) — добавлен селект доставки: Да/Нет и поле цены доставки
 require_once __DIR__ . '/../middleware.php';
 require_auth();
 require_once __DIR__ . '/../db.php';
@@ -63,6 +63,10 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
     .progress-bar > i { display:block; height:100%; width:0%; background:#0b57a4; }
     .progress-text { min-width:60px; text-align:right; font-size:13px; color:#374151; }
     @media (max-width:800px){ .row { flex-direction:column; } .preview-item{ width:80px;height:80px } }
+
+    /* delivery field small helper */
+    .delivery-row { display:flex; gap:10px; align-items:center; margin-top:8px; }
+    .delivery-price { width:180px; }
   </style>
 </head>
 <body>
@@ -108,6 +112,17 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
           <input id="p_price" type="number" step="0.01" name="price" placeholder="Цена" required min="0">
           <div class="error-text" id="err_price">Введите положительную цену</div>
         </div>
+      </div>
+
+      <!-- DELIVERY: yes/no + price (shown only if yes) -->
+      <label for="p_delivery">Доставка</label>
+      <div class="delivery-row">
+        <select id="p_delivery" name="delivery">
+          <option value="0">Нет</option>
+          <option value="1">Да</option>
+        </select>
+        <input id="p_delivery_price" class="delivery-price" type="number" step="0.01" name="delivery_price" placeholder="Цена доставки" min="0" style="display:none">
+        <div id="err_delivery_price" class="error-text" style="display:none">Введите цену доставки</div>
       </div>
 
       <label for="ap_brand">Бренд *</label>
@@ -180,6 +195,9 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
   const modelSel = document.getElementById('ap_model');
   const cpartSel = document.getElementById('ap_cpart');
   const compSel = document.getElementById('ap_comp');
+  const deliverySel = document.getElementById('p_delivery');
+  const deliveryPriceInput = document.getElementById('p_delivery_price');
+  const errDeliveryPrice = document.getElementById('err_delivery_price');
 
   async function loadModels(brandId) {
     modelSel.innerHTML = '<option value="">Загрузка...</option>';
@@ -225,6 +243,20 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
     cpartSel.addEventListener('change', () => loadComponents(cpartSel.value));
     if (cpartSel.value) loadComponents(cpartSel.value);
   }
+
+  // Toggle delivery price visibility
+  function onDeliveryChange() {
+    if (!deliverySel) return;
+    if (deliverySel.value === '1') {
+      deliveryPriceInput.style.display = '';
+    } else {
+      deliveryPriceInput.style.display = 'none';
+      deliveryPriceInput.value = '';
+      errDeliveryPrice.style.display = 'none';
+    }
+  }
+  deliverySel && deliverySel.addEventListener('change', onDeliveryChange);
+  onDeliveryChange();
 
   // Photos handling
   const dropzone = document.getElementById('dropzone');
@@ -361,6 +393,9 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
     const brand = document.getElementById('ap_brand').value;
     const model = document.getElementById('ap_model').value;
     const rating = parseFloat(document.getElementById('p_rating').value);
+    const delivery = document.getElementById('p_delivery').value;
+    const deliveryPrice = parseFloat(document.getElementById('p_delivery_price').value);
+
     let ok = true;
     showError('err_name', false);
     showError('err_price', false);
@@ -368,12 +403,16 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
     showError('err_model', false);
     showError('err_rating', false);
     showError('err_photos', false);
+    showError('err_delivery_price', false);
 
     if (!name) { showError('err_name', true); ok = false; }
     if (!brand) { showError('err_brand', true); ok = false; }
     if (!model) { showError('err_model', true); ok = false; }
     if (isNaN(price) || price <= 0) { showError('err_price', true); ok = false; }
     if (isNaN(rating) || rating < 0.1 || rating > 9.9) { showError('err_rating', true); ok = false; }
+    if (delivery === '1') {
+      if (isNaN(deliveryPrice) || deliveryPrice < 0) { showError('err_delivery_price', true); ok = false; }
+    }
     if (!ok) return;
 
     // Build FormData manually: take all non-file inputs from form
@@ -383,6 +422,7 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
       if (!el.name) return;
       // skip photos input (we'll append manually) and skip fakeuser
       if (el.name === 'photos[]' || el.type === 'file' && el.name === 'photos[]') return;
+      if (el.name === 'delivery_price' && delivery !== '1') return; // don't send delivery price if delivery=no
       if (el.type === 'file') {
         if (el.files && el.files.length) fd.append(el.name, el.files[0]);
         return;

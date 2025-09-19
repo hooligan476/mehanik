@@ -29,6 +29,11 @@ if (!($currentRole === 'admin' || ($currentUserId !== null && (int)$currentUserI
     die("У вас нет прав для редактирования этого товара.");
 }
 
+// Подготовим отображаемый SKU (без префикса SKU-)
+$rawSku = trim((string)($product['sku'] ?? ''));
+$displaySku = $rawSku === '' ? '' : preg_replace('/^SKU-/i', '', $rawSku);
+$productUrl = '/mehanik/public/product.php?id=' . urlencode($id);
+
 // Обработка сохранения
 $errors = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -78,7 +83,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($mime === 'image/webp') $ext = '.webp';
 
                 // уникальное имя
-                $baseName = time() . '_' . bin2hex(random_bytes(6));
+                try {
+                  $rand = bin2hex(random_bytes(6));
+                } catch (Throwable $_) {
+                  $rand = bin2hex(mt_rand());
+                }
+                $baseName = time() . '_' . $rand;
                 $fileName = $baseName . $ext;
                 $targetFile = $uploadDir . $fileName;
 
@@ -162,6 +172,11 @@ require_once __DIR__ . '/header.php';
     .btn-primary { background:linear-gradient(180deg,#0b57a4,#074b82); color:#fff; padding:10px 12px; border-radius:8px; border:0; cursor:pointer; font-weight:700; }
     .btn-secondary { padding:10px 12px; border-radius:8px; border:1px solid #e6e9ef; background:#fff; cursor:pointer; }
     .errors { background:#fff6f6; color:#9b1c1c; padding:10px; border-radius:8px; margin-bottom:10px; }
+
+    /* SKU display row */
+    .sku-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+    .sku-text { font-weight:700; color:#0b57a4; text-decoration:underline; }
+    .sku-copy { padding:6px 8px; border-radius:6px; border:1px solid #e6e9ef; background:#fff; cursor:pointer; }
   </style>
 </head>
 <body>
@@ -179,6 +194,17 @@ require_once __DIR__ . '/header.php';
   <?php endif; ?>
 
   <form method="post" enctype="multipart/form-data" class="card">
+    <!-- SKU (display only, copy button) -->
+    <label>Артикул</label>
+    <?php if ($displaySku !== ''): ?>
+      <div class="sku-row">
+        <a class="sku-text" id="skuLink" href="<?= htmlspecialchars($productUrl) ?>" target="_blank" rel="noopener noreferrer"><?= htmlspecialchars($displaySku) ?></a>
+        <button type="button" id="copySkuBtn" class="sku-copy" aria-label="Копировать артикул">📋</button>
+      </div>
+    <?php else: ?>
+      <div class="muted" style="margin-top:6px;">Артикул отсутствует</div>
+    <?php endif; ?>
+
     <label>Название</label>
     <input type="text" name="name" value="<?= htmlspecialchars($product['name']) ?>" required>
 
@@ -217,5 +243,49 @@ require_once __DIR__ . '/header.php';
     </div>
   </form>
 </div>
+
+<script>
+// copy SKU button (Clipboard API + fallback)
+(function(){
+  const copyBtn = document.getElementById('copySkuBtn');
+  const skuLink = document.getElementById('skuLink');
+  if (!copyBtn || !skuLink) return;
+  copyBtn.addEventListener('click', function(){
+    const text = skuLink.textContent.trim();
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(()=> {
+        const prev = copyBtn.textContent;
+        copyBtn.textContent = '✓';
+        setTimeout(()=> copyBtn.textContent = prev, 1200);
+      }).catch(()=> fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  });
+
+  function fallbackCopy(text) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'absolute';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) {
+        copyBtn.textContent = '✓';
+        setTimeout(()=> copyBtn.textContent = '📋', 1200);
+      } else {
+        alert('Не удалось скопировать артикул');
+      }
+    } catch(e) {
+      alert('Копирование не поддерживается в этом браузере');
+    }
+  }
+})();
+</script>
 </body>
 </html>

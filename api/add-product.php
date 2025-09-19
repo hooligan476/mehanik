@@ -41,11 +41,15 @@ if (!$name || $price <= 0 || !$brand_id || !$model_id) {
     exit;
 }
 
-// sku
+// -------------------------------------------------
+// SKU generation — store *without* "SKU-" prefix
+// -------------------------------------------------
 try {
-    $sku = 'SKU-' . strtoupper(bin2hex(random_bytes(4)));
+    // create 8-символьный HEX код (e.g. A1B2C3D4)
+    $sku = strtoupper(bin2hex(random_bytes(4)));
 } catch (Throwable $e) {
-    $sku = 'SKU-' . strtoupper(dechex(mt_rand(0, 0x7FFFFFFF)));
+    // fallback: generate pseudo-random hex and pad to 8 chars
+    $sku = strtoupper(str_pad(dechex(mt_rand(0, 0x7FFFFFFF)), 8, '0', STR_PAD_LEFT));
 }
 
 // upload dir (web-accessible path stored as prefix, filesystem path for saving)
@@ -238,7 +242,7 @@ try {
 
         if ($isAjax) {
             header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['ok'=>true,'id'=>$newId,'sku'=>$sku]);
+            echo json_encode(['ok'=>true,'id'=>$newId,'sku'=>$sku]); // sku without SKU- prefix
             exit;
         } else {
             header('Location: /mehanik/public/product.php?id=' . (int)$newId);
@@ -296,7 +300,7 @@ try {
 
         if ($isAjax) {
             header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['ok'=>true,'id'=>$newId,'sku'=>$sku]);
+            echo json_encode(['ok'=>true,'id'=>$newId,'sku'=>$sku]); // sku without SKU- prefix
             exit;
         } else {
             header('Location: /mehanik/public/product.php?id=' . (int)$newId);
