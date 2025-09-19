@@ -140,6 +140,7 @@ if ($mainPhoto) {
 function esc($v) { return htmlspecialchars((string)($v ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
 $rejectReason = $car['reject_reason'] ?? '';
+$car_sku = trim((string)($car['sku'] ?? ''));
 ?>
 <!doctype html>
 <html lang="ru">
@@ -173,6 +174,11 @@ $rejectReason = $car['reject_reason'] ?? '';
 .desc { margin-top:12px; padding:12px; background:#fafbff; border-radius:8px; border:1px dashed #e7e9f3; white-space:pre-wrap; }
 .contact { margin-top:12px; }
 .small { font-size:.95rem; color:#6b7280; }
+
+/* SKU styles */
+.sku-row { display:flex; gap:8px; align-items:center; margin-top:6px; }
+.sku-text { font-weight:700; color:#0b57a4; text-decoration:underline; }
+.sku-copy { padding:6px 8px; border-radius:6px; border:1px solid #e6e9ef; background:#fff; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -232,6 +238,19 @@ $rejectReason = $car['reject_reason'] ?? '';
         <div class="row-item"><strong>Топливо:</strong> <?= esc($car['fuel'] ?? '-') ?></div>
       </div>
 
+      <!-- SKU display -->
+      <div style="margin-top:12px;">
+        <strong>Артикул:</strong>
+        <?php if ($car_sku !== ''): ?>
+          <div class="sku-row">
+            <a id="skuLink" class="sku-text" href="#"><?= esc($car_sku) ?></a>
+            <button type="button" id="copySkuBtn" class="sku-copy" aria-label="Копировать артикул">📋</button>
+          </div>
+        <?php else: ?>
+          <div class="small muted" style="margin-top:6px;">—</div>
+        <?php endif; ?>
+      </div>
+
       <?php if (!empty($car['description'])): ?>
         <div class="section-title" style="margin-top:12px;font-weight:700;">Описание</div>
         <div class="desc"><?= nl2br(esc($car['description'])) ?></div>
@@ -265,15 +284,56 @@ $rejectReason = $car['reject_reason'] ?? '';
 (function(){
   const mainImg = document.getElementById('mainPhotoImg');
   const thumbs = document.getElementById('thumbs');
-  if (!thumbs) return;
-  thumbs.addEventListener('click', function(e){
-    const t = e.target.closest('.thumb');
-    if (!t) return;
-    const src = t.getAttribute('data-src');
-    if (src && mainImg) mainImg.src = src;
-    // optional: scroll to main photo
-    mainImg.scrollIntoView({behavior:'smooth', block:'center'});
-  });
+  if (thumbs) {
+    thumbs.addEventListener('click', function(e){
+      const t = e.target.closest('.thumb');
+      if (!t) return;
+      const src = t.getAttribute('data-src');
+      if (src && mainImg) mainImg.src = src;
+      mainImg.scrollIntoView({behavior:'smooth', block:'center'});
+    });
+  }
+
+  // copy SKU
+  (function(){
+    const copyBtn = document.getElementById('copySkuBtn');
+    const skuLink = document.getElementById('skuLink');
+    if (!copyBtn || !skuLink) return;
+    copyBtn.addEventListener('click', function(){
+      const text = skuLink.textContent.trim();
+      if (!text) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(()=> {
+          const prev = copyBtn.textContent;
+          copyBtn.textContent = '✓';
+          setTimeout(()=> copyBtn.textContent = prev, 1200);
+        }).catch(()=> fallbackCopy(text));
+      } else {
+        fallbackCopy(text);
+      }
+    });
+    function fallbackCopy(text) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'absolute';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) {
+          copyBtn.textContent = '✓';
+          setTimeout(()=> copyBtn.textContent = '📋', 1200);
+        } else {
+          alert('Не удалось скопировать артикул');
+        }
+      } catch(e) {
+        alert('Копирование не поддерживается в этом браузере');
+      }
+    }
+  })();
 })();
 </script>
 </body>

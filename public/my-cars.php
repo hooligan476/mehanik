@@ -1,5 +1,5 @@
 <?php
-// public/my-cars.php — обновлённая версия
+// public/my-cars.php — обновлённая версия с показом артикула (SKU) в карточках
 require_once __DIR__ . '/../middleware.php';
 require_auth();
 require_once __DIR__ . '/../db.php';
@@ -63,6 +63,11 @@ $err = $_GET['err'] ?? '';
     .notice{padding:10px;border-radius:8px;margin-bottom:12px}
     .notice.ok{background:#eafaf0;border:1px solid #cfead1;color:#116530}
     .notice.err{background:#fff6f6;border:1px solid #f5c2c2;color:#8a1f1f}
+
+    /* SKU in card */
+    .sku-row { display:flex; gap:8px; align-items:center; margin-top:6px; }
+    .sku-text { font-weight:700; color:#0b57a4; text-decoration:underline; font-size:.95rem; }
+    .sku-copy { padding:6px 8px; border-radius:6px; border:1px solid #e6e9ef; background:#fff; cursor:pointer; font-weight:700; }
   </style>
 </head>
 <body>
@@ -93,7 +98,8 @@ $err = $_GET['err'] ?? '';
 
       <div class="form-row">
         <label for="vehicle_body">Кузов</label>
-        <select id="vehicle_body"><option value="">Все кузова</option></select>
+        <!-- теперь по умолчанию disabled -->
+        <select id="vehicle_body" disabled><option value="">Сначала выберите тип</option></select>
       </div>
 
       <div class="form-row">
@@ -193,7 +199,7 @@ window.fetchJSON = async function(url, opts = {}) {
   const container = document.getElementById('products');
 
   // локальное хранилище lookup'ов
-  let lookups = { brands: [], modelsByBrand: {}, vehicle_types: [], vehicle_bodies: [], fuel_types: [], gearboxes: [] };
+  let lookups = { brands: [], modelsByBrand: {}, vehicle_types: [], vehicle_bodies: {}, fuel_types: [], gearboxes: [] };
 
   function setSelectOptions(sel, items, placeholderText=''){
     if (!sel) return;
@@ -215,6 +221,26 @@ window.fetchJSON = async function(url, opts = {}) {
     setSelectOptions(modelEl, models, 'Все модели'); modelEl.disabled = false;
   }
 
+  // NEW: update body options depending on vehicle type
+  function updateBodyOptions(typeKey){
+    if (!typeKey) {
+      vehicleBodyEl.innerHTML = '<option value="">Сначала выберите тип</option>';
+      vehicleBodyEl.disabled = true;
+      return;
+    }
+    // lookups.vehicle_bodies can be either an array (flat) or object keyed by type
+    let items = [];
+    if (Array.isArray(lookups.vehicle_bodies)) {
+      // flat array -> show all
+      items = lookups.vehicle_bodies;
+    } else if (lookups.vehicle_bodies && typeof lookups.vehicle_bodies === 'object') {
+      // object keyed by type
+      items = lookups.vehicle_bodies[typeKey] || [];
+    }
+    setSelectOptions(vehicleBodyEl, items, 'Все кузова');
+    vehicleBodyEl.disabled = false;
+  }
+
   function mergeLookups(data){
     if (!data) return;
     if (Array.isArray(data.brands)) lookups.brands = data.brands;
@@ -233,8 +259,10 @@ window.fetchJSON = async function(url, opts = {}) {
         const seen = new Set(); lookups.modelsByBrand[k] = lookups.modelsByBrand[k].filter(x=>{ if (seen.has(x.name)) return false; seen.add(x.name); return true; });
       }
     }
+    // vehicle types & bodies
     if (Array.isArray(data.vehicle_types)) lookups.vehicle_types = data.vehicle_types;
-    if (Array.isArray(data.vehicle_bodies)) lookups.vehicle_bodies = data.vehicle_bodies;
+    // vehicle_bodies might be array or object keyed by type depending on API — preserve shape
+    if (data.vehicle_bodies) lookups.vehicle_bodies = data.vehicle_bodies;
     if (Array.isArray(data.fuel_types)) lookups.fuel_types = data.fuel_types;
     if (Array.isArray(data.gearboxes)) lookups.gearboxes = data.gearboxes;
   }
@@ -251,10 +279,23 @@ window.fetchJSON = async function(url, opts = {}) {
     }
     setSelectOptions(brandEl, lookups.brands, 'Все бренды');
     setSelectOptions(vehicleTypeEl, lookups.vehicle_types, 'Все типы');
-    setSelectOptions(vehicleBodyEl, lookups.vehicle_bodies, 'Все кузова');
+
+    // vehicle bodies: we DO NOT enable body select here — use updateBodyOptions to decide
+    // if lookups.vehicle_bodies is flat array, pass that; if it's keyed object, updateBodyOptions will pick correct subset
+    if (Array.isArray(lookups.vehicle_bodies)) {
+      setSelectOptions(vehicleBodyEl, [], 'Сначала выберите тип'); // keep empty placeholder; updateBodyOptions will enable when needed
+      vehicleBodyEl.disabled = true;
+    } else {
+      // object keyed by type — still keep disabled until type chosen
+      vehicleBodyEl.innerHTML = '<option value="">Сначала выберите тип</option>';
+      vehicleBodyEl.disabled = true;
+    }
+
     setSelectOptions(fuelTypeEl, lookups.fuel_types, 'Любое');
     setSelectOptions(gearboxEl, lookups.gearboxes, 'Любая');
     updateModelOptions(brandEl.value);
+    // ensure body state consistent with any preselected value
+    updateBodyOptions(vehicleTypeEl.value);
   }
 
   function collectFilters(){
@@ -268,6 +309,8 @@ window.fetchJSON = async function(url, opts = {}) {
     };
     // remove empty
     Object.keys(filters).forEach(k=>{ if (filters[k]==='') delete filters[k]; });
+    // if vehicle_type is not provided, ignore vehicle_body even if set (defensive)
+    if (!filters.vehicle_type && filters.vehicle_body) delete filters.vehicle_body;
     return filters;
   }
 
@@ -298,7 +341,7 @@ window.fetchJSON = async function(url, opts = {}) {
       const card = document.createElement('article'); card.className = 'card';
       const thumb = document.createElement('div'); thumb.className = 'thumb';
       const a = document.createElement('a'); a.href = '/mehanik/public/car.php?id='+encodeURIComponent(it.id);
-      const img = document.createElement('img'); img.alt = it.brand + ' ' + (it.model||'');
+      const img = document.createElement('img'); img.alt = (it.brand || '') + ' ' + (it.model||'');
       img.src = (it.photo && (it.photo.indexOf('/')===0 || /^https?:\/\//i.test(it.photo))) ? it.photo : (it.photo ? (window.uploadsPrefix + it.photo) : window.noPhoto);
       a.appendChild(img); thumb.appendChild(a);
 
@@ -309,12 +352,44 @@ window.fetchJSON = async function(url, opts = {}) {
       const meta = document.createElement('div'); meta.className='meta'; meta.textContent = ((it.year)?(it.year+' г. · '):'') + ((it.mileage)?(Number(it.mileage).toLocaleString()+' км · '):'') + (it.body||'-');
       left.appendChild(title); left.appendChild(meta);
       const right = document.createElement('div'); right.style.textAlign='right';
-      const price = document.createElement('div'); price.className='price'; price.textContent = (it.price ? (Number(it.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits:2}) + ' TMT') : '-');
+      const price = document.createElement('div'); price.className = 'price'; price.textContent = (it.price ? (Number(it.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits:2}) + ' TMT') : '-');
       const idMeta = document.createElement('div'); idMeta.className='meta'; idMeta.style.marginTop='8px'; idMeta.style.fontSize='.9rem'; idMeta.textContent = 'ID: ' + (it.id||'-');
       right.appendChild(price); right.appendChild(idMeta);
       row.appendChild(left); row.appendChild(right);
 
       body.appendChild(row);
+
+      // SKU row (артикул)
+      const skuRaw = (it.sku || it.article || it.code || '') + '';
+      const skuWrap = document.createElement('div');
+      skuWrap.style.marginTop = '6px';
+      if (skuRaw && skuRaw.trim() !== '') {
+        const skuRow = document.createElement('div'); skuRow.className = 'sku-row';
+        const skuLink = document.createElement('a'); skuLink.className = 'sku-text'; skuLink.href = '/mehanik/public/car.php?id='+encodeURIComponent(it.id); skuLink.textContent = skuRaw;
+        skuLink.title = 'Перейти к объявлению';
+        const copyBtn = document.createElement('button'); copyBtn.type='button'; copyBtn.className='sku-copy'; copyBtn.textContent='📋'; copyBtn.title='Копировать артикул';
+        copyBtn.addEventListener('click', function(ev){
+          ev.preventDefault();
+          const text = skuRow.querySelector('.sku-text').textContent.trim();
+          if (!text) return;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(()=> {
+              const prev = copyBtn.textContent;
+              copyBtn.textContent = '✓';
+              setTimeout(()=> copyBtn.textContent = prev, 1200);
+            }).catch(()=> fallbackCopy(text, copyBtn));
+          } else {
+            fallbackCopy(text, copyBtn);
+          }
+        });
+        skuRow.appendChild(skuLink);
+        skuRow.appendChild(copyBtn);
+        skuWrap.appendChild(skuRow);
+      } else {
+        const emptySku = document.createElement('div'); emptySku.className='meta'; emptySku.textContent = 'Артикул: —';
+        skuWrap.appendChild(emptySku);
+      }
+      body.appendChild(skuWrap);
 
       const badges = document.createElement('div'); badges.className='badges';
       const status = document.createElement('div'); status.className='badge ' + ((it.status==='approved')? 'ok' : (it.status==='rejected'? 'rej':'pending'));
@@ -337,9 +412,9 @@ window.fetchJSON = async function(url, opts = {}) {
           try{
             const fd = new FormData(); fd.append('id', it.id);
             const resp = await fetch('/mehanik/api/delete-car.php', { method:'POST', credentials:'same-origin', body: fd });
-            if (resp.ok){ const j = await resp.json(); if (j && j.success) { alert('Удалено'); applyFilters(); } else { alert(j && j.error ? j.error : 'Ошибка при удалении'); } }
+            if (resp.ok){ const j = await resp.json(); if (j && (j.success||j.ok)) { alert('Удалено'); applyFilters(); } else { alert(j && j.error ? j.error : 'Ошибка при удалении'); } }
             else { alert('Ошибка сети'); }
-          }catch(e){ alert('Ошибка: '+e.message); }
+          }catch(e){ alert('Ошибка: '+(e.message||e)); }
         });
         actions.appendChild(delBtn);
       }
@@ -354,13 +429,54 @@ window.fetchJSON = async function(url, opts = {}) {
     }
   }
 
+  // fallbackCopy helper for per-card copy buttons
+  function fallbackCopy(text, btn){
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'absolute';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) {
+        const prev = btn.textContent;
+        btn.textContent = '✓';
+        setTimeout(()=> btn.textContent = prev, 1200);
+      } else {
+        alert('Не удалось скопировать артикул');
+      }
+    } catch(e) {
+      alert('Копирование не поддерживается в этом браузере');
+    }
+  }
+
   // события
   brandEl.addEventListener('change', function(){ updateModelOptions(this.value); applyFilters(); });
   modelEl.addEventListener('change', applyFilters);
-  [vehicleTypeEl, vehicleBodyEl, fuelTypeEl, gearboxEl, yearFromEl, yearToEl, priceFromEl, priceToEl].forEach(el=>{ if(!el) return; el.addEventListener('change', applyFilters); });
+
+  // при смене типа ТС — обновляем кузова и применяем фильтр
+  if (vehicleTypeEl) {
+    vehicleTypeEl.addEventListener('change', function(){
+      updateBodyOptions(this.value);
+      applyFilters();
+    });
+  }
+
+  // остальные элементы — просто применяют фильтры
+  [vehicleBodyEl, fuelTypeEl, gearboxEl, yearFromEl, yearToEl, priceFromEl, priceToEl].forEach(el=>{ if(!el) return; el.addEventListener('change', applyFilters); });
   searchEl.addEventListener('input', (function(){ let t; return function(){ clearTimeout(t); t=setTimeout(()=>applyFilters(),300); }; })());
   onlyMineEl.addEventListener('change', applyFilters);
-  clearBtn.addEventListener('click', function(e){ e.preventDefault(); [brandEl,modelEl,vehicleTypeEl,vehicleBodyEl,fuelTypeEl,gearboxEl,yearFromEl,yearToEl,priceFromEl,priceToEl,searchEl].forEach(el=>{ if(!el) return; if(el.tagName.toLowerCase()==='select') el.selectedIndex=0; else el.value=''; }); onlyMineEl.checked=true; updateModelOptions(''); applyFilters(); });
+  clearBtn.addEventListener('click', function(e){ e.preventDefault();
+    [brandEl,modelEl,vehicleTypeEl,vehicleBodyEl,fuelTypeEl,gearboxEl,yearFromEl,yearToEl,priceFromEl,priceToEl,searchEl].forEach(el=>{ if(!el) return; if(el.tagName.toLowerCase()==='select') el.selectedIndex=0; else el.value=''; });
+    onlyMineEl.checked=true;
+    // сброс зависимых селектов
+    updateModelOptions('');
+    updateBodyOptions('');
+    applyFilters();
+  });
 
   // инициализация
   (async function init(){

@@ -288,7 +288,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // If no errors - insert
     if (empty($errors)) {
         try {
-            // columns and values arrays
+            // columns and values arrays (NOTE: sku is NOT included here; will be generated after insert)
             $cols = [
                 'user_id','brand','model','year','body','mileage','transmission','fuel','price','photo','description','contact_phone'
             ];
@@ -306,7 +306,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $description,
                 $contact_phone
             ];
-            $types = 'isssisisdsss'; // corresponds to values above
+            // types for bind_param corresponding to $values above:
+            // user_id(i), brand(s), model(s), year(i), body(s), mileage(i), transmission(s), fuel(s), price(d), photo(s), description(s), contact_phone(s)
+            $types = 'issisissdsss';
 
             if ($useVinColumn) {
                 $cols[] = 'vin';
@@ -352,7 +354,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $newId = $stmt->insert_id;
                 $stmt->close();
 
-                if ($isAjax) jsonOk(['id'=>$newId]);
+                // --- generate SKU automatically and save it ---
+                // format: CAR-000123 (6 digits padded)
+                $skuGenerated = 'CAR-' . str_pad((string)$newId, 6, '0', STR_PAD_LEFT);
+                $up = $mysqli->prepare("UPDATE cars SET sku = ? WHERE id = ? LIMIT 1");
+                if ($up) {
+                    $up->bind_param('si', $skuGenerated, $newId);
+                    $up->execute();
+                    $up->close();
+                }
+
+                if ($isAjax) jsonOk(['id'=>$newId, 'sku'=>$skuGenerated]);
                 header('Location: ' . $basePublic . '/my-cars.php?msg=' . urlencode('Автомобиль добавлен и отправлен на модерацию.'));
                 exit;
             } elseif (isset($pdo) && $pdo instanceof PDO) {
@@ -367,9 +379,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $sql2 = "INSERT INTO cars (" . implode(',', $insertCols) . ", created_at) VALUES (" . implode(',', array_keys($params)) . ", NOW())";
                 $st = $pdo->prepare($sql2);
-                if (!$st->execute(array_values($params))) throw new Exception('Execute failed (PDO)');
+                if (!$st->execute($params)) throw new Exception('Execute failed (PDO)');
                 $newId = (int)$pdo->lastInsertId();
-                if ($isAjax) jsonOk(['id'=>$newId]);
+
+                // generate SKU and update
+                $skuGenerated = 'CAR-' . str_pad((string)$newId, 6, '0', STR_PAD_LEFT);
+                $upd = $pdo->prepare("UPDATE cars SET sku = :sku WHERE id = :id");
+                $upd->execute([':sku' => $skuGenerated, ':id' => $newId]);
+
+                if ($isAjax) jsonOk(['id'=>$newId, 'sku'=>$skuGenerated]);
                 header('Location: ' . $basePublic . '/my-cars.php?msg=' . urlencode('Автомобиль добавлен и отправлен на модерацию.'));
                 exit;
             } else {
@@ -396,7 +414,7 @@ function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES|ENT_SUBSTITUTE, '
   <link rel="stylesheet" href="/mehanik/assets/css/header.css">
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
   <style>
-    /* локальные стили */
+    /* локальные стили (тот же CSS что был раньше) */
     .page { max-width:1100px; margin:18px auto; padding:14px; box-sizing:border-box; }
     .card { background:#fff; border-radius:10px; box-shadow:0 8px 24px rgba(2,6,23,0.06); overflow:hidden; }
     .card-body { padding:18px; }
@@ -488,6 +506,8 @@ function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES|ENT_SUBSTITUTE, '
             <input id="vin" type="text" name="vin" placeholder="VIN (если есть)">
           </div>
 
+          <!-- NOTE: поле Артикул удалено — SKU генерируется автоматически -->
+
           <div>
             <label class="block">Пробег (км)</label>
             <input type="number" name="mileage" min="0" placeholder="например 120000">
@@ -551,10 +571,9 @@ function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES|ENT_SUBSTITUTE, '
 </div>
 
 <script>
+/* (тот же клиентский JS, что был раньше) */
 (function(){
-  // Preloaded data from server: map vehicle_type_value => bodies[]
   window.VEHICLE_BODIES_BY_TYPE = <?= json_encode($vehicle_bodies_js, JSON_UNESCAPED_UNICODE) ?>;
-
   const brandEl = document.getElementById('brand');
   const modelEl = document.getElementById('model');
   const vehicleTypeEl = document.getElementById('vehicle_type');
@@ -583,7 +602,6 @@ function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES|ENT_SUBSTITUTE, '
     if (!typeValue) return;
     const items = window.VEHICLE_BODIES_BY_TYPE[typeValue] || [];
     if (items.length === 0) {
-      // try API fallback
       fetch(`/mehanik/api/get-bodies.php?vehicle_type=${encodeURIComponent(typeValue)}`)
         .then(r => r.ok ? r.json() : Promise.reject('no') )
         .then(data => {
@@ -604,7 +622,7 @@ function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES|ENT_SUBSTITUTE, '
   if (brandEl) brandEl.addEventListener('change', () => loadModels(brandEl.value));
   if (vehicleTypeEl) vehicleTypeEl.addEventListener('change', () => populateBodiesFor(vehicleTypeEl.value));
 
-  // photos + main selection
+  // photos + main selection (same as before)
   const dropzone = document.getElementById('dropzone');
   const photosInput = document.getElementById('p_photos');
   const previews = document.getElementById('previews');
