@@ -194,12 +194,23 @@ $displaySku = $rawSku === '' ? '' : preg_replace('/^SKU-/i', '', $rawSku);
 .section-title { margin:18px 0 8px; font-size:1.05rem; font-weight:700; }
 .desc { background:#fafbff; border:1px dashed #e7e9f3; border-radius:12px; padding:14px; }
 .logo { display:block; margin-bottom:12px; }
-.btn { display:inline-block; padding:8px 16px; background:#116b1d; color:#fff; border-radius:6px; text-decoration:none; margin-top:12px; }
+.btn { display:inline-block; padding:8px 16px; background:#116b1d; color:#fff; border-radius:6px; text-decoration:none; margin-top:12px; border: none; cursor: pointer; }
 
 /* SKU row styles */
 .sku-row { display:flex; gap:10px; align-items:center; }
 .sku-text { font-weight:700; color:#0b57a4; text-decoration:underline; }
 .sku-copy { padding:6px 8px; border-radius:6px; border:1px solid #e6e9ef; background:#fff; cursor:pointer; }
+
+/* Super / Premium buttons styles */
+.btn-super { background:#f59e0b; color:#101010; }
+.btn-premium { background:#8b5cf6; color:#fff; }
+
+/* small spacing on mobile */
+@media (max-width: 600px) {
+  .sku-row { flex-direction: column; align-items:flex-start; gap:6px; }
+  .btn { display:block; width:100%; text-align:center; }
+  .btn + .btn { margin-top:8px; }
+}
 </style>
 </head>
 <body>
@@ -303,6 +314,15 @@ $displaySku = $rawSku === '' ? '' : preg_replace('/^SKU-/i', '', $rawSku);
 
       <div style="margin-top:16px;">
         <a class="btn" href="/mehanik/public/index.php">⬅ Назад к каталогу</a>
+
+        <!-- Добавлены кнопки Super / Premium -->
+        <button type="button" id="superBtn" class="btn btn-super" style="margin-left:8px;">★ Super</button>
+        <button type="button" id="premiumBtn" class="btn btn-premium" style="margin-left:8px;">✨ Premium</button>
+
+        <?php if ($is_owner || $is_admin): ?>
+          <!-- если владелец или админ — показываем редактировать/удалить тут тоже -->
+          <a href="/mehanik/public/edit-product.php?id=<?= urlencode($id) ?>" class="btn" style="background:#0ea5a4; margin-left:8px;">✏ Редактировать</a>
+        <?php endif; ?>
       </div>
     </div>
   </div>
@@ -371,6 +391,26 @@ $displaySku = $rawSku === '' ? '' : preg_replace('/^SKU-/i', '', $rawSku);
     } catch(e) {
       alert('Копирование не поддерживается в этом браузере');
     }
+  }
+})();
+
+// Super / Premium buttons (заглушки)
+(function(){
+  const superBtn = document.getElementById('superBtn');
+  const premiumBtn = document.getElementById('premiumBtn');
+
+  if (superBtn) {
+    superBtn.addEventListener('click', function(e){
+      e.preventDefault();
+      alert('Super: функция заглушка — позже подключим оплату/подсветку товара.');
+    });
+  }
+
+  if (premiumBtn) {
+    premiumBtn.addEventListener('click', function(e){
+      e.preventDefault();
+      alert('Premium: функция заглушка — позже подключим оплату/выделение.');
+    });
   }
 })();
 </script>

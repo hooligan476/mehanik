@@ -62,6 +62,10 @@
       sub.className = 'product-sub';
       sub.textContent = (item.manufacturer || item.brand_name || item.complex_part_name || item.type || '').toString();
 
+      // append title and subtitle first
+      content.appendChild(title);
+      content.appendChild(sub);
+
       // SKU / Article: remove leading "SKU-" for display, add copy button and link to product
       const rawSku = (item.sku || item.article || item.code || '').toString();
       const displaySku = rawSku.replace(/^SKU-/i, ''); // only for display
@@ -73,6 +77,14 @@
         skuWrap.style.alignItems = 'center';
         skuWrap.style.gap = '8px';
         skuWrap.style.marginTop = '6px';
+
+        // label "Артикул:"
+        const skuLabel = document.createElement('span');
+        skuLabel.className = 'sku-label';
+        skuLabel.textContent = 'Артикул:';
+        skuLabel.style.fontWeight = '600';
+        skuLabel.style.marginRight = '6px';
+        skuWrap.appendChild(skuLabel);
 
         const skuLink = document.createElement('a');
         skuLink.href = item.url || ('/mehanik/public/product.php?id=' + encodeURIComponent(item.id || ''));
@@ -137,14 +149,8 @@
           }
         }
 
-        // append skuWrap after subtitle (so it is visible under manufacturer)
-        content.appendChild(title);
-        content.appendChild(sub);
+        // append skuWrap after title/sub
         content.appendChild(skuWrap);
-      } else {
-        // no SKU present, just append title and sub
-        content.appendChild(title);
-        content.appendChild(sub);
       }
 
       // tags: brand/model + complex/component + years + quality
@@ -206,8 +212,7 @@
       added.textContent = 'Добавлен: ' + (item.created_at ? (new Date(item.created_at).toLocaleDateString()) : '-');
       badges.appendChild(added);
 
-      // assemble content (if sku was appended earlier we already pushed title/sub/sku)
-      // but ensure tags/row/badges are appended
+      // assemble content (ensure tags/row/badges are appended)
       content.appendChild(tags);
       content.appendChild(row);
       content.appendChild(badges);
@@ -224,26 +229,7 @@
       view.textContent = '👁 Просмотр';
       actions.appendChild(view);
 
-      // dummy Super / Premium buttons (placeholders for paid highlighting)
-      const superBtn = document.createElement('button');
-      superBtn.type = 'button';
-      superBtn.className = 'btn btn-super';
-      superBtn.textContent = '★ Super';
-      superBtn.addEventListener('click', function(e){
-        e.preventDefault();
-        alert('Super: функция заглушка — позже подключим оплату/подсветку товара.');
-      });
-      actions.appendChild(superBtn);
-
-      const premiumBtn = document.createElement('button');
-      premiumBtn.type = 'button';
-      premiumBtn.className = 'btn btn-premium';
-      premiumBtn.textContent = '✨ Premium';
-      premiumBtn.addEventListener('click', function(e){
-        e.preventDefault();
-        alert('Premium: функция заглушка — позже подключим оплату/выделение.');
-      });
-      actions.appendChild(premiumBtn);
+      // NOTE: Super / Premium buttons removed from UI
 
       // show edit/delete only for owner (if currentUserId known and matches)
       if (ctx.currentUserId && String(item.user_id || item.owner_id || '') === String(ctx.currentUserId)) {
