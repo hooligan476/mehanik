@@ -1,89 +1,129 @@
 <?php
-// mehanik/public/api/user_search.php
+// mehanik/api/user_search.php
 if (session_status() === PHP_SESSION_NONE) session_start();
 header('Content-Type: application/json; charset=utf-8');
 
-// only admins allowed
-$user = $_SESSION['user'] ?? null;
-$role = strtolower((string)($user['role'] ?? ''));
-$isSuper = ((int)($user['is_superadmin'] ?? 0) === 1);
-if (!$user || !in_array($role, ['admin','superadmin'], true) && !$isSuper) {
-    http_response_code(403);
-    echo json_encode(['ok'=>false,'error'=>'access_denied']);
+// Подключаем DB (корень проекта один уровень выше /mehanik)
+$projectRoot = dirname(__DIR__);
+$dbPath = $projectRoot . '/db.php';
+if (!file_exists($dbPath)) {
+    echo json_encode(['ok'=>false,'error'=>'db.php not found']);
     exit;
 }
+require_once $dbPath;
 
 $q = trim((string)($_GET['q'] ?? ''));
 if ($q === '') {
-    echo json_encode(['ok'=>true,'items'=>[]]);
+    echo json_encode(['ok'=>true,'items'=>[]], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-// normalize
-$raw = $q;
+// normalize for phone search: strip non-digits
+$digits = preg_replace('~\D+~', '', $q);
+
+// prepare result container
 $items = [];
-$limit = 12;
 
 try {
-    // try mysqli first (db.php should set $mysqli), fallback to PDO ($pdo)
     if (isset($mysqli) && $mysqli instanceof mysqli) {
-        // search by id if numeric
-        if (preg_match('/^\s*#?(\d+)\s*$/', $raw, $m)) {
-            $id = (int)$m[1];
-            $st = $mysqli->prepare("SELECT id,name,phone,role,status,balance FROM users WHERE id = ? LIMIT ?");
-            $st->bind_param('ii', $id, $limit);
+        // If query is all digits and not too long, try ID exact match first
+        if (ctype_digit($q) && strlen($q) <= 10) {
+            $id = (int)$q;
+            $st = $mysqli->prepare("SELECT id,name,phone,role,status,balance FROM users WHERE id = ? LIMIT 1");
+            if ($st) {
+                $st->bind_param('i', $id);
+                $st->execute();
+                $res = $st->get_result();
+                if ($r = $res->fetch_assoc()) {
+                    $items[] = $r;
+                }
+                $st->close();
+            }
+        }
+
+        // Then search by name / phone (LIKE)
+        // Use prepared LIKE with surrounding %.
+        // For phone: search REPLACE(phone, '[^0-9]','') LIKE %digits% — MySQL has no regex replace; simple approach: search phone LIKE '%q%' and also by digits tail if available.
+        $like = '%' . $mysqli->real_escape_string($q) . '%';
+        $sql = "SELECT id,name,phone,role,status,balance
+                FROM users
+                WHERE (name LIKE ? OR phone LIKE ?)";
+        // avoid duplicating same row if id already added
+        $st = $mysqli->prepare($sql);
+        if ($st) {
+            $st->bind_param('ss', $like, $like);
             $st->execute();
             $res = $st->get_result();
-            while ($r = $res->fetch_assoc()) $items[] = $r;
-            $st->close();
-        } else {
-            // search by phone or name (partial)
-            $like = '%' . str_replace(['%','_'], ['\\%','\\_'], $raw) . '%';
-            $st = $mysqli->prepare("SELECT id,name,phone,role,status,balance FROM users WHERE phone LIKE ? OR name LIKE ? LIMIT ?");
-            $st->bind_param('ssi', $like, $like, $limit);
-            $st->execute();
-            $res = $st->get_result();
-            while ($r = $res->fetch_assoc()) $items[] = $r;
+            while ($r = $res->fetch_assoc()) {
+                // skip duplicate id
+                $skip = false;
+                foreach ($items as $it) { if ((int)$it['id'] === (int)$r['id']) { $skip = true; break; } }
+                if (!$skip) $items[] = $r;
+            }
             $st->close();
         }
+
+        // If still empty and we have digits from q, try searching phone stripped of non-digits by fetching candidates and comparing digits
+        if (empty($items) && $digits !== '') {
+            $st2 = $mysqli->prepare("SELECT id,name,phone,role,status,balance FROM users WHERE phone IS NOT NULL AND phone <> '' LIMIT 50");
+            if ($st2) {
+                $st2->execute();
+                $res2 = $st2->get_result();
+                while ($r = $res2->fetch_assoc()) {
+                    $p = preg_replace('~\D+~','', (string)$r['phone']);
+                    if ($p !== '' && strpos($p, $digits) !== false) {
+                        $items[] = $r;
+                    }
+                }
+                $st2->close();
+            }
+        }
+
     } elseif (isset($pdo) && $pdo instanceof PDO) {
-        if (preg_match('/^\s*#?(\d+)\s*$/', $raw, $m)) {
-            $id = (int)$m[1];
-            $st = $pdo->prepare("SELECT id,name,phone,role,status,balance FROM users WHERE id = :id LIMIT :lim");
-            $st->bindValue(':id', $id, PDO::PARAM_INT);
-            $st->bindValue(':lim', $limit, PDO::PARAM_INT);
-            $st->execute();
-            $items = $st->fetchAll(PDO::FETCH_ASSOC);
-        } else {
-            $like = '%' . str_replace(['%','_'], ['\\%','\\_'], $raw) . '%';
-            $st = $pdo->prepare("SELECT id,name,phone,role,status,balance FROM users WHERE phone LIKE :like OR name LIKE :like LIMIT :lim");
-            $st->bindValue(':like', $like, PDO::PARAM_STR);
-            $st->bindValue(':lim', $limit, PDO::PARAM_INT);
-            $st->execute();
-            $items = $st->fetchAll(PDO::FETCH_ASSOC);
+        // PDO path
+        if (ctype_digit($q) && strlen($q) <= 10) {
+            $id = (int)$q;
+            $st = $pdo->prepare("SELECT id,name,phone,role,status,balance FROM users WHERE id = :id LIMIT 1");
+            $st->execute([':id'=>$id]);
+            if ($r = $st->fetch(PDO::FETCH_ASSOC)) $items[] = $r;
         }
-    } else {
-        throw new Exception('no_db');
+        $like = '%' . $q . '%';
+        $st = $pdo->prepare("SELECT id,name,phone,role,status,balance FROM users WHERE (name LIKE :like OR phone LIKE :like) LIMIT 100");
+        $st->execute([':like'=>$like]);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $r) {
+            $skip = false;
+            foreach ($items as $it) { if ((int)$it['id'] === (int)$r['id']) { $skip = true; break; } }
+            if (!$skip) $items[] = $r;
+        }
+        if (empty($items) && $digits !== '') {
+            $st2 = $pdo->query("SELECT id,name,phone,role,status,balance FROM users");
+            $rows2 = $st2->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($rows2 as $r) {
+                $p = preg_replace('~\D+~','', (string)$r['phone']);
+                if ($p !== '' && strpos($p, $digits) !== false) $items[] = $r;
+            }
+        }
     }
-
-    // normalize items (ensure fields are strings/numbers)
-    $out = [];
-    foreach ($items as $it) {
-        $out[] = [
-            'id' => (int)($it['id'] ?? 0),
-            'name' => (string)($it['name'] ?? ''),
-            'phone' => (string)($it['phone'] ?? ''),
-            'role' => (string)($it['role'] ?? ''),
-            'status' => (string)($it['status'] ?? ''),
-            'balance' => isset($it['balance']) ? number_format((float)$it['balance'],2,'.','') : '0.00'
-        ];
-    }
-
-    echo json_encode(['ok'=>true,'items'=>$out], JSON_UNESCAPED_UNICODE);
-    exit;
-
 } catch (Throwable $e) {
-    http_response_code(500);
-    echo json_encode(['ok'=>false,'error'=>'server_error','message'=> $e->getMessage() ]);
-    exit;
+    // silent fail - return empty list
 }
+
+// limit items to 20 for performance
+if (count($items) > 20) $items = array_slice($items, 0, 20);
+
+// normalize minimal fields and return
+$out = [];
+foreach ($items as $r) {
+    $out[] = [
+        'id' => (int)($r['id'] ?? 0),
+        'name' => $r['name'] ?? '',
+        'phone' => $r['phone'] ?? '',
+        'role' => $r['role'] ?? '',
+        'status' => $r['status'] ?? '',
+        'balance' => isset($r['balance']) ? (float)$r['balance'] : 0.0
+    ];
+}
+
+echo json_encode(['ok'=>true,'items'=>$out], JSON_UNESCAPED_UNICODE);
+exit;

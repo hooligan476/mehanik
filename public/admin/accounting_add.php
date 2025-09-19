@@ -1,6 +1,21 @@
 <?php
-// public/admin/accounting_add.php
+// mehanik/public/admin/accounting_add.php
 if (session_status() === PHP_SESSION_NONE) session_start();
+
+// project root (mehanik)
+$projectRoot = dirname(__DIR__, 2);
+
+// try include middleware (starts session, etc.) and db
+$mw = $projectRoot . '/middleware.php';
+if (file_exists($mw)) {
+    require_once $mw;
+}
+$dbfile = $projectRoot . '/db.php';
+if (file_exists($dbfile)) {
+    require_once $dbfile;
+}
+
+// header (admin/header.php) — it should set $base (like '/mehanik/public') and may also include db
 require_once __DIR__ . '/header.php';
 
 $user = $_SESSION['user'] ?? null;
@@ -26,66 +41,96 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errors)) {
         try {
             if (isset($mysqli) && $mysqli instanceof mysqli) {
-                $mysqli->begin_transaction();
+                if (!$mysqli->begin_transaction()) throw new Exception('Не удалось начать транзакцию (mysqli).');
 
+                // SELECT ... FOR UPDATE
                 $st = $mysqli->prepare("SELECT balance FROM users WHERE id = ? FOR UPDATE");
+                if (!$st) throw new Exception('Ошибка подготовки запроса (SELECT): ' . $mysqli->error);
                 $st->bind_param('i', $target_id);
-                $st->execute();
+                if (!$st->execute()) throw new Exception('Ошибка выполнения запроса (SELECT): ' . $st->error);
                 $res = $st->get_result();
-                $row = $res->fetch_assoc();
+                $row = $res ? $res->fetch_assoc() : null;
                 $st->close();
                 if (!$row) throw new Exception('Пользователь не найден');
 
                 $before = (float)($row['balance'] ?? 0.0);
                 $after  = $before + $amount;
 
+                // update balance
                 $up = $mysqli->prepare("UPDATE users SET balance = ? WHERE id = ? LIMIT 1");
+                if (!$up) throw new Exception('Ошибка подготовки запроса (UPDATE): ' . $mysqli->error);
                 $up->bind_param('di', $after, $target_id);
-                if (!$up->execute()) throw new Exception('Ошибка обновления баланса: '.$up->error);
+                if (!$up->execute()) throw new Exception('Ошибка выполнения запроса (UPDATE): ' . $up->error);
                 $up->close();
 
-                $ins = $mysqli->prepare("INSERT INTO accounting_transactions (user_id,type,amount,balance_before,balance_after,admin_id,note,status) VALUES (?,?,?,?,?,?,?,?)");
+                // insert accounting transaction
+                $ins = $mysqli->prepare("INSERT INTO accounting_transactions (user_id,type,amount,balance_before,balance_after,admin_id,note,status,created_at) VALUES (?,?,?,?,?,?,?,?,NOW())");
+                if (!$ins) throw new Exception('Ошибка подготовки запроса (INSERT): ' . $mysqli->error);
                 $type = 'credit';
                 $admin_id = (int)($user['id'] ?? 0);
                 $status = 'completed';
-                $ins->bind_param('isdddiss', $target_id, $type, $amount, $before, $after, $admin_id, $note, $status);
-                if (!$ins->execute()) throw new Exception('Ошибка записи транзакции: '.$ins->error);
+                if (!$ins->bind_param('isdddiss', $target_id, $type, $amount, $before, $after, $admin_id, $note, $status)) {
+                    throw new Exception('Ошибка bind_param (INSERT): ' . $ins->error);
+                }
+                if (!$ins->execute()) throw new Exception('Ошибка выполнения запроса (INSERT): ' . $ins->error);
                 $ins->close();
 
                 $mysqli->commit();
                 $success = "Пополнение выполнено. Новый баланс: " . number_format($after,2,'.',' ') . " TMT";
             } elseif (isset($pdo) && $pdo instanceof PDO) {
                 $pdo->beginTransaction();
+
+                // SELECT ... FOR UPDATE (MySQL)
                 $st = $pdo->prepare("SELECT balance FROM users WHERE id = ? FOR UPDATE");
-                $st->execute([$target_id]);
+                if (!$st->execute([$target_id])) throw new Exception('Ошибка выполнения запроса (SELECT) (PDO).');
                 $row = $st->fetch(PDO::FETCH_ASSOC);
                 if (!$row) throw new Exception('Пользователь не найден');
+
                 $before = (float)$row['balance'];
                 $after = $before + $amount;
+
                 $up = $pdo->prepare("UPDATE users SET balance = :b WHERE id = :id");
-                $up->execute([':b'=>$after, ':id'=>$target_id]);
-                $ins = $pdo->prepare("INSERT INTO accounting_transactions (user_id,type,amount,balance_before,balance_after,admin_id,note,status) VALUES (:uid,:type,:amt,:bb,:ba,:aid,:note,:status)");
-                $ins->execute([':uid'=>$target_id, ':type'=>'credit', ':amt'=>$amount, ':bb'=>$before, ':ba'=>$after, ':aid'=>$user['id'] ?? null, ':note'=>$note, ':status'=>'completed']);
+                if (!$up->execute([':b'=>$after, ':id'=>$target_id])) throw new Exception('Ошибка обновления баланса (PDO).');
+
+                $ins = $pdo->prepare("INSERT INTO accounting_transactions (user_id,type,amount,balance_before,balance_after,admin_id,note,status,created_at) VALUES (:uid,:type,:amt,:bb,:ba,:aid,:note,:status,NOW())");
+                if (!$ins->execute([':uid'=>$target_id, ':type'=>'credit', ':amt'=>$amount, ':bb'=>$before, ':ba'=>$after, ':aid'=>$user['id'] ?? null, ':note'=>$note, ':status'=>'completed'])) {
+                    throw new Exception('Ошибка вставки транзакции (PDO).');
+                }
+
                 $pdo->commit();
                 $success = "Пополнение выполнено. Новый баланс: " . number_format($after,2,'.',' ') . " TMT";
             } else {
                 $errors[] = 'Нет подключения к БД';
             }
         } catch (Throwable $e) {
-            if (isset($mysqli) && $mysqli instanceof mysqli) $mysqli->rollback();
-            if (isset($pdo) && $pdo instanceof PDO) $pdo->rollBack();
+            if (isset($mysqli) && $mysqli instanceof mysqli) {
+                @$mysqli->rollback();
+            }
+            if (isset($pdo) && $pdo instanceof PDO) {
+                try { $pdo->rollBack(); } catch (Throwable $_) {}
+            }
             $errors[] = 'Ошибка: ' . $e->getMessage();
         }
     }
 }
-?>
-<!doctype html>
+
+// build API URLs dynamically:
+// header.php usually sets $base (like '/mehanik/public'), so convert to '/mehanik/api/...'
+$apiBase = '/mehanik';
+if (isset($base) && is_string($base)) {
+    // remove trailing '/public' part if present
+    $apiBase = rtrim(preg_replace('#/public$#', '', $base), '/');
+}
+$apiUserSearch = $apiBase . '/api/user_search.php';
+$apiUserGet    = $apiBase . '/api/user_get.php';
+?><!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <title>Добавить платёж — Admin</title>
 <link rel="stylesheet" href="<?= esc($base ?? '/mehanik/public') ?>/assets/css/style.css">
 <style>
+/* styles kept similar to previous version */
 .container{max-width:900px;margin:20px auto;padding:16px}
 .form-row{margin-top:10px;display:flex;flex-direction:column;gap:6px}
 input,select,textarea{padding:8px;border-radius:8px;border:1px solid #e6e9ef}
@@ -100,15 +145,13 @@ input,select,textarea{padding:8px;border-radius:8px;border:1px solid #e6e9ef}
 .results{position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid #e6e9ef;border-radius:8px;margin-top:6px;z-index:40;max-height:260px;overflow:auto;box-shadow:0 8px 30px rgba(2,6,23,0.06)}
 .result-item{padding:8px 10px;border-bottom:1px solid #f1f3f5;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
 .result-item:last-child{border-bottom:none}
-.result-item:hover, .result-item.active{background:#f6fbff}
-.result-left{display:flex;flex-direction:column}
-.result-id{font-weight:700;color:#0b57a4}
-.result-sub{font-size:.95rem;color:#6b7280;margin-top:4px}
+.result-item:hover{background:#f6fbff}
+.result-item .label { flex:1; margin-right:8px; }
+.result-item strong.match{ background:#fff7cc; padding:0 2px; border-radius:3px }
 .user-card{margin-top:10px;padding:10px;border-radius:8px;background:#fbfdff;border:1px solid #eef3f7}
 .small{color:#6b7280}
-
-/* highlight */
-mark { background: #fffd9a; color: #0b1720; padding:0 2px; border-radius:2px; }
+.kbd { font-size:.85rem; color:#9ca3af; margin-left:8px}
+.empty-result { padding:10px; color:#6b7280 }
 </style>
 </head>
 <body>
@@ -122,9 +165,9 @@ mark { background: #fffd9a; color: #0b1720; padding:0 2px; border-radius:2px; }
 
   <form method="post" novalidate id="formAdd">
     <div class="form-row">
-      <label>Пользователь (по ID / имени / телефону)</label>
+      <label>Пользователь (по ID / имени / телефону) <span class="kbd">↑↓ и Enter для выбора</span></label>
       <div class="search-wrap">
-        <input id="userSearch" class="search-input" type="search" placeholder="Введите #ID, имя или телефон... (подсказки появятся автоматически)">
+        <input id="userSearch" class="search-input" type="search" placeholder="Введите #ID, имя или телефон...">
         <div id="results" class="results" style="display:none" role="listbox" aria-label="Результаты поиска"></div>
       </div>
       <input type="hidden" name="user_id" id="user_id">
@@ -165,210 +208,135 @@ mark { background: #fffd9a; color: #0b1720; padding:0 2px; border-radius:2px; }
   const uRole = document.getElementById('uRole');
   const uBalance = document.getElementById('uBalance');
 
-  let debounceTimer = null;
-  let activeIndex = -1;
-  let currentItems = [];
+  let timer = null;
+  let lastQuery = '';
+  let items = []; // last items
+  let focused = -1;
 
-  // utility: escape HTML
-  function escHtml(s){
-    return String(s).replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]; });
-  }
+  const searchPath = <?= json_encode($apiUserSearch) ?>;
+  const getPath    = <?= json_encode($apiUserGet) ?>;
 
-  // highlight query inside text (case-insensitive) using <mark>
-  function highlightText(text, q){
-    if (!q) return escHtml(text);
-    const qi = q.replace(/[#\s]/g,'').trim();
-    // if query starts with # or is pure digits, we'll still try generic substring highlight first
-    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'i');
-    if (re.test(text)) {
-      return escHtml(text).replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'ig'), m => '<mark>'+escHtml(m)+'</mark>');
-    }
-    // fallback: case-insensitive search for characters sequence
-    const qiSafe = q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-    const re2 = new RegExp(qiSafe, 'i');
-    if (re2.test(text)) {
-      return escHtml(text).replace(re2, m => '<mark>'+escHtml(m)+'</mark>');
-    }
-    return escHtml(text);
-  }
+  function clearResults(){ results.innerHTML=''; results.style.display='none'; items = []; focused = -1; }
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
+  function escapeRegExp(s){ return String(s||'').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-  // special highlight for phone when query contains digits: map digits positions
-  function highlightPhone(phoneRaw, query){
-    const onlyDigits = (query || '').replace(/\D+/g,'');
-    if (!onlyDigits) return highlightText(phoneRaw, query);
-
-    // build mapping from normalized index -> original index
-    const orig = String(phoneRaw || '');
-    let normalized = '';
-    const map = []; // normalized idx -> original idx
-    for (let i=0;i<orig.length;i++){
-      const ch = orig[i];
-      if (/\d/.test(ch)) {
-        map.push(i);
-        normalized += ch;
-      }
-    }
-    const idx = normalized.indexOf(onlyDigits);
-    if (idx === -1) return highlightText(phoneRaw, query);
-
-    const startOrig = map[idx];
-    const endOrig = map[idx + onlyDigits.length - 1];
-
-    // produce highlighted HTML by iterating original string
-    const before = escHtml(orig.slice(0, startOrig));
-    const matched = escHtml(orig.slice(startOrig, endOrig+1));
-    const after = escHtml(orig.slice(endOrig+1));
-    return before + '<mark>' + matched + '</mark>' + after;
-  }
-
-  function clearResults(){ results.innerHTML=''; results.style.display='none'; currentItems = []; activeIndex = -1; }
-  function openResults(){ if (results.children.length) { results.style.display='block'; } }
-  function setActive(idx){
-    const nodes = Array.from(results.querySelectorAll('.result-item'));
-    nodes.forEach(n=>n.classList.remove('active'));
-    if (idx >=0 && idx < nodes.length) {
-      nodes[idx].classList.add('active');
-      nodes[idx].scrollIntoView({block:'nearest'});
-      activeIndex = idx;
-    } else {
-      activeIndex = -1;
-    }
+  function highlightLabel(label, q){
+    if (!q) return escapeHtml(label);
+    const re = new RegExp(escapeRegExp(q), 'ig');
+    return escapeHtml(label).replace(re, m => '<strong class="match">'+escapeHtml(m)+'</strong>');
   }
 
   async function fetchSearch(q){
     if (!q || q.length < 1) { clearResults(); return; }
     try {
-      const resp = await fetch('/mehanik/api/user_search.php?q=' + encodeURIComponent(q), { credentials: 'same-origin' });
+      const resp = await fetch(searchPath + '?q=' + encodeURIComponent(q), { credentials: 'same-origin' });
       if (!resp.ok) { clearResults(); return; }
-      const j = await resp.json();
-      if (!j || !j.ok || !Array.isArray(j.items) || j.items.length === 0) { clearResults(); return; }
-      renderResults(j.items, q);
-    } catch(e) {
-      console.error(e);
+      const j = await resp.json().catch(()=>null);
+      if (!j) { clearResults(); return; }
+      // support various shapes: {ok:true, items: [...]}, {items: [...]}, or direct array
+      let list = null;
+      if (Array.isArray(j)) list = j;
+      else if (Array.isArray(j.items)) list = j.items;
+      else if (Array.isArray(j.users)) list = j.users;
+      else if (j.ok && Array.isArray(j.data)) list = j.data;
+      else list = []; // fallback
+
+      items = list;
+      renderResults(items, q);
+    } catch (err) {
+      console.error('user_search error', err);
       clearResults();
     }
   }
 
-  function renderResults(items, q){
-    currentItems = items;
+  function renderResults(itemsList, q){
     results.innerHTML = '';
-    items.forEach((it, idx) => {
+    if (!itemsList || itemsList.length === 0) {
+      results.innerHTML = '<div class="empty-result">Ничего не найдено</div>';
+      results.style.display = 'block';
+      items = [];
+      return;
+    }
+    itemsList.forEach((it, idx) => {
       const div = document.createElement('div');
       div.className = 'result-item';
       div.tabIndex = 0;
-      div.dataset.id = it.id;
-      div.dataset.idx = idx;
-
-      const left = document.createElement('div'); left.className = 'result-left';
-      // highlight id, name and phone
-      const idText = '#' + String(it.id || '');
-      const nameText = String(it.name || '');
-      const phoneText = String(it.phone || '');
-
-      const idEl = document.createElement('div');
-      idEl.className = 'result-id';
-      idEl.innerHTML = highlightText(idText, q);
-
-      const subEl = document.createElement('div');
-      subEl.className = 'result-sub';
-      // build combined subtitle: name · phone (highlighted)
-      const nameHighlighted = highlightText(nameText, q);
-      const phoneHighlighted = highlightPhone(phoneText, q);
-      subEl.innerHTML = nameHighlighted + (phoneText ? ' · ' + phoneHighlighted : '');
-
-      left.appendChild(idEl);
-      left.appendChild(subEl);
-
-      const right = document.createElement('div');
-      right.className = 'small';
-      right.textContent = (it.role ? it.role + ' · ' : '') + (it.status ? it.status : '');
-
+      const label = '#' + (it.id||'-') + ' — ' + (it.name||'-') + (it.phone ? ' · ' + it.phone : '');
+      const left = document.createElement('div'); left.className = 'label';
+      left.innerHTML = highlightLabel(label, q);
+      const meta = document.createElement('div'); meta.className = 'meta'; meta.style.color = '#6b7280'; meta.style.fontSize = '.9rem';
+      meta.textContent = it.status ? (' ' + it.status) : '';
       div.appendChild(left);
+      // optional small right area
+      const right = document.createElement('div'); right.style.marginLeft='8px'; right.style.whiteSpace='nowrap'; right.style.opacity='0.8'; right.textContent = it.id ? ('#' + it.id) : '';
       div.appendChild(right);
 
+      div.dataset.id = it.id;
+      div.dataset.index = idx;
       div.addEventListener('click', ()=> selectUser(it.id));
-      div.addEventListener('keydown', (e)=> {
-        if (e.key === 'Enter') selectUser(it.id);
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          const next = Math.min(currentItems.length - 1, idx + 1);
-          setActive(next);
-        }
-        if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          const prev = Math.max(0, idx - 1);
-          setActive(prev);
-        }
-      });
-
+      div.addEventListener('keydown', (e)=> { if (e.key === 'Enter') selectUser(it.id); });
       results.appendChild(div);
     });
-    openResults();
-    // reset active
-    setActive(0);
+    results.style.display = 'block';
+    focused = -1;
   }
 
-  function selectUser(id){
+  function focusItem(dir) {
+    const nodes = results.querySelectorAll('.result-item');
+    if (!nodes.length) return;
+    if (focused >= 0) nodes[focused].classList.remove('focused');
+    if (dir === 'down') focused = Math.min(nodes.length-1, focused + 1);
+    else if (dir === 'up') focused = Math.max(0, focused - 1);
+    if (focused < 0) focused = 0;
+    nodes[focused].focus();
+  }
+
+  async function selectUser(id){
+    if (!id) return;
     hid.value = id;
     clearResults();
     inEl.value = '';
-    // load details
-    fetch('/mehanik/api/user_get.php?id=' + encodeURIComponent(id), { credentials: 'same-origin' })
-      .then(r => r.ok ? r.json() : Promise.reject(r))
-      .then(j => {
-        if (!j.ok || !j.user) { alert('Не удалось загрузить данные пользователя'); return; }
-        const u = j.user;
-        userCard.style.display = 'block';
-        uTitle.innerHTML = '#' + escHtml(u.id) + ' — ' + escHtml(u.name || '-');
-        uPhone.innerHTML = escHtml(u.phone || '-');
-        uStatus.textContent = (u.status || '-');
-        uRole.textContent = (u.role || '-');
-        uBalance.textContent = Number(u.balance || 0).toFixed(2);
-      }).catch(()=> alert('Ошибка при загрузке пользователя'));
+    try {
+      const resp = await fetch(getPath + '?id=' + encodeURIComponent(id), { credentials: 'same-origin' });
+      if (!resp.ok) { alert('Ошибка загрузки пользователя: ' + resp.status); return; }
+      const j = await resp.json().catch(()=>null);
+      if (!j || !j.ok || !j.user) { alert('Пользователь не найден'); return; }
+      const u = j.user;
+      userCard.style.display = 'block';
+      uTitle.textContent = '#' + u.id + ' — ' + (u.name || '-');
+      uPhone.textContent = (u.phone || '-');
+      uStatus.textContent = (u.status || '-');
+      uRole.textContent = (u.role || '-');
+      uBalance.textContent = Number(u.balance || 0).toFixed(2);
+    } catch (err) {
+      console.error('user_get error', err);
+      alert('Ошибка при загрузке пользователя (см. консоль).');
+    }
   }
 
-  // debounce wrapper
-  function debounce(fn, wait){
-    let t = null;
-    return function(...args){
-      if (t) clearTimeout(t);
-      t = setTimeout(()=> { fn.apply(this, args); t = null; }, wait);
-    };
-  }
-
-  const doSearchDebounced = debounce(function(q){
-    if (!q || q.trim() === '') { clearResults(); return; }
-    fetchSearch(q.trim());
-  }, 250);
-
-  inEl.addEventListener('input', function(e){
-    const q = this.value;
-    hid.value = '';
-    userCard.style.display = 'none';
-    doSearchDebounced(q);
+  // keyboard nav
+  inEl.addEventListener('keydown', function(e){
+    if (e.key === 'ArrowDown') { e.preventDefault(); focusItem('down'); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); focusItem('up'); }
+    else if (e.key === 'Enter') {
+      const node = results.querySelector('.result-item');
+      if (node) {
+        const id = node.dataset.id;
+        if (id) { selectUser(id); e.preventDefault(); }
+      }
+    }
   });
 
-  // keyboard handling for main input: arrows + enter
-  inEl.addEventListener('keydown', function(e){
-    const nodes = Array.from(results.querySelectorAll('.result-item'));
-    if (!nodes.length) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      const next = (activeIndex + 1) < nodes.length ? activeIndex + 1 : 0;
-      setActive(next);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      const prev = (activeIndex - 1) >= 0 ? activeIndex - 1 : nodes.length - 1;
-      setActive(prev);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (activeIndex >= 0 && nodes[activeIndex]) {
-        const id = nodes[activeIndex].dataset.id;
-        if (id) selectUser(id);
-      }
-    } else if (e.key === 'Escape') {
-      clearResults();
-    }
+  inEl.addEventListener('input', function(){
+    const q = this.value.trim();
+    hid.value = '';
+    userCard.style.display = 'none';
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(()=> {
+      if (q === lastQuery) return;
+      lastQuery = q;
+      fetchSearch(q);
+    }, 250);
   });
 
   // click outside closes results
