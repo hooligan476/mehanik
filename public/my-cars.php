@@ -1,6 +1,6 @@
 <?php
 // public/my-cars.php — серверный рендер + клиентский фильтр (устойчивый)
-// Улучшено по образцу public/my-products.php: стабильные lookups, аккуратный uploadsPrefix, SKU-очистка и т.д.
+// Исправлено: нормализация uploads, не посылать mine=0, проверка no-photo
 
 require_once __DIR__ . '/../middleware.php';
 require_auth();
@@ -11,8 +11,25 @@ if (!$user_id) {
     http_response_code(403); echo "Пользователь не в сессии."; exit;
 }
 
-$noPhoto = '/mehanik/assets/no-photo.png';
-// Универсальная папка uploads — передаём в JS и используем аккуратно (js добавляет имя файла без лишних слэшей)
+// Попробуем корректно найти no-photo (путь для отдачи через веб)
+$noPhotoCandidates = [
+    '/mehanik/assets/no-photo.png',
+    '/mehanik/public/assets/no-photo.png',
+    '/assets/no-photo.png',
+];
+$noPhoto = $noPhotoCandidates[0];
+// Проверяем, есть ли файл в файловой системе и если да — используем соответствующий путь.
+// __DIR__ указывает на public/; пробуем варианты.
+if (file_exists(__DIR__ . '/../assets/no-photo.png')) {
+    $noPhoto = '/mehanik/assets/no-photo.png';
+} elseif (file_exists(__DIR__ . '/assets/no-photo.png')) {
+    $noPhoto = '/mehanik/public/assets/no-photo.png';
+} else {
+    // Оставляем дефолт — положи файл в один из ожидаемых мест, если 404 остаётся.
+    $noPhoto = '/mehanik/assets/no-photo.png';
+}
+
+// Универсальная папка uploads — передаём в JS и используем аккуратно
 $uploadsPrefix = '/mehanik/uploads/';
 $msg = $_GET['msg'] ?? '';
 $err = $_GET['err'] ?? '';
@@ -61,9 +78,11 @@ try {
   <meta charset="utf-8">
   <title>Мои авто — Mehanik</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <!-- явная ссылка на header.css, чтобы не было относительных 404 -->
+  <link rel="stylesheet" href="/mehanik/assets/css/header.css">
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
   <style>
-    /* CSS как был, без изменений по визуалу (см. оригинал) */
+    /* CSS (как в оригинале) */
     .page { max-width:1200px; margin:18px auto; padding:14px; }
     .layout { display:grid; grid-template-columns: 320px 1fr; gap:18px; }
     @media (max-width:1100px){ .layout{grid-template-columns:1fr;} }
@@ -189,14 +208,19 @@ try {
       <div id="products" class="products">
         <?php if (!empty($serverItems)): ?>
           <?php foreach ($serverItems as $it):
-              // аккуратно формируем URL фото: если абсолютный — оставляем, иначе добавляем uploadsPrefix + имя файла
+              // аккуратно формируем URL фото: если абсолютный — оставляем, иначе добавляем uploadsPrefix + имя файла,
+              // но не дублируем 'uploads/' если он уже в поле photo.
               $photoUrl = '';
               if (!empty($it['photo'])) {
-                  if (strpos($it['photo'], '/') === 0 || preg_match('#^https?://#i', $it['photo'])) {
-                      $photoUrl = $it['photo'];
+                  $p = $it['photo'];
+                  if (preg_match('#^https?://#i', $p) || strpos($p, '/') === 0) {
+                      $photoUrl = $p;
                   } else {
-                      // избегаем двойных слэшей
-                      $photoUrl = rtrim($uploadsPrefix, '/') . '/' . ltrim($it['photo'], '/');
+                      if (strpos($p, 'uploads/') === 0) {
+                          $photoUrl = '/' . ltrim($p, '/');
+                      } else {
+                          $photoUrl = rtrim($uploadsPrefix, '/') . '/' . ltrim($p, '/');
+                      }
                   }
               } else {
                   $photoUrl = $noPhoto;
@@ -218,7 +242,6 @@ try {
 
                 <div style="margin-top:6px">
                   <?php $sku = $it['sku'] ?? ''; if ($sku !== ''):
-                        // убираем префикс SKU- для отображения, но в атрибутах храним оригинал
                         $displaySku = preg_replace('/^SKU-/i', '', (string)$sku);
                   ?>
                     <div class="sku-row">
@@ -242,7 +265,6 @@ try {
               <div class="card-footer">
                 <div class="actions">
                   <a href="/mehanik/public/car.php?id=<?= (int)$it['id'] ?>">👁 Просмотр</a>
-                  <!-- edit/delete removed from server-render -->
                 </div>
                 <div style="text-align:right;color:#6b7280;font-size:.85rem"></div>
               </div>
@@ -399,14 +421,8 @@ window.serverItems = <?= json_encode(array_values($serverItems), JSON_UNESCAPED_
     setSelectOptions(brandEl, lookups.brands, 'Все бренды');
     setSelectOptions(vehicleTypeEl, lookups.vehicle_types, 'Все типы');
 
-    if (Array.isArray(lookups.vehicle_bodies)) {
-      // если у нас общая массивная структура — оставим тело disabled до выбора типа (как раньше)
-      vehicleBodyEl.innerHTML = '<option value="">Сначала выберите тип</option>';
-      vehicleBodyEl.disabled = true;
-    } else {
-      vehicleBodyEl.innerHTML = '<option value="">Сначала выберите тип</option>';
-      vehicleBodyEl.disabled = true;
-    }
+    vehicleBodyEl.innerHTML = '<option value="">Сначала выберите тип</option>';
+    vehicleBodyEl.disabled = true;
 
     setSelectOptions(fuelTypeEl, lookups.fuel_types, 'Любое');
     setSelectOptions(gearboxEl, lookups.gearboxes, 'Любая');
@@ -419,11 +435,14 @@ window.serverItems = <?= json_encode(array_values($serverItems), JSON_UNESCAPED_
     const getVal=v=>v?String(v.value).trim():'';
     const filters = {
       type: 'auto',
-      mine: onlyMineEl && onlyMineEl.checked ? '1' : '0',
       brand: getVal(brandEl), model: getVal(modelEl), vehicle_type: getVal(vehicleTypeEl), vehicle_body: getVal(vehicleBodyEl),
       fuel_type: getVal(fuelTypeEl), gearbox: getVal(gearboxEl), year_from: getVal(yearFromEl), year_to: getVal(yearToEl),
       price_from: getVal(priceFromEl), price_to: getVal(priceToEl), q: getVal(searchEl)
     };
+    // только добавляем mine, если чекбокс включён
+    if (onlyMineEl && onlyMineEl.checked) {
+      filters.mine = '1';
+    }
     Object.keys(filters).forEach(k=>{ if (filters[k]==='') delete filters[k]; });
     if (!filters.vehicle_type && filters.vehicle_body) delete filters.vehicle_body;
     return filters;
@@ -459,7 +478,18 @@ window.serverItems = <?= json_encode(array_values($serverItems), JSON_UNESCAPED_
       const thumb = document.createElement('div'); thumb.className = 'thumb';
       const a = document.createElement('a'); a.href = '/mehanik/public/car.php?id='+encodeURIComponent(it.id);
       const img = document.createElement('img'); img.alt = (it.brand || '') + ' ' + (it.model||'');
-      img.src = (it.photo && (it.photo.indexOf('/')===0 || /^https?:\/\//i.test(it.photo))) ? it.photo : (it.photo ? (window.uploadsPrefix + it.photo) : window.noPhoto);
+      // нормализация пути фото: избегаем uploads/uploads и корректно обрабатываем абсолютные ссылки
+      let photo = it.photo || '';
+      if (!photo) {
+        photo = window.noPhoto;
+      } else if (photo.startsWith('/') || /^https?:\/\//i.test(photo)) {
+        photo = photo;
+      } else if (photo.indexOf('uploads/') === 0) {
+        photo = '/' + photo.replace(/^\/+/, '');
+      } else {
+        photo = (window.uploadsPrefix || '/mehanik/uploads/').replace(/\/$/,'') + '/' + photo.replace(/^\/+/,'');
+      }
+      img.src = photo;
       a.appendChild(img); thumb.appendChild(a);
 
       const body = document.createElement('div'); body.className = 'card-body';
