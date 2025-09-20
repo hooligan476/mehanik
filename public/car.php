@@ -149,43 +149,69 @@ $car_sku = trim((string)($car['sku'] ?? ''));
 <title><?= esc($car['brand'] ?? $car['name'] ?? 'Автомобиль') ?> — <?= esc($config['site_name'] ?? 'Mehanik') ?></title>
 <link rel="stylesheet" href="/mehanik/assets/css/style.css">
 <style>
+/* layout */
 .container { max-width:1100px; margin:22px auto; padding:18px; }
-.top { display:flex; gap:20px; align-items:flex-start; }
+.top { display:flex; gap:20px; align-items:flex-start; flex-wrap:wrap; }
 @media (max-width:900px){ .top { flex-direction:column } }
-.gallery { width:52%; min-width:320px; }
+
+/* gallery/info sizes */
+.gallery { flex: 0 0 52%; min-width:280px; max-width:580px; }
+@media (max-width:900px){ .gallery { flex: 1 1 auto; width:100% } }
 .main-photo { background:#f7f7f9; border-radius:12px; padding:10px; display:flex; align-items:center; justify-content:center; min-height:360px; }
 .main-photo img { max-width:100%; max-height:620px; object-fit:contain; border-radius:8px; }
 .thumbs { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
 .thumb { width:80px; height:60px; overflow:hidden; border-radius:8px; border:1px solid #e6eef7; cursor:pointer; display:inline-block; }
 .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
-.info { flex:1; }
-.badge { display:inline-block; padding:6px 10px; border-radius:999px; background:#f2f4f7; margin-right:8px; font-weight:700; }
+
+/* info column */
+.info { flex:1 1 360px; min-width:300px; }
+.card { background:#fff; border-radius:12px; box-shadow:0 8px 20px rgba(2,6,23,0.06); padding:16px; }
+h1 { margin:0 0 8px; font-size:1.4rem; }
+
+/* status badges */
+.badge { display:inline-block; padding:6px 10px; border-radius:999px; background:#f2f4f7; margin-right:8px; font-weight:700; font-size:0.95rem; }
 .status-approved { background:#e7f8ea; color:#116b1d; border:1px solid #bfe9c6; padding:10px; border-radius:8px; margin-bottom:10px; }
 .status-pending { background:#fff6e6; color:#8a5600; border:1px solid #ffe1a6; padding:10px; border-radius:8px; margin-bottom:10px; }
 .status-rejected { background:#ffeaea; color:#8f1a1a; border:1px solid #ffbcbc; padding:10px; border-radius:8px; margin-bottom:10px; }
-.card { background:#fff; border-radius:12px; box-shadow:0 8px 20px rgba(2,6,23,0.06); padding:16px; }
+
+/* specs grid */
 .rows { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:12px; }
+@media(max-width:700px){ .rows { grid-template-columns: 1fr; } }
 .row-item { background:#fbfdff; padding:10px; border-radius:8px; border:1px solid #eef3f7; }
+
+/* price */
 .price { font-size:1.4rem; font-weight:800; color:#0b57a4; }
-.actions { margin-top:14px; display:flex; gap:8px; }
-.btn { display:inline-block; padding:8px 12px; border-radius:8px; background:#0b57a4; color:#fff; text-decoration:none; }
-.btn.ghost { background:transparent; color:#0b57a4; border:1px solid #dbeafe; }
-.muted { color:#6b7280; }
+
+/* description */
 .desc { margin-top:12px; padding:12px; background:#fafbff; border-radius:8px; border:1px dashed #e7e9f3; white-space:pre-wrap; }
+
+/* contact */
 .contact { margin-top:12px; }
 .small { font-size:.95rem; color:#6b7280; }
 
-/* SKU styles */
-.sku-row { display:flex; gap:8px; align-items:center; margin-top:6px; }
+/* SKU */
+.sku-row { display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap; }
 .sku-text { font-weight:700; color:#0b57a4; text-decoration:underline; }
 .sku-copy { padding:6px 8px; border-radius:6px; border:1px solid #e6e9ef; background:#fff; cursor:pointer; }
+
+/* actions: row on wide screens, column on small */
+.actions { margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.actions .btn { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:8px; text-decoration:none; font-weight:700; cursor:pointer; }
+.btn { background:#0b57a4; color:#fff; border:0; }
+.btn.ghost { background:transparent; color:#0b57a4; border:1px solid rgba(11,87,164,0.08); }
+.btn.danger { background:#fff6f6; color:#ef4444; border:1px solid rgba(239,68,68,0.06); }
+.btn.edit { background:#fff7ed; color:#a16207; border:1px solid rgba(161,98,7,0.08); }
+@media(max-width:700px){ .actions { flex-direction:column; align-items:stretch; } .actions .btn { width:100%; justify-content:center; } }
+
+/* misc */
+.muted { color:#6b7280; font-size:0.95rem; }
 </style>
 </head>
 <body>
 <?php require_once __DIR__ . '/header.php'; ?>
 
 <div class="container">
-  <h1 style="margin:0 0 8px;"><?= esc($car['brand'] ?: $car['model'] ?: $car['id']) ?> <?= esc($car['model'] ?: '') ?> <?= $car['year'] ? '(' . (int)$car['year'] . ')' : '' ?></h1>
+  <h1><?= esc($car['brand'] ?: $car['model'] ?: $car['id']) ?> <?= esc($car['model'] ?: '') ?> <?= $car['year'] ? '(' . (int)$car['year'] . ')' : '' ?></h1>
 
   <?php if ($statusNormalized === 'approved'): ?>
     <div class="status-approved">✅ Объявление подтверждено</div>
@@ -198,7 +224,7 @@ $car_sku = trim((string)($car['sku'] ?? ''));
   <?php endif; ?>
 
   <div class="top">
-    <div class="gallery card">
+    <div class="gallery card" aria-live="polite">
       <div class="main-photo" id="mainPhotoWrap">
         <?php if ($mainPhoto): ?>
           <img id="mainPhotoImg" src="<?= esc($mainPhoto) ?>" alt="<?= esc($car['brand'].' '.$car['model']) ?>">
@@ -208,9 +234,9 @@ $car_sku = trim((string)($car['sku'] ?? ''));
       </div>
 
       <?php if (!empty($gallery)): ?>
-        <div class="thumbs" id="thumbs">
+        <div class="thumbs" id="thumbs" role="list">
           <?php foreach ($gallery as $idx => $g): ?>
-            <div class="thumb" data-src="<?= esc($g) ?>">
+            <div class="thumb" data-src="<?= esc($g) ?>" role="listitem" aria-label="Фото <?= $idx+1 ?>">
               <img src="<?= esc($g) ?>" alt="Фото <?= $idx+1 ?>">
             </div>
           <?php endforeach; ?>
@@ -219,7 +245,7 @@ $car_sku = trim((string)($car['sku'] ?? ''));
     </div>
 
     <div class="info card">
-      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
         <div>
           <?php if (!empty($car['brand'])): ?><span class="badge"><?= esc($car['brand']) ?></span><?php endif; ?>
           <?php if (!empty($car['model'])): ?><span class="badge"><?= esc($car['model']) ?></span><?php endif; ?>
@@ -231,11 +257,11 @@ $car_sku = trim((string)($car['sku'] ?? ''));
         </div>
       </div>
 
-      <div class="rows">
-        <div class="row-item"><strong>VIN:</strong> <?= esc($car['vin'] ?? '-') ?></div>
-        <div class="row-item"><strong>Пробег:</strong> <?= $car['mileage'] ? number_format((int)$car['mileage']) . ' км' : '—' ?></div>
-        <div class="row-item"><strong>Коробка:</strong> <?= esc($car['transmission'] ?? '-') ?></div>
-        <div class="row-item"><strong>Топливо:</strong> <?= esc($car['fuel'] ?? '-') ?></div>
+      <div class="rows" role="list">
+        <div class="row-item" role="listitem"><strong>VIN:</strong> <?= esc($car['vin'] ?? '-') ?></div>
+        <div class="row-item" role="listitem"><strong>Пробег:</strong> <?= $car['mileage'] ? number_format((int)$car['mileage']) . ' км' : '—' ?></div>
+        <div class="row-item" role="listitem"><strong>Коробка:</strong> <?= esc($car['transmission'] ?? '-') ?></div>
+        <div class="row-item" role="listitem"><strong>Топливо:</strong> <?= esc($car['fuel'] ?? '-') ?></div>
       </div>
 
       <!-- SKU display -->
@@ -243,7 +269,7 @@ $car_sku = trim((string)($car['sku'] ?? ''));
         <strong>Артикул:</strong>
         <?php if ($car_sku !== ''): ?>
           <div class="sku-row">
-            <a id="skuLink" class="sku-text" href="#"><?= esc($car_sku) ?></a>
+            <span id="skuText" class="sku-text"><?= esc($car_sku) ?></span>
             <button type="button" id="copySkuBtn" class="sku-copy" aria-label="Копировать артикул">📋</button>
           </div>
         <?php else: ?>
@@ -269,11 +295,14 @@ $car_sku = trim((string)($car['sku'] ?? ''));
         </div>
       </div>
 
-      <div class="actions">
-        <a class="btn ghost" href="/mehanik/public/index.php">⬅ Назад</a>
+      <div class="actions" role="toolbar" aria-label="Действия с объявлением">
+        <a class="btn ghost" href="/mehanik/public/index.php" title="Назад">⬅ Назад</a>
+
         <?php if ($is_owner || $is_admin): ?>
-          <a class="btn" href="/mehanik/public/edit-car.php?id=<?= (int)$car['id'] ?>">Редактировать</a>
-          <a class="btn ghost" href="/mehanik/public/delete-car.php?id=<?= (int)$car['id'] ?>" onclick="return confirm('Удалить объявление?')">Удалить</a>
+          <a class="btn edit" href="/mehanik/public/edit-car.php?id=<?= (int)$car['id'] ?>" title="Редактировать">✏ Редактировать</a>
+
+          <!-- delete uses JS POST to API -->
+          <button class="btn danger" id="deleteCarBtn" data-id="<?= (int)$car['id'] ?>" type="button" title="Удалить">🗑 Удалить</button>
         <?php endif; ?>
       </div>
     </div>
@@ -282,25 +311,32 @@ $car_sku = trim((string)($car['sku'] ?? ''));
 
 <script>
 (function(){
+  // gallery thumbnails -> main image swap
   const mainImg = document.getElementById('mainPhotoImg');
   const thumbs = document.getElementById('thumbs');
-  if (thumbs) {
+  if (thumbs && mainImg) {
     thumbs.addEventListener('click', function(e){
       const t = e.target.closest('.thumb');
       if (!t) return;
       const src = t.getAttribute('data-src');
-      if (src && mainImg) mainImg.src = src;
-      mainImg.scrollIntoView({behavior:'smooth', block:'center'});
+      if (src) {
+        // nice UX: preload image then swap to avoid flicker
+        const pre = new Image();
+        pre.onload = () => { mainImg.src = src; };
+        pre.onerror = () => { mainImg.src = src; };
+        pre.src = src;
+        mainImg.scrollIntoView({behavior:'smooth', block:'center'});
+      }
     });
   }
 
   // copy SKU
   (function(){
     const copyBtn = document.getElementById('copySkuBtn');
-    const skuLink = document.getElementById('skuLink');
-    if (!copyBtn || !skuLink) return;
+    const skuText = document.getElementById('skuText');
+    if (!copyBtn || !skuText) return;
     copyBtn.addEventListener('click', function(){
-      const text = skuLink.textContent.trim();
+      const text = skuText.textContent.trim();
       if (!text) return;
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(()=> {
@@ -334,6 +370,42 @@ $car_sku = trim((string)($car['sku'] ?? ''));
       }
     }
   })();
+
+  // delete handler — sends POST to API endpoint and redirects on success
+  (function(){
+    const delBtn = document.getElementById('deleteCarBtn');
+    if (!delBtn) return;
+    delBtn.addEventListener('click', async function(){
+      if (!confirm('Удалить объявление? Это действие нельзя будет отменить.')) return;
+      const id = delBtn.getAttribute('data-id');
+      if (!id) return alert('Не указан ID');
+      try {
+        const fd = new FormData();
+        fd.append('id', id);
+        // optional: allow API to require auth cookie (credentials included)
+        const resp = await fetch('/mehanik/api/delete-car.php', {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: fd
+        });
+        if (!resp.ok) {
+          const text = await resp.text().catch(()=>null);
+          throw new Error('Сервер вернул ошибку: ' + (resp.status + (text?(' — '+text):'')));
+        }
+        const json = await resp.json().catch(()=>null);
+        if (json && (json.ok || json.success)) {
+          // redirect to my-cars with message
+          window.location.href = '/mehanik/public/my-cars.php?msg=' + encodeURIComponent('Объявление удалено');
+        } else {
+          const err = (json && (json.error || json.message)) ? (json.error || json.message) : 'Не удалось удалить объявление';
+          alert(err);
+        }
+      } catch (err) {
+        alert('Ошибка при удалении: ' + (err && err.message ? err.message : err));
+      }
+    });
+  })();
+
 })();
 </script>
 </body>

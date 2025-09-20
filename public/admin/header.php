@@ -4,23 +4,108 @@
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 
-$projectRoot = dirname(__DIR__); // mehanik/public -> dirname -> mehanik
-$configPath = $projectRoot . '/config.php';
-$dbPath     = $projectRoot . '/db.php';
+// --- Поиск config.php и db.php (поддержка разных развертываний) ---
+$projectRootCandidate1 = dirname(__DIR__, 2); // из public/admin -> ../../ -> корень проекта (mehanik)
+$projectRootCandidate2 = dirname(__DIR__);   // из public/admin -> ../ -> mehanik/public
+
+$configPath = '';
+$dbPath = '';
+
+// --- Начало: функция логирования админских действий ---
+/**
+ * Записать действие администратора в таблицу notifications.
+ * Используйте из админских скриптов: admin_record_action($type, $message, $target_table=null, $target_id=null, $meta=null)
+ * Возвращает id записи или false.
+ */
+function admin_record_action(string $type, string $message, ?string $target_table = null, $target_id = null, $meta = null) {
+    // берем текущего админа из сессии, если нет — NULL
+    $adminId = isset($_SESSION['user']['id']) ? (int)$_SESSION['user']['id'] : null;
+
+    // подготовим meta как JSON строку, если массив/объект
+    $metaJson = null;
+    if ($meta !== null) {
+        if (is_array($meta) || is_object($meta)) {
+            $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE);
+        } else {
+            // если строка — сохраняем как есть
+            $metaJson = (string)$meta;
+        }
+    }
+
+    global $mysqli, $pdo;
+
+    try {
+        if (isset($mysqli) && $mysqli instanceof mysqli) {
+            $sql = "INSERT INTO notifications (admin_id, `type`, message, target_table, target_id, meta, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, NOW())";
+            $st = $mysqli->prepare($sql);
+            if (!$st) return false;
+            // admin_id может быть NULL -> используем 'i' and send null as null param (mysqli accepts null)
+            $t_id = $target_id !== null ? (int)$target_id : null;
+            $st->bind_param('isssis', $adminId, $type, $message, $target_table, $t_id, $metaJson);
+            if (!$st->execute()) {
+                error_log("admin_record_action (mysqli) execute failed: " . $st->error);
+                $st->close();
+                return false;
+            }
+            $id = $mysqli->insert_id;
+            $st->close();
+            return $id ?: true;
+        } elseif (isset($pdo) && $pdo instanceof PDO) {
+            $sql = "INSERT INTO notifications (admin_id, `type`, message, target_table, target_id, meta, created_at)
+                    VALUES (:admin_id, :type, :message, :target_table, :target_id, :meta, NOW())";
+            $st = $pdo->prepare($sql);
+            $st->execute([
+                ':admin_id'   => $adminId,
+                ':type'       => $type,
+                ':message'    => $message,
+                ':target_table'=> $target_table,
+                ':target_id'  => $target_id,
+                ':meta'       => $metaJson,
+            ]);
+            return (int)$pdo->lastInsertId();
+        } else {
+            // нет подключения к БД
+            error_log("admin_record_action: no DB connection available");
+            return false;
+        }
+    } catch (Throwable $e) {
+        error_log("admin_record_action error: " . $e->getMessage());
+        return false;
+    }
+}
+// --- Конец: функция логирования ---
+
+// Попробуем сначала корень проекта, затем public
+if (file_exists($projectRootCandidate1 . '/config.php')) {
+    $configPath = $projectRootCandidate1 . '/config.php';
+} elseif (file_exists($projectRootCandidate2 . '/config.php')) {
+    $configPath = $projectRootCandidate2 . '/config.php';
+}
+
+if (file_exists($projectRootCandidate1 . '/db.php')) {
+    $dbPath = $projectRootCandidate1 . '/db.php';
+} elseif (file_exists($projectRootCandidate2 . '/db.php')) {
+    $dbPath = $projectRootCandidate2 . '/db.php';
+}
 
 // Загрузка конфига (если есть)
-if (file_exists($configPath)) {
+if ($configPath) {
     $cfg = require $configPath;
     if (is_array($cfg)) $config = $cfg + (isset($config) ? $config : []);
 }
 if (!isset($config)) $config = ['base_url' => '/mehanik/public'];
 
-// base URL (используется при редиректах и формированиях ссылок)
+// base URL (используется при редиректах и формировании ссылок)
 $base = rtrim($config['base_url'] ?? '/mehanik/public', '/');
 
 // Подключаем DB (db.php должен инициализировать $mysqli или $pdo)
-if (file_exists($dbPath)) {
+if ($dbPath && file_exists($dbPath)) {
+    // require_once на случай многократного подключения
     require_once $dbPath;
+} else {
+    // Лог для девелопера — пусть в error_log будет след
+    error_log("header.php: db.php not found. Tried: {$projectRootCandidate1}/db.php and {$projectRootCandidate2}/db.php");
 }
 
 // Если пользователь залогинен — подтягиваем свежие данные + проверяем session_version
@@ -86,7 +171,8 @@ if (!empty($_SESSION['user']['id'])) {
             }
         }
     } catch (Throwable $e) {
-        // не прерываем работу хедера из-за ошибок БД
+        // не прерываем работу хедера из-за ошибок БД — логируем для отладки
+        error_log("header.php: user refresh error: " . $e->getMessage());
     }
 }
 
@@ -115,7 +201,8 @@ try {
         $pendingCars = (int)$pdo->query("SELECT COUNT(*) FROM cars WHERE status!='approved'")->fetchColumn();
     }
 } catch (Throwable $e) {
-    // ignore and leave zeros
+    // ignore and leave zeros, но логируем
+    error_log("header.php: pending counts error: " . $e->getMessage());
 }
 
 // текущий путь (без query string) для выделения активного пункта
@@ -264,10 +351,8 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
         <div class="name"><?= htmlspecialchars($user['name'] ?? $user['phone'] ?? 'admin') ?> <span style="font-weight:400;color:#9ca3af;">#<?= (int)($user['id'] ?? 0) ?></span></div>
         <div class="sub"><?= htmlspecialchars($user['phone'] ?? '') ?> · <?= htmlspecialchars($user['role'] ?? '') ?></div>
 
-        <!-- Баланс / Пополнить / Выйти удалены по запросу -->
-        <div class="header-actions" style="margin-top:8px;">
-          <!-- Сейчас пустая область для возможных действий админа -->
-        </div>
+        <!-- Placeholder for admin actions -->
+        <div class="header-actions" style="margin-top:8px;"></div>
       <?php else: ?>
         <div style="text-align:right;">
           <a href="<?= htmlspecialchars($base . '/login.php') ?>" class="header-actions">Войти</a>
@@ -291,13 +376,9 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
     if (!badge) {
       const links = nav.querySelectorAll('a');
       let chatLink = null;
-      links.forEach(a=>{
-        if (!chatLink) {
-          try {
-            if (a.textContent.trim().startsWith('Чаты')) chatLink = a;
-          } catch(e){}
-        }
-      });
+      links.forEach(a=>{ if (!chatLink) {
+          try { if (a.textContent.trim().startsWith('Чаты')) chatLink = a; } catch(e){}
+      }});
       if (!chatLink) chatLink = links[0];
       if (chatLink) {
         const span = document.createElement('span');

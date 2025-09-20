@@ -159,6 +159,18 @@ html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial
         <select id="part_quality"><option value="">Любое</option><option value="new">Новый</option><option value="used">Б/У</option></select>
       </div>
 
+<!-- Добавлены Year from / to -->
+      <div class="form-row" style="flex-direction:row;gap:8px;">
+        <div style="flex:1">
+          <label for="part_year_from">Год (от)</label>
+          <input id="part_year_from" type="number" min="1900" max="2050" placeholder="например 2000">
+        </div>
+        <div style="flex:1">
+          <label for="part_year_to">Год (до)</label>
+          <input id="part_year_to" type="number" min="1900" max="2050" placeholder="например 2020">
+        </div>
+      </div>
+
       <div class="form-row" style="flex-direction:row;gap:8px;">
         <div style="flex:1"><label for="part_price_from">Цена (от)</label><input id="part_price_from" type="number" min="0"></div>
         <div style="flex:1"><label for="part_price_to">Цена (до)</label><input id="part_price_to" type="number" min="0"></div>
@@ -191,7 +203,7 @@ window.noPhoto = <?= json_encode($noPhoto) ?>;
 window.fetchJSON = async function(url, opts = {}){ try{ const resp = await fetch(url, Object.assign({credentials:'same-origin'}, opts)); if (!resp.ok) return null; return await resp.json(); }catch(e){ return null; } };
 </script>
 
-<script src="/mehanik/assets/js/productList.js"></script>
+<script src="/mehanik/assets/js/partList.js"></script>
 
 <script>
 (function(){

@@ -1,19 +1,59 @@
 <?php
-// public/my-cars.php — обновлённая версия с показом артикула (SKU) в карточках
+// public/my-cars.php — серверный рендер + клиентский фильтр (устойчивый)
+// Улучшено по образцу public/my-products.php: стабильные lookups, аккуратный uploadsPrefix, SKU-очистка и т.д.
+
 require_once __DIR__ . '/../middleware.php';
 require_auth();
 require_once __DIR__ . '/../db.php';
 
-// Текущий пользователь (используется в JS для управления действиями)
 $user_id = (int)($_SESSION['user']['id'] ?? 0);
 if (!$user_id) {
     http_response_code(403); echo "Пользователь не в сессии."; exit;
 }
 
 $noPhoto = '/mehanik/assets/no-photo.png';
-$uploadsPrefix = '/mehanik/uploads/cars/';
+// Универсальная папка uploads — передаём в JS и используем аккуратно (js добавляет имя файла без лишних слэшей)
+$uploadsPrefix = '/mehanik/uploads/';
 $msg = $_GET['msg'] ?? '';
 $err = $_GET['err'] ?? '';
+$debug = isset($_GET['debug']) && $_GET['debug'] == '1';
+
+function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
+
+// --- server-side fetch: получить "мои" объявления на случай, если JS не сработает ---
+$serverItems = [];
+$fetchError = '';
+try {
+    if (isset($mysqli) && $mysqli instanceof mysqli) {
+        $sql = "SELECT id, user_id, brand, model, year, mileage, body, photo, price, status, sku, created_at, fuel, transmission
+                FROM cars
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT 200";
+        if ($st = $mysqli->prepare($sql)) {
+            $st->bind_param('i', $user_id);
+            $st->execute();
+            $res = $st->get_result();
+            while ($r = $res->fetch_assoc()) $serverItems[] = $r;
+            $st->close();
+        } else {
+            $fetchError = 'Prepare failed: ' . $mysqli->error;
+        }
+    } elseif (isset($pdo) && $pdo instanceof PDO) {
+        $st = $pdo->prepare("SELECT id, user_id, brand, model, year, mileage, body, photo, price, status, sku, created_at, fuel, transmission
+                             FROM cars WHERE user_id = :uid ORDER BY created_at DESC LIMIT 200");
+        if ($st->execute([':uid' => $user_id])) {
+            $serverItems = $st->fetchAll(PDO::FETCH_ASSOC);
+        } else {
+            $info = $st->errorInfo();
+            $fetchError = implode(' | ', $info);
+        }
+    } else {
+        $fetchError = 'Нет подключения к БД';
+    }
+} catch (Throwable $e) {
+    $fetchError = $e->getMessage();
+}
 ?>
 <!doctype html>
 <html lang="ru">
@@ -23,28 +63,22 @@ $err = $_GET['err'] ?? '';
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
   <style>
+    /* CSS как был, без изменений по визуалу (см. оригинал) */
     .page { max-width:1200px; margin:18px auto; padding:14px; }
     .layout { display:grid; grid-template-columns: 320px 1fr; gap:18px; }
     @media (max-width:1100px){ .layout{grid-template-columns:1fr;} }
-
     .topbar-row { display:flex; gap:12px; align-items:center; margin-bottom:14px; flex-wrap:wrap; }
-    .title { font-size:1.4rem; font-weight:800; margin:0; }
+    .title { font-size:1.4rem; font-weight:800;margin:0; }
     .tools { margin-left:auto; display:flex; gap:8px; align-items:center; }
     .btn { background:#0b57a4;color:#fff;padding:8px 12px;border-radius:8px;border:0;cursor:pointer;font-weight:700;text-decoration:none; }
-    .btn-ghost { background:transparent;border:1px solid #e6eef7;color:#0b57a4;padding:8px 12px;border-radius:8px;text-decoration:none; }
-
-    /* sidebar filters */
     .sidebar { background:#fff;padding:14px;border-radius:12px;box-shadow:0 8px 24px rgba(2,6,23,0.04); }
     .form-row{margin-top:10px;display:flex;flex-direction:column;gap:6px}
     .form-row label{font-weight:700}
     .form-row select,.form-row input{padding:8px;border-radius:8px;border:1px solid #eef3f8}
     .controls-row{display:flex;gap:8px;align-items:center;margin-top:12px}
-
-    /* products */
     .products { display:grid; grid-template-columns: repeat(3,1fr); gap:18px; }
     @media (max-width:992px){ .products{grid-template-columns:repeat(2,1fr);} }
     @media (max-width:640px){ .products{grid-template-columns:1fr;} }
-
     .card { background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 8px 20px rgba(2,6,23,0.06); display:flex;flex-direction:column; }
     .thumb { height:180px;background:#f5f7fb;display:flex;align-items:center;justify-content:center; }
     .thumb img { max-width:100%; max-height:100%; object-fit:cover; display:block; }
@@ -57,14 +91,10 @@ $err = $_GET['err'] ?? '';
     .badge.ok{background:#15803d} .badge.rej{background:#ef4444} .badge.pending{background:#b45309}
     .card-footer{padding:10px;border-top:1px solid #f1f3f6;display:flex;justify-content:space-between;align-items:center;gap:8px}
     .actions a,.actions button { text-decoration:none;padding:8px 10px;border-radius:8px;background:#eef6ff;color:#0b57a4;font-weight:700;border:1px solid rgba(11,87,164,0.08); cursor:pointer }
-    .actions .edit{background:#fff7ed;color:#a16207;border:1px solid rgba(161,98,7,0.08);}
-    .actions .del{background:#fff6f6;color:#ef4444;border:1px solid rgba(239,68,68,0.06);}
     .empty{background:#fff;padding:28px;border-radius:10px;text-align:center;box-shadow:0 8px 24px rgba(2,6,23,0.04)}
     .notice{padding:10px;border-radius:8px;margin-bottom:12px}
     .notice.ok{background:#eafaf0;border:1px solid #cfead1;color:#116530}
     .notice.err{background:#fff6f6;border:1px solid #f5c2c2;color:#8a1f1f}
-
-    /* SKU in card */
     .sku-row { display:flex; gap:8px; align-items:center; margin-top:6px; }
     .sku-text { font-weight:700; color:#0b57a4; text-decoration:underline; font-size:.95rem; }
     .sku-copy { padding:6px 8px; border-radius:6px; border:1px solid #e6e9ef; background:#fff; cursor:pointer; font-weight:700; }
@@ -81,8 +111,9 @@ $err = $_GET['err'] ?? '';
     </div>
   </div>
 
-  <?php if ($msg): ?><div class="notice ok"><?= htmlspecialchars($msg) ?></div><?php endif; ?>
-  <?php if ($err): ?><div class="notice err"><?= htmlspecialchars($err) ?></div><?php endif; ?>
+  <?php if ($msg): ?><div class="notice ok"><?= h($msg) ?></div><?php endif; ?>
+  <?php if ($err): ?><div class="notice err"><?= h($err) ?></div><?php endif; ?>
+  <?php if ($debug && $fetchError): ?><div class="notice err">Fetch error: <?= h($fetchError) ?></div><?php endif; ?>
 
   <div class="layout">
     <aside class="sidebar" aria-label="Фильтр автомобилей">
@@ -98,7 +129,6 @@ $err = $_GET['err'] ?? '';
 
       <div class="form-row">
         <label for="vehicle_body">Кузов</label>
-        <!-- теперь по умолчанию disabled -->
         <select id="vehicle_body" disabled><option value="">Сначала выберите тип</option></select>
       </div>
 
@@ -157,7 +187,70 @@ $err = $_GET['err'] ?? '';
 
     <section aria-live="polite">
       <div id="products" class="products">
-        <!-- карточки будут подгружаться через JS -->
+        <?php if (!empty($serverItems)): ?>
+          <?php foreach ($serverItems as $it):
+              // аккуратно формируем URL фото: если абсолютный — оставляем, иначе добавляем uploadsPrefix + имя файла
+              $photoUrl = '';
+              if (!empty($it['photo'])) {
+                  if (strpos($it['photo'], '/') === 0 || preg_match('#^https?://#i', $it['photo'])) {
+                      $photoUrl = $it['photo'];
+                  } else {
+                      // избегаем двойных слэшей
+                      $photoUrl = rtrim($uploadsPrefix, '/') . '/' . ltrim($it['photo'], '/');
+                  }
+              } else {
+                  $photoUrl = $noPhoto;
+              }
+          ?>
+            <article class="card">
+              <div class="thumb"><a href="/mehanik/public/car.php?id=<?= (int)$it['id'] ?>"><img src="<?= h($photoUrl) ?>" alt="<?= h(($it['brand'] ?? '') . ' ' . ($it['model'] ?? '')) ?>"></a></div>
+              <div class="card-body">
+                <div style="display:flex;justify-content:space-between;gap:12px">
+                  <div style="flex:1">
+                    <div class="car-title"><?= h(($it['brand'] ?? '') . ' ' . ($it['model'] ?? '')) ?></div>
+                    <div class="meta"><?= ($it['year'] ? (int)$it['year'] . ' г. · ' : '') . ($it['mileage'] ? number_format((int)$it['mileage'],0,'.',' ') . ' км · ' : '') . h($it['body'] ?? '-') ?></div>
+                  </div>
+                  <div style="text-align:right">
+                    <div class="price"><?= $it['price'] ? number_format((float)$it['price'], 2, '.', ' ') . ' TMT' : '-' ?></div>
+                    <div class="meta" style="margin-top:8px;font-size:.9rem">ID: <?= (int)$it['id'] ?></div>
+                  </div>
+                </div>
+
+                <div style="margin-top:6px">
+                  <?php $sku = $it['sku'] ?? ''; if ($sku !== ''):
+                        // убираем префикс SKU- для отображения, но в атрибутах храним оригинал
+                        $displaySku = preg_replace('/^SKU-/i', '', (string)$sku);
+                  ?>
+                    <div class="sku-row">
+                      <a class="sku-text" href="/mehanik/public/car.php?id=<?= (int)$it['id'] ?>"><?= h($displaySku) ?></a>
+                      <button type="button" class="sku-copy" onclick="(function(t){ try{ navigator.clipboard.writeText(t); alert('Скопировано'); }catch(e){ alert('Копирование не доступно'); } })(<?= json_encode($sku) ?>)">📋</button>
+                    </div>
+                  <?php else: ?>
+                    <div class="meta">Артикул: —</div>
+                  <?php endif; ?>
+                </div>
+
+                <div class="badges" style="margin-top:12px">
+                  <div class="badge <?= ($it['status']==='approved') ? 'ok' : (($it['status']==='rejected') ? 'rej' : 'pending') ?>">
+                    <?= ($it['status']==='approved') ? 'Подтверждён' : (($it['status']==='rejected') ? 'Отклонён' : 'На модерации') ?>
+                  </div>
+                  <div class="meta" style="background:#f3f5f8;padding:6px 8px;border-radius:8px;color:#334155">
+                    Добавлен: <?= h($it['created_at'] ?? '-') ?>
+                  </div>
+                </div>
+              </div>
+              <div class="card-footer">
+                <div class="actions">
+                  <a href="/mehanik/public/car.php?id=<?= (int)$it['id'] ?>">👁 Просмотр</a>
+                  <!-- edit/delete removed from server-render -->
+                </div>
+                <div style="text-align:right;color:#6b7280;font-size:.85rem"></div>
+              </div>
+            </article>
+          <?php endforeach; ?>
+        <?php else: ?>
+          <!-- Если серверных записей нет — контейнер будет пуст и JS попытается загрузить динамически -->
+        <?php endif; ?>
       </div>
     </section>
   </div>
@@ -167,19 +260,11 @@ $err = $_GET['err'] ?? '';
 window.currentUserId = <?= json_encode($user_id) ?>;
 window.uploadsPrefix = <?= json_encode($uploadsPrefix) ?>;
 window.noPhoto = <?= json_encode($noPhoto) ?>;
-
-// устаревший fetchJSON-помощник
-window.fetchJSON = async function(url, opts = {}) {
-  try {
-    const resp = await fetch(url, Object.assign({ credentials: 'same-origin' }, opts));
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch (e) { return null; }
-};
+// Серверные записи доступны как запасной источник для JS
+window.serverItems = <?= json_encode(array_values($serverItems), JSON_UNESCAPED_UNICODE) ?>;
 </script>
 
-<script src="/mehanik/assets/js/productList.js"></script>
-
+<script src="/mehanik/assets/js/carList.js"></script>
 <script>
 (function(){
   // элементы
@@ -216,25 +301,23 @@ window.fetchJSON = async function(url, opts = {}) {
   }
 
   function updateModelOptions(brandKey){
+    if (!modelEl) return;
     if (!brandKey) { modelEl.innerHTML = '<option value="">Сначала выберите бренд</option>'; modelEl.disabled = true; return; }
     const models = lookups.modelsByBrand[brandKey] || [];
     setSelectOptions(modelEl, models, 'Все модели'); modelEl.disabled = false;
   }
 
-  // NEW: update body options depending on vehicle type
   function updateBodyOptions(typeKey){
+    if (!vehicleBodyEl) return;
     if (!typeKey) {
       vehicleBodyEl.innerHTML = '<option value="">Сначала выберите тип</option>';
       vehicleBodyEl.disabled = true;
       return;
     }
-    // lookups.vehicle_bodies can be either an array (flat) or object keyed by type
     let items = [];
     if (Array.isArray(lookups.vehicle_bodies)) {
-      // flat array -> show all
       items = lookups.vehicle_bodies;
     } else if (lookups.vehicle_bodies && typeof lookups.vehicle_bodies === 'object') {
-      // object keyed by type
       items = lookups.vehicle_bodies[typeKey] || [];
     }
     setSelectOptions(vehicleBodyEl, items, 'Все кузова');
@@ -259,69 +342,99 @@ window.fetchJSON = async function(url, opts = {}) {
         const seen = new Set(); lookups.modelsByBrand[k] = lookups.modelsByBrand[k].filter(x=>{ if (seen.has(x.name)) return false; seen.add(x.name); return true; });
       }
     }
-    // vehicle types & bodies
     if (Array.isArray(data.vehicle_types)) lookups.vehicle_types = data.vehicle_types;
-    // vehicle_bodies might be array or object keyed by type depending on API — preserve shape
     if (data.vehicle_bodies) lookups.vehicle_bodies = data.vehicle_bodies;
     if (Array.isArray(data.fuel_types)) lookups.fuel_types = data.fuel_types;
     if (Array.isArray(data.gearboxes)) lookups.gearboxes = data.gearboxes;
   }
 
+  // fallback lookups from serverItems (если нет API/нет productList.lookups)
+  function buildLookupsFromServerItems(){
+    if (!window.serverItems || !window.serverItems.length) return;
+    const brandsMap = new Map();
+    const modelsByBrand = {};
+    const bodiesSet = new Set();
+    const fuelSet = new Set();
+    const gearboxSet = new Set();
+
+    for (const it of window.serverItems){
+      const brand = (it.brand || '').trim();
+      const model = (it.model || '').trim();
+      const body = (it.body || '').trim();
+      if (brand) {
+        if (!brandsMap.has(brand)) brandsMap.set(brand, { id: brand, name: brand });
+        if (model) {
+          if (!modelsByBrand[brand]) modelsByBrand[brand] = [];
+          modelsByBrand[brand].push({ id: model, name: model });
+        }
+      }
+      if (body) bodiesSet.add(body);
+      if (it.fuel) fuelSet.add(it.fuel);
+      if (it.transmission) gearboxSet.add(it.transmission);
+    }
+
+    if (!lookups.brands.length) lookups.brands = Array.from(brandsMap.values());
+    for (const b in modelsByBrand){
+      const seen = new Set();
+      lookups.modelsByBrand[b] = modelsByBrand[b].filter(x => { if (seen.has(x.name)) return false; seen.add(x.name); return true; });
+    }
+    if (!lookups.vehicle_bodies || (typeof lookups.vehicle_bodies === 'object' && Object.keys(lookups.vehicle_bodies).length === 0)) {
+      lookups.vehicle_bodies = Array.from(bodiesSet).map(v => ({ id: v, name: v }));
+    }
+    if ((!lookups.fuel_types || !lookups.fuel_types.length) && fuelSet.size) lookups.fuel_types = Array.from(fuelSet).map(v=>({ id: v, name: v }));
+    if ((!lookups.gearboxes || !lookups.gearboxes.length) && gearboxSet.size) lookups.gearboxes = Array.from(gearboxSet).map(v=>({ id: v, name: v }));
+  }
+
   async function loadLookups(){
-    // попытка получить lookups через глобальный productList
     if (window.productList && productList.lookups) mergeLookups(productList.lookups);
-    // fallback — API
     if (!lookups.brands.length){
       try{
         const resp = await fetch('/mehanik/api/products.php?type=auto', { credentials:'same-origin' });
-        if (resp.ok){ const data = await resp.json(); mergeLookups(data.lookups ?? data); }
+        if (resp.ok){ const data = await resp.json(); mergeLookups(data.lookups ?? data); if (window.productList && typeof productList.fillLookups === 'function') productList.fillLookups(data.lookups ?? data); }
       }catch(e){}
     }
+
+    buildLookupsFromServerItems();
+
     setSelectOptions(brandEl, lookups.brands, 'Все бренды');
     setSelectOptions(vehicleTypeEl, lookups.vehicle_types, 'Все типы');
 
-    // vehicle bodies: we DO NOT enable body select here — use updateBodyOptions to decide
-    // if lookups.vehicle_bodies is flat array, pass that; if it's keyed object, updateBodyOptions will pick correct subset
     if (Array.isArray(lookups.vehicle_bodies)) {
-      setSelectOptions(vehicleBodyEl, [], 'Сначала выберите тип'); // keep empty placeholder; updateBodyOptions will enable when needed
+      // если у нас общая массивная структура — оставим тело disabled до выбора типа (как раньше)
+      vehicleBodyEl.innerHTML = '<option value="">Сначала выберите тип</option>';
       vehicleBodyEl.disabled = true;
     } else {
-      // object keyed by type — still keep disabled until type chosen
       vehicleBodyEl.innerHTML = '<option value="">Сначала выберите тип</option>';
       vehicleBodyEl.disabled = true;
     }
 
     setSelectOptions(fuelTypeEl, lookups.fuel_types, 'Любое');
     setSelectOptions(gearboxEl, lookups.gearboxes, 'Любая');
-    updateModelOptions(brandEl.value);
-    // ensure body state consistent with any preselected value
-    updateBodyOptions(vehicleTypeEl.value);
+
+    updateModelOptions(brandEl ? brandEl.value : '');
+    updateBodyOptions(vehicleTypeEl ? vehicleTypeEl.value : '');
   }
 
   function collectFilters(){
     const getVal=v=>v?String(v.value).trim():'';
     const filters = {
       type: 'auto',
-      mine: onlyMineEl.checked ? '1' : '0',
+      mine: onlyMineEl && onlyMineEl.checked ? '1' : '0',
       brand: getVal(brandEl), model: getVal(modelEl), vehicle_type: getVal(vehicleTypeEl), vehicle_body: getVal(vehicleBodyEl),
       fuel_type: getVal(fuelTypeEl), gearbox: getVal(gearboxEl), year_from: getVal(yearFromEl), year_to: getVal(yearToEl),
       price_from: getVal(priceFromEl), price_to: getVal(priceToEl), q: getVal(searchEl)
     };
-    // remove empty
     Object.keys(filters).forEach(k=>{ if (filters[k]==='') delete filters[k]; });
-    // if vehicle_type is not provided, ignore vehicle_body even if set (defensive)
     if (!filters.vehicle_type && filters.vehicle_body) delete filters.vehicle_body;
     return filters;
   }
 
   async function applyFilters(){
     const filters = collectFilters();
-    // prefer productList.loadProducts if available
     if (window.productList && typeof productList.loadProducts === 'function'){
       try{ await productList.loadProducts(filters); return; }catch(e){ console.warn('productList.loadProducts error', e); }
     }
 
-    // fallback fetch
     try{
       const params = new URLSearchParams(filters);
       const resp = await fetch('/mehanik/api/products.php?'+params.toString(), { credentials:'same-origin' });
@@ -329,13 +442,17 @@ window.fetchJSON = async function(url, opts = {}) {
         const json = await resp.json();
         const items = json.products ?? json.items ?? json;
         renderProducts(Array.isArray(items)?items:[]);
+      } else {
+        renderProducts([]);
       }
-    }catch(e){ console.warn(e); }
+    }catch(e){ console.warn(e); renderProducts([]); }
   }
 
   function renderProducts(items){
     container.innerHTML = '';
     if (!items || !items.length) { container.innerHTML = '<div class="empty"><h3 style="margin:0">По вашему запросу ничего не найдено</h3></div>'; return; }
+
+    const frag = document.createDocumentFragment();
 
     for (const it of items){
       const card = document.createElement('article'); card.className = 'card';
@@ -349,7 +466,8 @@ window.fetchJSON = async function(url, opts = {}) {
       const row = document.createElement('div'); row.style.display='flex'; row.style.justifyContent='space-between'; row.style.gap='12px';
       const left = document.createElement('div'); left.style.flex='1';
       const title = document.createElement('div'); title.className='car-title'; title.textContent = (it.brand||'') + ' ' + (it.model||'');
-      const meta = document.createElement('div'); meta.className='meta'; meta.textContent = ((it.year)?(it.year+' г. · '):'') + ((it.mileage)?(Number(it.mileage).toLocaleString()+' км · '):'') + (it.body||'-');
+      const meta = document.createElement('div'); meta.className='meta';
+      meta.textContent = ((it.year)?(it.year+' г. · '):'') + ((it.mileage)?(Number(it.mileage).toLocaleString()+' км · '):'') + (it.body||'-');
       left.appendChild(title); left.appendChild(meta);
       const right = document.createElement('div'); right.style.textAlign='right';
       const price = document.createElement('div'); price.className = 'price'; price.textContent = (it.price ? (Number(it.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits:2}) + ' TMT') : '-');
@@ -359,18 +477,18 @@ window.fetchJSON = async function(url, opts = {}) {
 
       body.appendChild(row);
 
-      // SKU row (артикул)
+      // SKU row (trim SKU- префикс для отображения)
       const skuRaw = (it.sku || it.article || it.code || '') + '';
-      const skuWrap = document.createElement('div');
-      skuWrap.style.marginTop = '6px';
+      const displaySku = skuRaw.replace(/^SKU-/i, '').trim();
+      const skuWrap = document.createElement('div'); skuWrap.style.marginTop = '6px';
       if (skuRaw && skuRaw.trim() !== '') {
         const skuRow = document.createElement('div'); skuRow.className = 'sku-row';
-        const skuLink = document.createElement('a'); skuLink.className = 'sku-text'; skuLink.href = '/mehanik/public/car.php?id='+encodeURIComponent(it.id); skuLink.textContent = skuRaw;
+        const skuLink = document.createElement('a'); skuLink.className = 'sku-text'; skuLink.href = '/mehanik/public/car.php?id='+encodeURIComponent(it.id); skuLink.textContent = displaySku || skuRaw;
         skuLink.title = 'Перейти к объявлению';
         const copyBtn = document.createElement('button'); copyBtn.type='button'; copyBtn.className='sku-copy'; copyBtn.textContent='📋'; copyBtn.title='Копировать артикул';
         copyBtn.addEventListener('click', function(ev){
           ev.preventDefault();
-          const text = skuRow.querySelector('.sku-text').textContent.trim();
+          const text = skuRaw;
           if (!text) return;
           if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(text).then(()=> {
@@ -392,7 +510,7 @@ window.fetchJSON = async function(url, opts = {}) {
       body.appendChild(skuWrap);
 
       const badges = document.createElement('div'); badges.className='badges';
-      const status = document.createElement('div'); status.className='badge ' + ((it.status==='approved')? 'ok' : (it.status==='rejected'? 'rej':'pending'));
+      const status = document.createElement('div'); status.className = 'badge ' + ((it.status==='approved')? 'ok' : (it.status==='rejected'? 'rej':'pending'));
       status.textContent = (it.status==='approved')? 'Подтверждён' : (it.status==='rejected'? 'Отклонён' : 'На модерации');
       const added = document.createElement('div'); added.className='meta'; added.style.background='#f3f5f8'; added.style.padding='6px 8px'; added.style.borderRadius='8px'; added.style.color='#334155'; added.textContent = 'Добавлен: ' + (it.created_at? new Date(it.created_at).toLocaleDateString() : '-');
       badges.appendChild(status); badges.appendChild(added);
@@ -401,35 +519,17 @@ window.fetchJSON = async function(url, opts = {}) {
       const footer = document.createElement('div'); footer.className='card-footer';
       const actions = document.createElement('div'); actions.className='actions';
       const view = document.createElement('a'); view.href = '/mehanik/public/car.php?id='+encodeURIComponent(it.id); view.textContent = '👁 Просмотр'; actions.appendChild(view);
-      const edit = document.createElement('a'); edit.href = '/mehanik/public/edit-car.php?id='+encodeURIComponent(it.id); edit.className='edit'; edit.textContent = '✏ Редактировать';
-
-      // Показать кнопки редактирования/удаления только если currentUserId === it.user_id
-      if (String(it.user_id) === String(window.currentUserId)){
-        actions.appendChild(edit);
-        const delBtn = document.createElement('button'); delBtn.type='button'; delBtn.className='del'; delBtn.textContent='🗑 Удалить';
-        delBtn.addEventListener('click', async function(){
-          if (!confirm('Удалить авто «'+ (it.brand||'') + ' ' + (it.model||'') + '»?')) return;
-          try{
-            const fd = new FormData(); fd.append('id', it.id);
-            const resp = await fetch('/mehanik/api/delete-car.php', { method:'POST', credentials:'same-origin', body: fd });
-            if (resp.ok){ const j = await resp.json(); if (j && (j.success||j.ok)) { alert('Удалено'); applyFilters(); } else { alert(j && j.error ? j.error : 'Ошибка при удалении'); } }
-            else { alert('Ошибка сети'); }
-          }catch(e){ alert('Ошибка: '+(e.message||e)); }
-        });
-        actions.appendChild(delBtn);
-      }
 
       footer.appendChild(actions);
-      // owner badge (hidden for others)
-      const ownerWrap = document.createElement('div'); ownerWrap.style.textAlign='right'; ownerWrap.style.fontSize='.85rem'; ownerWrap.style.color='#6b7280'; ownerWrap.textContent = '';
-      footer.appendChild(ownerWrap);
+      const ownerWrap = document.createElement('div'); ownerWrap.style.textAlign='right'; ownerWrap.style.fontSize='.85rem'; ownerWrap.style.color='#6b7280'; ownerWrap.textContent=''; footer.appendChild(ownerWrap);
 
       card.appendChild(thumb); card.appendChild(body); card.appendChild(footer);
-      container.appendChild(card);
+      frag.appendChild(card);
     }
+
+    container.appendChild(frag);
   }
 
-  // fallbackCopy helper for per-card copy buttons
   function fallbackCopy(text, btn){
     try {
       const ta = document.createElement('textarea');
@@ -454,10 +554,9 @@ window.fetchJSON = async function(url, opts = {}) {
   }
 
   // события
-  brandEl.addEventListener('change', function(){ updateModelOptions(this.value); applyFilters(); });
-  modelEl.addEventListener('change', applyFilters);
+  if (brandEl) brandEl.addEventListener('change', function(){ updateModelOptions(this.value); applyFilters(); });
+  if (modelEl) modelEl.addEventListener('change', applyFilters);
 
-  // при смене типа ТС — обновляем кузова и применяем фильтр
   if (vehicleTypeEl) {
     vehicleTypeEl.addEventListener('change', function(){
       updateBodyOptions(this.value);
@@ -465,24 +564,26 @@ window.fetchJSON = async function(url, opts = {}) {
     });
   }
 
-  // остальные элементы — просто применяют фильтры
   [vehicleBodyEl, fuelTypeEl, gearboxEl, yearFromEl, yearToEl, priceFromEl, priceToEl].forEach(el=>{ if(!el) return; el.addEventListener('change', applyFilters); });
-  searchEl.addEventListener('input', (function(){ let t; return function(){ clearTimeout(t); t=setTimeout(()=>applyFilters(),300); }; })());
-  onlyMineEl.addEventListener('change', applyFilters);
-  clearBtn.addEventListener('click', function(e){ e.preventDefault();
-    [brandEl,modelEl,vehicleTypeEl,vehicleBodyEl,fuelTypeEl,gearboxEl,yearFromEl,yearToEl,priceFromEl,priceToEl,searchEl].forEach(el=>{ if(!el) return; if(el.tagName.toLowerCase()==='select') el.selectedIndex=0; else el.value=''; });
-    onlyMineEl.checked=true;
-    // сброс зависимых селектов
+  if (searchEl) searchEl.addEventListener('input', (function(){ let t; return function(){ clearTimeout(t); t=setTimeout(()=>applyFilters(),300); }; })());
+  if (onlyMineEl) onlyMineEl.addEventListener('change', applyFilters);
+  if (clearBtn) clearBtn.addEventListener('click', function(e){ e.preventDefault();
+    [brandEl,modelEl,vehicleTypeEl,vehicleBodyEl,fuelTypeEl,gearboxEl,yearFromEl,yearToEl,priceFromEl,priceToEl,searchEl].forEach(el=>{ if(!el) return; if(el.tagName && el.tagName.toLowerCase()==='select') el.selectedIndex=0; else el.value=''; });
+    if (onlyMineEl) onlyMineEl.checked=true;
     updateModelOptions('');
     updateBodyOptions('');
     applyFilters();
   });
 
-  // инициализация
+  // инициализация: загружаем lookup'ы, заполняем селекты.
   (async function init(){
     await loadLookups();
-    // по умолчанию - показываем только мои (так как это страница Мои объявления)
-    applyFilters();
+    // Если нет serverItems — грузим через API. Если serverItems есть (отрисовано сервером), не затираем их сразу.
+    if (!window.serverItems || !window.serverItems.length) {
+      applyFilters();
+    } else {
+      // сервер уже отрисовал карточки — селекты заполнены, ждём действий пользователя
+    }
   })();
 
 })();

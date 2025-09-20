@@ -117,32 +117,44 @@ try {
         $dir  = strtolower(trim($_GET['dir'] ?? 'desc')) === 'asc' ? 'ASC' : 'DESC';
         if (!in_array($sort, $allowedSort, true)) $sort = 'created_at';
 
-        if ($dbEngine === 'mysqli') {
-            $sql = "SELECT t.*, u.name AS user_name, u.phone AS user_phone, a.name AS admin_name, e.name AS executor_name
-                    FROM accounting_transactions t
+        // строим SELECT с поддержкой executor как id или как строка
+        // executor_raw - оригинальное значение из t.executor
+        // executor_display - приоритет: имя исполнителя из users (e.name) -> t.executor (если строка) -> admin_name
+        $baseSelect = "t.*, t.executor AS executor_raw, u.name AS user_name, u.phone AS user_phone, a.name AS admin_name, e.name AS executor_name";
+        $fromClause = "FROM accounting_transactions t
                     LEFT JOIN users u ON u.id = t.user_id
                     LEFT JOIN users a ON a.id = t.admin_id
-                    LEFT JOIN users e ON e.id = t.executor
-                    WHERE 1=1";
-            $params = [];
+                    LEFT JOIN users e ON e.id = t.executor";
 
-            if ($q_user !== '') {
-                if (ctype_digit($q_user)) {
-                    $sql .= " AND (t.user_id = ? OR u.name LIKE CONCAT('%',?,'%') OR u.phone LIKE CONCAT('%',?,'%'))";
-                    $params[] = $q_user; $params[] = $q_user; $params[] = $q_user;
-                } else {
-                    $sql .= " AND (u.name LIKE CONCAT('%',?,'%') OR u.phone LIKE CONCAT('%',?,'%'))";
-                    $params[] = $q_user; $params[] = $q_user;
-                }
+        $sql = "SELECT {$baseSelect} {$fromClause} WHERE 1=1";
+        $params = [];
+
+        if ($q_user !== '') {
+            if (ctype_digit($q_user)) {
+                $sql .= " AND (t.user_id = ? OR u.name LIKE CONCAT('%',?,'%') OR u.phone LIKE CONCAT('%',?,'%'))";
+                $params[] = $q_user; $params[] = $q_user; $params[] = $q_user;
+            } else {
+                $sql .= " AND (u.name LIKE CONCAT('%',?,'%') OR u.phone LIKE CONCAT('%',?,'%'))";
+                $params[] = $q_user; $params[] = $q_user;
             }
-            if ($q_type !== '' ) { $sql .= " AND t.type = ?"; $params[] = $q_type; }
-            if ($from !== '') { $sql .= " AND t.created_at >= ?"; $params[] = $from . ' 00:00:00'; }
-            if ($to   !== '') { $sql .= " AND t.created_at <= ?"; $params[] = $to . ' 23:59:59'; }
+        }
+        if ($q_type !== '' ) { $sql .= " AND t.type = ?"; $params[] = $q_type; }
+        if ($from !== '') { $sql .= " AND t.created_at >= ?"; $params[] = $from . ' 00:00:00'; }
+        if ($to   !== '') { $sql .= " AND t.created_at <= ?"; $params[] = $to . ' 23:59:59'; }
 
+        // Если сортировка по executor — используем выражение, иначе обычный ORDER BY t.<col>
+        if ($sort === 'executor') {
+            // используем ту же логику, что и для вывода: сначала e.name, затем t.executor, затем a.name
+            $orderExpr = "COALESCE(e.name, NULLIF(t.executor, ''), a.name)";
+            $sql .= " ORDER BY {$orderExpr} {$dir} LIMIT 200";
+        } else {
+            // защитим имя колонки (разрешённые перечислены выше)
             $sql .= " ORDER BY t." . $sort . " " . $dir . " LIMIT 200";
+        }
 
-            $lastQuery = $sql; $lastParams = $params;
+        $lastQuery = $sql; $lastParams = $params;
 
+        if ($dbEngine === 'mysqli') {
             $st = $mysqli->prepare($sql);
             if ($st === false) {
                 if (empty($params)) {
@@ -154,8 +166,11 @@ try {
                 }
             } else {
                 if (!empty($params)) {
+                    // простая логика типов: целые как i, остальное как s
                     $types = '';
-                    foreach ($params as $p) $types .= (is_numeric($p) && (string)(int)$p === (string)$p) ? 'i' : 's';
+                    foreach ($params as $p) {
+                        $types .= (is_numeric($p) && (string)(int)$p === (string)$p) ? 'i' : 's';
+                    }
                     $bind = [$types];
                     foreach ($params as $i => $v) $bind[] = &$params[$i];
                     call_user_func_array([$st, 'bind_param'], $bind);
@@ -168,30 +183,6 @@ try {
                 $st->close();
             }
         } elseif ($dbEngine === 'pdo') {
-            $sql = "SELECT t.*, u.name AS user_name, u.phone AS user_phone, a.name AS admin_name, e.name AS executor_name
-                    FROM accounting_transactions t
-                    LEFT JOIN users u ON u.id = t.user_id
-                    LEFT JOIN users a ON a.id = t.admin_id
-                    LEFT JOIN users e ON e.id = t.executor
-                    WHERE 1=1";
-            $params = [];
-            if ($q_user !== '') {
-                if (ctype_digit($q_user)) {
-                    $sql .= " AND (t.user_id = :uid OR u.name LIKE :uq OR u.phone LIKE :uq)";
-                    $params[':uid'] = $q_user; $params[':uq'] = "%{$q_user}%";
-                } else {
-                    $sql .= " AND (u.name LIKE :uq OR u.phone LIKE :uq)";
-                    $params[':uq'] = "%{$q_user}%";
-                }
-            }
-            if ($q_type !== '') { $sql .= " AND t.type = :type"; $params[':type'] = $q_type; }
-            if ($from !== '') { $sql .= " AND t.created_at >= :from"; $params[':from'] = $from . ' 00:00:00'; }
-            if ($to   !== '') { $sql .= " AND t.created_at <= :to";   $params[':to'] = $to . ' 23:59:59'; }
-
-            $sql .= " ORDER BY t." . $sort . " " . $dir . " LIMIT 200";
-
-            $lastQuery = $sql; $lastParams = $params;
-
             $st = $pdo->prepare($sql);
             if (!$st->execute($params)) {
                 $lastError = implode(' | ', $st->errorInfo());
@@ -239,9 +230,11 @@ try {
               </td>
               <td style="padding:8px;vertical-align:top">
                 <?php
-                  // Приоритет: executor_name -> admin_name -> #admin_id
+                  // Приоритет вывода: name из e (если был JOIN по id) -> если executor_raw непустой — вывести его -> admin_name -> fallback #admin_id
                   if (!empty($it['executor_name'])) {
                       echo esc($it['executor_name']);
+                  } elseif (!empty($it['executor_raw'])) {
+                      echo esc($it['executor_raw']);
                   } elseif (!empty($it['admin_name'])) {
                       echo esc($it['admin_name']);
                   } else {
