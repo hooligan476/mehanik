@@ -1,5 +1,5 @@
 <?php
-// public/header.php — header с балансом (обновлён: убрана кнопка пополнить; баланс вровень с именем и содержит ID пользователя)
+// public/header.php
 
 $projectRoot = dirname(__DIR__);
 
@@ -133,6 +133,10 @@ $cssPath = htmlspecialchars($base . '/assets/css/header.css', ENT_QUOTES, 'UTF-8
         <a href="<?= htmlspecialchars($base . '/services.php') ?>">Сервисы/Услуги</a>
         <a href="<?= htmlspecialchars($base . '/my-cars.php') ?>">Авто</a>
         <a href="<?= htmlspecialchars($base . '/my-products.php') ?>">Запчасти</a>
+
+        <!-- НОВАЯ КНОПКА: Мои объявления -->
+        <a href="<?= htmlspecialchars($base . '/my-ads.php') ?>">Мои объявления</a>
+
         <a href="<?= htmlspecialchars($base . '/chat.php') ?>">Техподдержка чат</a>
 
         <?php if ($isAdminPanelVisible): ?>

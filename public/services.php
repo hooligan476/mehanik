@@ -8,72 +8,10 @@ $user = $_SESSION['user'] ?? null;
 $userId = (int)($user['id'] ?? 0);
 $isAdmin = ($user['role'] ?? '') === 'admin';
 
-// handle delete service (owner or admin)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_service') {
-    $delId = (int)($_POST['service_id'] ?? 0);
-    if ($delId > 0) {
-        $ownerId = 0; $logo = '';
-        if ($st = $mysqli->prepare("SELECT user_id, logo FROM services WHERE id = ? LIMIT 1")) {
-            $st->bind_param('i', $delId);
-            $st->execute();
-            $row = $st->get_result()->fetch_assoc() ?: [];
-            $st->close();
-            $ownerId = (int)($row['user_id'] ?? 0);
-            $logo = $row['logo'] ?? '';
-        }
-        if ($isAdmin || ($userId>0 && $ownerId === $userId)) {
-            $mysqli->begin_transaction();
-            try {
-                // delete photos files and rows
-                if ($st = $mysqli->prepare("SELECT id, photo FROM service_photos WHERE service_id = ?")) {
-                    $st->bind_param('i', $delId);
-                    $st->execute();
-                    $photos = $st->get_result()->fetch_all(MYSQLI_ASSOC) ?: [];
-                    $st->close();
-                    foreach ($photos as $p) {
-                        $f = $p['photo'] ?? '';
-                        if ($f) {
-                            $fs = __DIR__ . '/../' . ltrim($f, '/');
-                            if (is_file($fs)) @unlink($fs);
-                        }
-                    }
-                }
-                $mysqli->query("DELETE FROM service_photos WHERE service_id = " . intval($delId));
-                $mysqli->query("DELETE FROM service_prices WHERE service_id = " . intval($delId));
-                $mysqli->query("DELETE FROM service_reviews WHERE service_id = " . intval($delId));
-                $mysqli->query("DELETE FROM service_ratings WHERE service_id = " . intval($delId));
-                // delete logo file
-                if (!empty($logo)) {
-                    $fs = __DIR__ . '/../' . ltrim($logo, '/');
-                    if (is_file($fs)) @unlink($fs);
-                }
-                // delete folder if empty
-                $dir = __DIR__ . '/../uploads/services/' . $delId;
-                if (is_dir($dir)) {
-                    // attempt to remove files remaining
-                    $files = glob($dir . '/*');
-                    foreach ($files as $f) if (is_file($f)) @unlink($f);
-                    @rmdir($dir);
-                }
-                // delete service row
-                if ($st = $mysqli->prepare("DELETE FROM services WHERE id = ? LIMIT 1")) {
-                    $st->bind_param('i', $delId);
-                    $st->execute();
-                    $st->close();
-                }
-                $mysqli->commit();
-                $_SESSION['flash'] = 'Сервис удалён';
-            } catch (Throwable $e) {
-                $mysqli->rollback();
-                $_SESSION['flash_error'] = 'Ошибка удаления: ' . $e->getMessage();
-            }
-        } else {
-            $_SESSION['flash_error'] = 'Нет прав на удаление';
-        }
-    }
-    header('Location: services.php');
-    exit;
-}
+// === NOTE ===
+// Server-side deletion handling removed as requested.
+// If deletion should be available, implement it on service.php with proper checks.
+// ============
 
 // search / sort
 $search = trim($_GET['q'] ?? '');
@@ -146,7 +84,6 @@ function toPublicUrl($rel) {
     .svc-actions{display:flex;gap:8px;align-items:center}
     .btn{background:#0b57a4;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none;font-weight:700}
     .btn-ghost{background:transparent;color:#0b57a4;border:1px solid #dbeeff;padding:8px 12px;border-radius:8px}
-    .btn-danger{background:#ef4444;color:#fff;padding:8px 12px;border-radius:8px;border:0}
     .service-desc{margin-top:8px;color:#374151;font-size:.95rem;line-height:1.3}
     @media(max-width:760px){ .card{flex-direction:column;align-items:stretch} .service-logo-wrap{width:100%;height:180px} .service-logo{height:100%}}
   </style>
@@ -187,8 +124,6 @@ function toPublicUrl($rel) {
     $avg = isset($s['avg_rating']) && $s['avg_rating']!==null ? round((float)$s['avg_rating'],1) : 0.0;
     $cnt = (int)($s['reviews_count'] ?? 0);
     $percent = max(0, min(100, ($avg/5)*100));
-    $ownerId = (int)($s['user_id'] ?? 0);
-    $canManage = $isAdmin || ($userId>0 && $ownerId === $userId);
     $status = htmlspecialchars(strtolower($s['status'] ?? 'pending'));
     $logoUrl = !empty($s['logo']) ? toPublicUrl($s['logo']) : '';
     $shortDesc = isset($s['description']) ? htmlspecialchars(mb_strimwidth($s['description'], 0, 180, '...')) : '';
@@ -229,16 +164,7 @@ function toPublicUrl($rel) {
             <a href="appointment.php?id=<?= (int)$s['id'] ?>" class="btn btn-ghost">Записаться</a>
           </div>
 
-          <?php if ($canManage): ?>
-            <div class="svc-actions">
-              <a href="edit-service.php?id=<?= (int)$s['id'] ?>" class="btn btn-ghost">Редактировать</a>
-              <form method="post" style="display:inline;" onsubmit="return confirm('Удалить этот сервис?');">
-                <input type="hidden" name="action" value="delete_service">
-                <input type="hidden" name="service_id" value="<?= (int)$s['id'] ?>">
-                <button type="submit" class="btn btn-danger">Удалить</button>
-              </form>
-            </div>
-          <?php endif; ?>
+          <!-- Редактирование/Удаление убраны из списка; если нужно, реализовать на service.php -->
         </div>
       </div>
     </div>

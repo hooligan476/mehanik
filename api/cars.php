@@ -1,5 +1,5 @@
 <?php
-// /mehanik/api/cars.php
+// /mehanik/api/cars.php — адаптирован под схему: id, sku, user_id, vehicle_type, body, brand, model, year, mileage, transmission, fuel, price, photo, description, contact_phone, status, created_at, vin
 ini_set('display_errors', 0);
 error_reporting(E_ALL);
 
@@ -22,101 +22,103 @@ try {
     $getStr = function($k){ return isset($_GET[$k]) ? trim((string)$_GET[$k]) : ''; };
     $getInt = function($k){ return (isset($_GET[$k]) && $_GET[$k] !== '') ? (int)$_GET[$k] : null; };
 
-    // inputs
-    $brand_raw = $getStr('brand');
-    $model_raw = $getStr('model');
-    $brand_id_in = is_numeric($brand_raw) ? (int)$brand_raw : null;
-    $model_id_in = is_numeric($model_raw) ? (int)$model_raw : null;
-
+    // inputs (support both 'brand' and 'brand_car' etc.)
+    $brand_raw = $getStr('brand') ?: $getStr('brand_car');
+    $model_raw = $getStr('model') ?: $getStr('model_car');
     $year_from = $getInt('year_from');
-    $year_to = $getInt('year_to');
+    $year_to   = $getInt('year_to');
+    $m_from    = $getInt('mileage_from');
+    $m_to      = $getInt('mileage_to');
+    $fuel_raw  = $getStr('fuel') ?: $getStr('fuel_type');
+    $gear_raw  = $getStr('transmission') ?: $getStr('gearbox');
+    $vehicle_type_raw = $getStr('vehicle_type');
+    $vehicle_body_raw = $getStr('vehicle_body');
     $price_from = (isset($_GET['price_from']) && $_GET['price_from'] !== '') ? (float)$_GET['price_from'] : null;
     $price_to   = (isset($_GET['price_to']) && $_GET['price_to'] !== '') ? (float)$_GET['price_to'] : null;
-
-    $fuel_raw = $getStr('fuel_type'); $fuel_id = is_numeric($fuel_raw) ? (int)$fuel_raw : null;
-    $gear_raw = $getStr('gearbox');   $gear_id = is_numeric($gear_raw) ? (int)$gear_raw : null;
-    $vehicle_type_raw = $getStr('vehicle_type'); $vehicle_type_id = is_numeric($vehicle_type_raw) ? (int)$vehicle_type_raw : null;
-    $vehicle_body_raw = $getStr('vehicle_body'); $vehicle_body_id = is_numeric($vehicle_body_raw) ? (int)$vehicle_body_raw : null;
-
     $q = $getStr('q');
     $mine = isset($_GET['mine']) && $_GET['mine'] === '1';
+    $recommend = isset($_GET['recommendation']) && $_GET['recommendation'] === '1';
     $limit = 200;
 
-    // base query
-    $sql = "SELECT c.id, c.user_id, c.brand, c.model, c.year, c.mileage, c.body, c.photo, c.price, c.status, c.sku, c.created_at, c.fuel, c.transmission
+    // recommendation quick path
+    if ($recommend) {
+        $qrec = "SELECT id, sku, user_id, vehicle_type, body, brand, model, year, mileage, transmission, fuel, price, photo, description, contact_phone, status, created_at, vin
+                 FROM cars WHERE status IN ('active','approved') AND COALESCE(recommended,0)=1 ORDER BY id DESC LIMIT 40";
+        $r = $mysqli->query($qrec);
+        $items = $r ? $r->fetch_all(MYSQLI_ASSOC) : [];
+        echo json_encode(['ok'=>true,'cars'=>$items], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    // Base query — use the exact columns you listed
+    $sql = "SELECT c.id, c.sku, c.user_id, c.vehicle_type, c.body, c.brand, c.model, c.year, c.mileage, c.transmission, c.fuel, c.price, c.photo, c.description, c.contact_phone, c.status, c.created_at, c.vin
             FROM cars c
             WHERE 1=1";
     $params = []; $types = '';
 
-    if ($mine && !empty($_SESSION['user']['id'])) { $sql .= " AND c.user_id = ?"; $params[] = (int)$_SESSION['user']['id']; $types .= 'i'; }
+    // mine: owner sees their items regardless of status
+    if ($mine && !empty($_SESSION['user']['id'])) {
+        $sql .= " AND c.user_id = ?";
+        $params[] = (int)$_SESSION['user']['id'];
+        $types .= 'i';
+    } else {
+        // public: only approved/published (adjust if your project uses 'active' instead)
+        $sql .= " AND c.status = 'approved'";
+    }
 
-    if ($brand_id_in !== null) {
-        $sql .= " AND (CAST(c.brand_id AS SIGNED) = ?)";
-        $params[] = $brand_id_in; $types .= 'i';
-    } elseif ($brand_raw !== '') {
+    // brand / model as TEXT fields (since your schema has brand/model columns)
+    if ($brand_raw !== '') {
+        // exact match (case-insensitive)
         $sql .= " AND LOWER(IFNULL(c.brand,'')) = LOWER(?)";
         $params[] = $brand_raw; $types .= 's';
     }
 
-    if ($model_id_in !== null) {
-        $sql .= " AND (CAST(c.model_id AS SIGNED) = ?)";
-        $params[] = $model_id_in; $types .= 'i';
-    } elseif ($model_raw !== '') {
+    if ($model_raw !== '') {
         $sql .= " AND LOWER(IFNULL(c.model,'')) = LOWER(?)";
         $params[] = $model_raw; $types .= 's';
     }
 
-    if ($year_from !== null) { $sql .= " AND (c.year IS NULL OR c.year >= ?)"; $params[] = $year_from; $types .= 'i'; }
-    if ($year_to !== null)   { $sql .= " AND (c.year IS NULL OR c.year <= ?)"; $params[] = $year_to; $types .= 'i'; }
+    // year filters — require non-null to match
+    if ($year_from !== null) { $sql .= " AND (c.year IS NOT NULL AND c.year >= ?)"; $params[] = $year_from; $types .= 'i'; }
+    if ($year_to !== null)   { $sql .= " AND (c.year IS NOT NULL AND c.year <= ?)"; $params[] = $year_to; $types .= 'i'; }
 
-    if ($price_from !== null) { $sql .= " AND (c.price IS NULL OR c.price >= ?)"; $params[] = $price_from; $types .= 'd'; }
-    if ($price_to !== null)   { $sql .= " AND (c.price IS NULL OR c.price <= ?)"; $params[] = $price_to; $types .= 'd'; }
+    // mileage filters
+    if ($m_from !== null) { $sql .= " AND (c.mileage IS NOT NULL AND c.mileage >= ?)"; $params[] = $m_from; $types .= 'i'; }
+    if ($m_to !== null)   { $sql .= " AND (c.mileage IS NOT NULL AND c.mileage <= ?)"; $params[] = $m_to; $types .= 'i'; }
 
-    if ($fuel_id !== null) {
-        $sql .= " AND (CAST(c.fuel_id AS SIGNED) = ? OR LOWER(IFNULL(c.fuel,'')) = LOWER(?))";
-        $params[] = $fuel_id; $params[] = $fuel_raw; $types .= 'is';
-    } elseif ($fuel_raw !== '') {
+    // transmission / fuel as text fields
+    if ($gear_raw !== '') {
+        $sql .= " AND LOWER(IFNULL(c.transmission,'')) = LOWER(?)";
+        $params[] = $gear_raw; $types .= 's';
+    }
+    if ($fuel_raw !== '') {
         $sql .= " AND LOWER(IFNULL(c.fuel,'')) = LOWER(?)";
         $params[] = $fuel_raw; $types .= 's';
     }
 
-    if ($gear_id !== null) {
-        $sql .= " AND (CAST(c.transmission_id AS SIGNED) = ? OR LOWER(IFNULL(c.transmission,'')) = LOWER(?))";
-        $params[] = $gear_id; $params[] = $gear_raw; $types .= 'is';
-    } elseif ($gear_raw !== '') {
-        $sql .= " AND LOWER(IFNULL(c.transmission,'')) = LOWER(?)";
-        $params[] = $gear_raw; $types .= 's';
-    }
-
-    if ($vehicle_type_id !== null) {
-        $sql .= " AND (CAST(c.vehicle_type_id AS SIGNED) = ? OR LOWER(IFNULL(c.vehicle_type,'')) = LOWER(?))";
-        $params[] = $vehicle_type_id; $params[] = $vehicle_type_raw; $types .= 'is';
-    } elseif ($vehicle_type_raw !== '') {
+    // vehicle type / body as text fields
+    if ($vehicle_type_raw !== '') {
         $sql .= " AND LOWER(IFNULL(c.vehicle_type,'')) = LOWER(?)";
         $params[] = $vehicle_type_raw; $types .= 's';
     }
-
-    if ($vehicle_body_id !== null) {
-        $sql .= " AND (CAST(c.body_id AS SIGNED) = ? OR LOWER(IFNULL(c.body,'')) = LOWER(?))";
-        $params[] = $vehicle_body_id; $params[] = $vehicle_body_raw; $types .= 'is';
-    } elseif ($vehicle_body_raw !== '') {
+    if ($vehicle_body_raw !== '') {
         $sql .= " AND LOWER(IFNULL(c.body,'')) = LOWER(?)";
         $params[] = $vehicle_body_raw; $types .= 's';
     }
 
-    // status: only approved when not mine
-    if (!$mine) {
-        $sql .= " AND c.status = 'approved'";
-    }
+    if ($price_from !== null) { $sql .= " AND (c.price IS NULL OR c.price >= ?)"; $params[] = $price_from; $types .= 'd'; }
+    if ($price_to !== null)   { $sql .= " AND (c.price IS NULL OR c.price <= ?)"; $params[] = $price_to; $types .= 'd'; }
 
-    // q search
+    // q search: support ID / SKU / brand / model / VIN
     if ($q !== '') {
         if (ctype_digit($q)) {
-            $sql .= " AND (c.id = ? OR c.sku LIKE CONCAT('%', ?, '%') OR c.model LIKE CONCAT('%', ?, '%') OR c.brand LIKE CONCAT('%', ?, '%'))";
-            $params[] = (int)$q; $params[] = $q; $params[] = $q; $params[] = $q; $types .= 'isss';
+            $sql .= " AND (c.id = ? OR c.sku LIKE CONCAT('%', ?, '%') OR c.brand LIKE CONCAT('%', ?, '%') OR c.model LIKE CONCAT('%', ?, '%') OR c.vin LIKE CONCAT('%', ?, '%'))";
+            $params[] = (int)$q; $params[] = $q; $params[] = $q; $params[] = $q; $params[] = $q;
+            $types .= 'issss';
         } else {
-            $sql .= " AND (c.model LIKE CONCAT('%', ?, '%') OR c.brand LIKE CONCAT('%', ?, '%') OR c.sku LIKE CONCAT('%', ?, '%'))";
-            $params[] = $q; $params[] = $q; $params[] = $q; $types .= 'sss';
+            $sql .= " AND (c.sku LIKE CONCAT('%', ?, '%') OR c.brand LIKE CONCAT('%', ?, '%') OR c.model LIKE CONCAT('%', ?, '%') OR c.vin LIKE CONCAT('%', ?, '%'))";
+            $params[] = $q; $params[] = $q; $params[] = $q; $params[] = $q;
+            $types .= 'ssss';
         }
     }
 
@@ -167,19 +169,56 @@ try {
     }
     $stmt->close();
 
-    // gather lookups
-    $response = ['ok'=>true, 'products'=>$rows, 'lookups'=>[
+    // build lookups: try dedicated lookup tables first, otherwise fallback to DISTINCT from cars
+    $response = ['ok'=>true, 'cars'=>$rows, 'lookups'=>[
         'brands'=>[],'models'=>[],'vehicle_types'=>[],'vehicle_bodies'=>[],'fuel_types'=>[],'gearboxes'=>[],'vehicle_years'=>[]
     ]];
 
-    $try = function($sqlq,$key) use ($mysqli,&$response){ $r=$mysqli->query($sqlq); if($r){ while($row=$r->fetch_assoc()) $response['lookups'][$key][] = $row; $r->free(); } };
-    $try("SELECT id, name FROM brands ORDER BY name", 'brands');
-    $try("SELECT id, name, brand_id FROM models ORDER BY name", 'models');
-    $try("SELECT id, `key`, name FROM vehicle_types ORDER BY name", 'vehicle_types');
-    $try("SELECT id, vehicle_type_id, `key`, name FROM vehicle_bodies ORDER BY name", 'vehicle_bodies');
-    $try("SELECT id, `key`, name FROM fuel_types ORDER BY name", 'fuel_types');
-    $try("SELECT id, `key`, name FROM gearboxes ORDER BY name", 'gearboxes');
-    $try("SELECT id, `year` FROM vehicle_years ORDER BY `year` DESC", 'vehicle_years');
+    $try = function($sqlq,$key) use ($mysqli,&$response){
+        $r = @$mysqli->query($sqlq);
+        if ($r) {
+            while($row=$r->fetch_assoc()) $response['lookups'][$key][] = $row;
+            $r->free();
+            return true;
+        }
+        return false;
+    };
+
+    // brands/models: prefer dedicated tables, else fallback to distinct
+    if (!$try("SELECT id, name FROM brands ORDER BY name", 'brands')) {
+        $r = $mysqli->query("SELECT DISTINCT brand AS name FROM cars WHERE brand <> '' ORDER BY brand");
+        if ($r) { while($row=$r->fetch_assoc()) $response['lookups']['brands'][] = ['name' => $row['name']]; $r->free(); }
+    }
+
+    if (!$try("SELECT id, name, brand_id FROM models ORDER BY name", 'models')) {
+        // fallback: DISTINCT model + brand
+        $r = $mysqli->query("SELECT DISTINCT model AS name, brand FROM cars WHERE model <> '' ORDER BY model");
+        if ($r) { while($row=$r->fetch_assoc()) $response['lookups']['models'][] = ['name'=>$row['name'], 'brand'=>$row['brand']]; $r->free(); }
+    }
+
+    // vehicle types & bodies
+    if (!$try("SELECT id, `key`, name FROM vehicle_types ORDER BY name", 'vehicle_types')) {
+        $r = $mysqli->query("SELECT DISTINCT vehicle_type AS name FROM cars WHERE vehicle_type <> '' ORDER BY vehicle_type");
+        if ($r) { while($row=$r->fetch_assoc()) $response['lookups']['vehicle_types'][] = ['name'=>$row['name']]; $r->free(); }
+    }
+    if (!$try("SELECT id, vehicle_type_id, `key`, name FROM vehicle_bodies ORDER BY name", 'vehicle_bodies')) {
+        $r = $mysqli->query("SELECT DISTINCT body AS name, vehicle_type FROM cars WHERE body <> '' ORDER BY body");
+        if ($r) { while($row=$r->fetch_assoc()) $response['lookups']['vehicle_bodies'][] = ['name'=>$row['name'], 'vehicle_type'=>$row['vehicle_type']]; $r->free(); }
+    }
+
+    // fuel types / gearboxes
+    if (!$try("SELECT id, `key`, name FROM fuel_types ORDER BY name", 'fuel_types')) {
+        $r = $mysqli->query("SELECT DISTINCT fuel AS name FROM cars WHERE fuel <> '' ORDER BY fuel");
+        if ($r) { while($row=$r->fetch_assoc()) $response['lookups']['fuel_types'][] = ['name'=>$row['name']]; $r->free(); }
+    }
+    if (!$try("SELECT id, `key`, name FROM gearboxes ORDER BY name", 'gearboxes')) {
+        $r = $mysqli->query("SELECT DISTINCT transmission AS name FROM cars WHERE transmission <> '' ORDER BY transmission");
+        if ($r) { while($row=$r->fetch_assoc()) $response['lookups']['gearboxes'][] = ['name'=>$row['name']]; $r->free(); }
+    }
+
+    // years from cars table
+    $r = $mysqli->query("SELECT DISTINCT year FROM cars WHERE year IS NOT NULL ORDER BY year DESC");
+    if ($r) { while($row=$r->fetch_assoc()) $response['lookups']['vehicle_years'][] = ['year' => $row['year']]; $r->free(); }
 
     echo json_encode($response, JSON_UNESCAPED_UNICODE);
     exit;

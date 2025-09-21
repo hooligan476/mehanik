@@ -305,6 +305,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // If no errors - insert
     if (empty($errors)) {
         try {
+            // --- build columns/values dynamically (exclude created_at, we'll use NOW()) ---
             $cols = [
                 'user_id','brand','model','year','body','mileage','transmission','fuel','price','photo','description','contact_phone'
             ];
@@ -322,35 +323,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $description,
                 $contact_phone
             ];
-            $types = 'issisissdsss';
 
-            if ($useVinColumn) { $cols[] = 'vin'; $values[] = $vin; $types .= 's'; }
-            if ($useVehicleTypeColumn) { $cols[] = 'vehicle_type'; $values[] = $vehicle_type_save; $types .= 's'; }
+            // optional vin / vehicle_type columns
+            if ($useVinColumn) {
+                $cols[] = 'vin';
+                $values[] = $vin;
+            }
+            if ($useVehicleTypeColumn) {
+                $cols[] = 'vehicle_type';
+                $values[] = $vehicle_type_save;
+            }
 
+            // status
             $cols[] = 'status';
             $values[] = 'pending';
-            $types .= 's';
 
-            $cols[] = 'created_at';
-            // placeholders
-            $placeholders = array_fill(0, count($cols), '?');
-            $placeholders[count($placeholders)-1] = 'NOW()'; // created_at uses NOW()
-
-            $sql = "INSERT INTO cars (" . implode(',', $cols) . ") VALUES (" . implode(',', $placeholders) . ")";
-
+            // --- mysqli path (dynamic types and binding) ---
             if (isset($mysqli) && $mysqli instanceof mysqli) {
+                // Build placeholders for bound params (we won't bind created_at)
+                $placeholders = array_fill(0, count($values), '?');
+                $sql = "INSERT INTO cars (" . implode(',', $cols) . ", created_at) VALUES (" . implode(',', $placeholders) . ", NOW())";
+
+                // determine types string
+                $types = '';
+                foreach ($values as $v) {
+                    if (is_int($v)) $types .= 'i';
+                    elseif (is_float($v) || is_double($v)) $types .= 'd';
+                    else $types .= 's';
+                }
+
                 $stmt = $mysqli->prepare($sql);
                 if (!$stmt) throw new Exception('Prepare failed: ' . $mysqli->error);
 
-                // bind params dynamically (exclude last created_at)
+                // build references for bind_param
                 $bindParams = [];
-                $bindParams[] = $types;
-                for ($i=0; $i < count($values); $i++) {
-                    $varname = 'p' . $i;
-                    $$varname = $values[$i];
-                    $bindParams[] = &$$varname;
+                $bindParams[] = & $types;
+                for ($i = 0; $i < count($values); $i++) {
+                    // create variable variables to have references
+                    ${"p".$i} = $values[$i];
+                    $bindParams[] = &${"p".$i};
                 }
 
+                // bind
                 if (!call_user_func_array([$stmt, 'bind_param'], $bindParams)) {
                     throw new Exception('Bind failed: ' . $stmt->error);
                 }
@@ -367,37 +381,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $up = $mysqli->prepare("UPDATE cars SET sku = ? WHERE id = ? LIMIT 1");
                 if ($up) { $up->bind_param('si', $skuGenerated, $newId); $up->execute(); $up->close(); }
 
+                // debug log for vehicle_type
+                if ($useVehicleTypeColumn) {
+                    error_log("add-car: inserted id={$newId}, vehicle_type_save=" . var_export($vehicle_type_save, true));
+                    // try to fetch saved vehicle_type to confirm
+                    try {
+                        $r = $mysqli->query("SELECT vehicle_type FROM cars WHERE id = " . ((int)$newId) . " LIMIT 1");
+                        if ($r) {
+                            $row = $r->fetch_assoc();
+                            error_log("add-car: vehicle_type in DB for id={$newId}: " . var_export($row['vehicle_type'] ?? null, true));
+                        }
+                    } catch (Throwable $_) {}
+                }
+
                 if ($isAjax) jsonOk(['id'=>$newId, 'sku'=>$skuGenerated]);
                 header('Location: ' . $basePublic . '/my-cars.php?msg=' . urlencode('Автомобиль добавлен и отправлен на модерацию.'));
                 exit;
+
             } elseif (isset($pdo) && $pdo instanceof PDO) {
-                $insertCols = array_slice($cols, 0, -1); // exclude created_at
-                $named = [];
+                // PDO path: named placeholders
+                $insertCols = $cols; // not including created_at
+                $namedPlaceholders = [];
                 $params = [];
-                foreach ($insertCols as $k => $col) {
+                foreach ($values as $k => $v) {
                     $ph = ':p' . $k;
-                    $named[] = $ph;
-                    $params[$ph] = $values[$k];
+                    $namedPlaceholders[] = $ph;
+                    $params[$ph] = $v;
                 }
                 $sql2 = "INSERT INTO cars (" . implode(',', $insertCols) . ", created_at) VALUES (" . implode(',', array_keys($params)) . ", NOW())";
                 $st = $pdo->prepare($sql2);
-                if (!$st->execute($params)) throw new Exception('Execute failed (PDO)');
+                if (!$st->execute($params)) {
+                    $info = $st->errorInfo();
+                    throw new Exception('Execute failed (PDO): ' . implode(' | ', $info));
+                }
                 $newId = (int)$pdo->lastInsertId();
 
                 $skuGenerated = 'CAR-' . str_pad((string)$newId, 6, '0', STR_PAD_LEFT);
                 $upd = $pdo->prepare("UPDATE cars SET sku = :sku WHERE id = :id");
                 $upd->execute([':sku' => $skuGenerated, ':id' => $newId]);
 
+                if ($useVehicleTypeColumn) {
+                    error_log("add-car (PDO): inserted id={$newId}, vehicle_type_save=" . var_export($vehicle_type_save, true));
+                    try {
+                        $check = $pdo->prepare("SELECT vehicle_type FROM cars WHERE id = :id LIMIT 1");
+                        $check->execute([':id' => $newId]);
+                        $row = $check->fetch(PDO::FETCH_ASSOC);
+                        error_log("add-car (PDO): vehicle_type in DB for id={$newId}: " . var_export($row['vehicle_type'] ?? null, true));
+                    } catch (Throwable $_) {}
+                }
+
                 if ($isAjax) jsonOk(['id'=>$newId, 'sku'=>$skuGenerated]);
                 header('Location: ' . $basePublic . '/my-cars.php?msg=' . urlencode('Автомобиль добавлен и отправлен на модерацию.'));
                 exit;
+
             } else {
                 throw new Exception('Нет подключения к БД');
             }
 
         } catch (Throwable $e) {
             // Logging + user-friendly message
-            error_log("add-car: save error: " . $e->getMessage() . " | SQL: " . ($sql ?? 'n/a'));
+            error_log("add-car: save error: " . $e->getMessage() . " | SQL: " . ($sql ?? ($sql2 ?? 'n/a')));
             $errors[] = 'Ошибка при сохранении: ' . $e->getMessage();
             if ($isAjax) jsonError($errors[count($errors)-1]);
         }
