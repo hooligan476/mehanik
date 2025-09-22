@@ -1,33 +1,221 @@
 <?php
-// public/my-cars.php 
+// public/my-cars.php
+// Single-file cars listing + API for filters (lookups come from admin tables ONLY)
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
+
 require_once __DIR__ . '/../middleware.php';
 require_auth();
 require_once __DIR__ . '/../db.php';
 
-// ID текущего пользователя (если нужно в шаблоне)
-$user_id = (int)($_SESSION['user']['id'] ?? 0);
+if (session_status() === PHP_SESSION_NONE) session_start();
 
 $noPhoto = '/mehanik/assets/no-photo.png';
 $uploadsPrefix = '/mehanik/uploads/cars/';
-$msg = $_GET['msg'] ?? '';
-$err = $_GET['err'] ?? '';
-?>
-<!doctype html>
+$user_id = (int)($_SESSION['user']['id'] ?? 0);
+
+// ---------------- API ----------------
+if (isset($_GET['__api'])) {
+    header('Content-Type: application/json; charset=utf-8');
+
+    try {
+        if (!isset($mysqli) || !($mysqli instanceof mysqli)) {
+            echo json_encode(['ok' => false, 'error' => 'DB missing']);
+            exit;
+        }
+
+        // helpers
+        $getStr = function($k) { return isset($_GET[$k]) ? trim((string)$_GET[$k]) : ''; };
+        $getInt = function($k) { return (isset($_GET[$k]) && $_GET[$k] !== '') ? (int)$_GET[$k] : null; };
+        $getFloat = function($k) { return (isset($_GET[$k]) && $_GET[$k] !== '') ? (float)$_GET[$k] : null; };
+
+        // If value is numeric id from lookup table, convert to textual name for filtering.
+        $resolveLookupName = function($table, $id, $nameCol = 'name', $idCol = 'id') use ($mysqli) {
+            $id = (int)$id;
+            if ($id <= 0) return null;
+            $sql = "SELECT {$nameCol} FROM {$table} WHERE {$idCol} = ? LIMIT 1";
+            if ($st = $mysqli->prepare($sql)) {
+                $st->bind_param('i', $id);
+                $st->execute();
+                $res = $st->get_result();
+                $row = $res ? $res->fetch_row() : null;
+                $st->close();
+                return $row ? trim((string)$row[0]) : null;
+            }
+            return null;
+        };
+
+        // inputs (we expect select values to be ids if provided)
+        $brand_in = $getStr('brand');         // may be id or text
+        $model_in = $getStr('model');
+        $type_in  = $getStr('vehicle_type');
+        $body_in  = $getStr('vehicle_body');
+        $year_from = $getInt('year_from');
+        $year_to   = $getInt('year_to');
+        $price_from = $getFloat('price_from');
+        $price_to   = $getFloat('price_to');
+        $fuel_in = $getStr('fuel');
+        $trans_in = $getStr('transmission');
+        $q = $getStr('q');
+        $limit = 200;
+
+        // If numeric -> resolve to name via admin tables
+        if ($brand_in !== '' && ctype_digit($brand_in)) {
+            $tmp = $resolveLookupName('brands', (int)$brand_in, 'name', 'id');
+            if ($tmp !== null) $brand_in = $tmp;
+        }
+        if ($model_in !== '' && ctype_digit($model_in)) {
+            $tmp = $resolveLookupName('models', (int)$model_in, 'name', 'id');
+            if ($tmp !== null) $model_in = $tmp;
+        }
+        if ($type_in !== '' && ctype_digit($type_in)) {
+            $tmp = $resolveLookupName('vehicle_types', (int)$type_in, 'name', 'id');
+            if ($tmp !== null) $type_in = $tmp;
+        }
+        if ($body_in !== '' && ctype_digit($body_in)) {
+            $tmp = $resolveLookupName('vehicle_bodies', (int)$body_in, 'name', 'id');
+            if ($tmp !== null) $body_in = $tmp;
+        }
+        if ($fuel_in !== '' && ctype_digit($fuel_in)) {
+            $tmp = $resolveLookupName('fuel_types', (int)$fuel_in, 'name', 'id');
+            if ($tmp !== null) $fuel_in = $tmp;
+        }
+        if ($trans_in !== '' && ctype_digit($trans_in)) {
+            $tmp = $resolveLookupName('gearboxes', (int)$trans_in, 'name', 'id');
+            if ($tmp !== null) $trans_in = $tmp;
+        }
+
+        // Build main SQL (cars table stores textual fields)
+        $sql = "SELECT id, sku, user_id, vehicle_type, body, brand, model, year, mileage, transmission, fuel, price, photo, description, contact_phone, status, created_at, vin
+                FROM cars
+                WHERE (status = 'approved' OR status = 'active')";
+
+        $params = []; $types = '';
+
+        if ($brand_in !== '') { $sql .= " AND LOWER(IFNULL(brand,'')) = LOWER(?)"; $params[] = $brand_in; $types .= 's'; }
+        if ($model_in !== '') { $sql .= " AND LOWER(IFNULL(model,'')) = LOWER(?)"; $params[] = $model_in; $types .= 's'; }
+        if ($type_in  !== '') { $sql .= " AND LOWER(IFNULL(vehicle_type,'')) = LOWER(?)"; $params[] = $type_in; $types .= 's'; }
+        if ($body_in  !== '') { $sql .= " AND LOWER(IFNULL(body,'')) = LOWER(?)"; $params[] = $body_in; $types .= 's'; }
+
+        if ($year_from !== null) { $sql .= " AND (year IS NULL OR year >= ?)"; $params[] = $year_from; $types .= 'i'; }
+        if ($year_to !== null)   { $sql .= " AND (year IS NULL OR year <= ?)"; $params[] = $year_to; $types .= 'i'; }
+
+        if ($price_from !== null) { $sql .= " AND (price IS NULL OR price >= ?)"; $params[] = $price_from; $types .= 'd'; }
+        if ($price_to   !== null) { $sql .= " AND (price IS NULL OR price <= ?)"; $params[] = $price_to; $types .= 'd'; }
+
+        if ($fuel_in !== '') { $sql .= " AND LOWER(IFNULL(fuel,'')) = LOWER(?)"; $params[] = $fuel_in; $types .= 's'; }
+        if ($trans_in !== ''){ $sql .= " AND LOWER(IFNULL(transmission,'')) = LOWER(?)"; $params[] = $trans_in; $types .= 's'; }
+
+        // q: numeric => id match or sku contains, otherwise search brand/model/sku/description
+        if ($q !== '') {
+            if (ctype_digit($q)) {
+                $sql .= " AND (id = ? OR sku LIKE CONCAT('%', ?, '%') OR model LIKE CONCAT('%', ?, '%') OR brand LIKE CONCAT('%', ?, '%'))";
+                $params[] = (int)$q; $params[] = $q; $params[] = $q; $params[] = $q; $types .= 'isss';
+            } else {
+                $sql .= " AND (brand LIKE CONCAT('%', ?, '%') OR model LIKE CONCAT('%', ?, '%') OR sku LIKE CONCAT('%', ?, '%') OR description LIKE CONCAT('%', ?, '%') OR vin LIKE CONCAT('%', ?, '%'))";
+                $params[] = $q; $params[] = $q; $params[] = $q; $params[] = $q; $params[] = $q; $types .= 'sssss';
+            }
+        }
+
+        $sql .= " ORDER BY id DESC LIMIT " . (int)$limit;
+
+        $stmt = $mysqli->prepare($sql);
+        if ($stmt === false) {
+            echo json_encode(['ok'=>false,'error'=>'DB prepare failed: '.$mysqli->error,'sql'=>$sql], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        if (!empty($params)) {
+            $bind = []; $bind[] = $types;
+            for ($i=0;$i<count($params);$i++){ $name='p'.$i; $$name = $params[$i]; $bind[] = &$$name; }
+            call_user_func_array([$stmt,'bind_param'], $bind);
+        }
+
+        if (!$stmt->execute()) {
+            echo json_encode(['ok'=>false,'error'=>'Execute failed: '.$stmt->error], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $rows = [];
+        if (method_exists($stmt,'get_result')) {
+            $res = $stmt->get_result();
+            while ($r = $res->fetch_assoc()) $rows[] = $r;
+            if ($res) $res->free();
+        } else {
+            $meta = $stmt->result_metadata();
+            if ($meta) {
+                $fields=[]; $out=[]; $bindParams=[];
+                while ($f=$meta->fetch_field()) { $fields[]=$f->name; $out[$f->name]=null; $bindParams[]=&$out[$f->name]; }
+                if (!empty($bindParams)) {
+                    call_user_func_array([$stmt,'bind_result'],$bindParams);
+                    while ($stmt->fetch()) { $row=[]; foreach($fields as $fn) $row[$fn]=$out[$fn]; $rows[]=$row; }
+                }
+                $meta->free();
+            }
+        }
+        $stmt->close();
+
+        // ---------------- lookups: ONLY from master tables ----------------
+        $lookups = [
+            'brands'=>[], 'models'=>[], 'vehicle_types'=>[], 'vehicle_bodies'=>[],
+            'fuel_types'=>[], 'gearboxes'=>[], 'vehicle_years'=>[]
+        ];
+
+        $qmap = function($sql) use ($mysqli) {
+            $out = [];
+            $r = $mysqli->query($sql);
+            if ($r) {
+                while ($row = $r->fetch_assoc()) $out[] = $row;
+                $r->free();
+            }
+            return $out;
+        };
+
+        // brands
+        $lookups['brands'] = $qmap("SELECT id, name FROM brands ORDER BY name ASC");
+
+        // models (include brand_id)
+        $lookups['models'] = $qmap("SELECT id, name, brand_id FROM models ORDER BY name ASC");
+
+        // vehicle types
+        $lookups['vehicle_types'] = $qmap("SELECT id, `key`, name FROM vehicle_types ORDER BY `order` ASC, name ASC");
+
+        // vehicle bodies (include vehicle_type_id)
+        $lookups['vehicle_bodies'] = $qmap("SELECT id, vehicle_type_id, `key`, name FROM vehicle_bodies ORDER BY vehicle_type_id ASC, `order` ASC, name ASC");
+
+        // fuel types
+        $lookups['fuel_types'] = $qmap("SELECT id, `key`, name FROM fuel_types WHERE COALESCE(active,1)=1 ORDER BY `order` ASC, name ASC");
+
+        // gearboxes
+        $lookups['gearboxes'] = $qmap("SELECT id, `key`, name FROM gearboxes WHERE COALESCE(active,1)=1 ORDER BY `order` ASC, name ASC");
+
+        // years
+        $lookups['vehicle_years'] = $qmap("SELECT id, `year` FROM vehicle_years WHERE COALESCE(active,1)=1 ORDER BY `year` DESC");
+
+        echo json_encode(['ok'=>true, 'cars'=>$rows, 'lookups'=>$lookups], JSON_UNESCAPED_UNICODE);
+        exit;
+
+    } catch (Throwable $e) {
+        echo json_encode(['ok'=>false,'error'=>'Unhandled: '.$e->getMessage()], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+}
+
+// ---------------- HTML page ----------------
+?><!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Автомобили — Mehanik</title>
-
   <style>
-/* --- (стили оставлены без изменений, как в твоём шаблоне) --- */
-:root{ --bg:#f6f8fb; --card-bg:#fff; --muted:#6b7280; --accent:#0b57a4; --danger:#ef4444; --ok:#15803d; --pending:#b45309; --glass:rgba(255,255,255,0.6); --radius:10px; }
+:root{--bg:#f6f8fb;--card-bg:#fff;--muted:#6b7280;--accent:#0b57a4;--radius:10px}
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial, sans-serif;color:#0f172a}
+html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui,Arial,sans-serif;color:#0f172a}
 .page-wrap{max-width:1200px;margin:18px auto;padding:12px}
 .topbar-row{display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
-.page-title{margin:0;font-size:1.25rem;display:flex;align-items:center;gap:12px;font-weight:700}
-.tools{margin-left:auto;display:flex;gap:8px;align-items:center}
+.page-title{margin:0;font-size:1.25rem;font-weight:700}
+.tools{margin-left:auto}
 .layout{display:grid;grid-template-columns:320px 1fr;gap:18px}
 @media(max-width:1000px){.layout{grid-template-columns:1fr}}
 .sidebar{background:var(--card-bg);padding:14px;border-radius:12px;box-shadow:0 8px 24px rgba(2,6,23,0.04)}
@@ -35,33 +223,19 @@ html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial
 .form-row label{font-weight:700;color:#334155}
 .form-row select,.form-row input{padding:8px;border-radius:8px;border:1px solid #e6eef7;background:linear-gradient(#fff,#fbfdff)}
 .controls-row{display:flex;gap:8px;align-items:center;margin-top:12px}
-#cars, .cars{display:flex;flex-direction:column;gap:10px;padding:6px 0}
-.car-card, .card{display:flex;flex-direction:row;align-items:center;gap:12px;padding:10px;border-radius:12px;background:var(--card-bg);box-shadow:0 6px 18px rgba(2,6,23,0.06);border:1px solid rgba(15,23,42,0.04);transition:transform .12s ease,box-shadow .12s ease;overflow:hidden}
-.car-card:hover,.card:hover{transform:translateY(-6px);box-shadow:0 14px 30px rgba(2,6,23,0.10)}
-.thumb, .card img{flex:0 0 140px;width:140px;height:84px;border-radius:8px;overflow:hidden;background:#f7f9fc;display:flex;align-items:center;justify-content:center}
-.thumb img, .card img{width:auto;height:100%;object-fit:contain;display:block}
-.card-body, .product-content{padding:0 6px 0 0;flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:4px}
-.title{font-size:1rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#0f172a}
-.product-sub,.meta{font-size:0.88rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sku-wrap{display:flex;align-items:center;gap:8px;margin-top:4px}
-.sku-link{font-weight:600;color:var(--accent);text-decoration:underline;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.btn-copy-sku{padding:4px 8px;border-radius:6px;border:1px solid #e6e9ef;background:#fff;cursor:pointer;font-size:0.9rem}
-.price-row{display:flex;justify-content:space-between;align-items:center;gap:12px}
-.price{font-weight:800;font-size:0.98rem;color:var(--accent);white-space:nowrap}
-.badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px}
-.badge{padding:5px 8px;border-radius:999px;font-weight:700;font-size:0.78rem;color:#fff}
-.badge.ok{background:var(--ok)}.badge.rej{background:var(--danger)}.badge.pending{background:var(--pending)}
-.badges .meta{background:#f3f5f8;padding:6px 8px;border-radius:8px;color:#334155}
-.card-footer{border-top:0;padding:0;margin-left:12px;display:flex;gap:8px;align-items:center;justify-content:flex-end;min-width:170px;flex:0 0 auto}
-.actions{display:flex;gap:8px;align-items:center}
-.actions a,.actions button{padding:6px 8px;border-radius:8px;border:0;cursor:pointer;font-size:0.88rem}
-.btn-view{background:#eef6ff;color:var(--accent);border:1px solid rgba(11,87,164,0.06)}
-.no-cars{text-align:center;padding:28px;border-radius:10px;background:var(--card-bg);box-shadow:0 6px 18px rgba(2,6,23,0.04);color:var(--muted)}
-@media(max-width:700px){ .car-card,.card{flex-direction:column;align-items:stretch;padding:12px} .thumb{width:100%;height:200px;flex:0 0 auto} .card-footer{margin-left:0;justify-content:flex-start;padding-top:8px} }
+#cars{display:flex;flex-direction:column;gap:10px;padding:6px 0}
+.car-card{display:flex;gap:12px;padding:10px;border-radius:12px;background:var(--card-bg);box-shadow:0 6px 18px rgba(2,6,23,0.06);border:1px solid rgba(15,23,42,0.04);align-items:center}
+.thumb{flex:0 0 140px;width:140px;height:84px;border-radius:8px;overflow:hidden;background:#f7f9fc;display:flex;align-items:center;justify-content:center}
+.thumb img{width:auto;height:100%;object-fit:contain}
+.card-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta{color:var(--muted);font-size:.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.price-row{display:flex;justify-content:space-between;align-items:center}
+.price{font-weight:800;color:var(--accent)}
+.card-footer{display:flex;gap:8px;align-items:center;min-width:150px;flex:0 0 auto}
+.btn-view{background:#eef6ff;color:var(--accent);border-radius:8px;padding:6px 10px;text-decoration:none;display:inline-block}
+.no-cars{text-align:center;padding:28px;border-radius:10px;background:var(--card-bg);color:var(--muted)}
 .muted{color:var(--muted);padding:12px}
-.notice{padding:10px;border-radius:8px;margin-bottom:10px}
-.notice.ok{background:#ecfdf5;color:#065f46}
-.notice.err{background:#fff1f2;color:#9f1239}
   </style>
 </head>
 <body>
@@ -76,12 +250,9 @@ html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial
     </div>
   </div>
 
-  <?php if ($msg): ?><div class="notice ok"><?= htmlspecialchars($msg) ?></div><?php endif; ?>
-  <?php if ($err): ?><div class="notice err"><?= htmlspecialchars($err) ?></div><?php endif; ?>
-
   <div class="layout">
     <aside class="sidebar" aria-label="Фильтр автомобилей">
-      <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+      <div style="display:flex;justify-content:space-between;align-items:center">
         <strong>Фильтр</strong>
       </div>
 
@@ -132,7 +303,7 @@ html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial
       </div>
 
       <div class="form-row">
-        <label for="search">Поиск (название / ID)</label>
+        <label for="search">Поиск (название / ID / VIN)</label>
         <input id="search" placeholder="например: Тойота или 123">
       </div>
 
@@ -144,7 +315,7 @@ html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial
 
     <section aria-live="polite">
       <div id="cars" class="grid">
-        <!-- карточки подгружаются через JS -->
+        <div class="muted">Загрузка…</div>
       </div>
     </section>
   </div>
@@ -154,353 +325,270 @@ html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial
 window.currentUserId = <?= json_encode($user_id) ?>;
 window.uploadsPrefix = <?= json_encode($uploadsPrefix) ?>;
 window.noPhoto = <?= json_encode($noPhoto) ?>;
-
-window.fetchJSON = async function(url, opts = {}){ try{ const resp = await fetch(url, Object.assign({credentials:'same-origin'}, opts)); if (!resp.ok) return null; return await resp.json(); }catch(e){ return null; } };
 </script>
 
 <script>
 (function(){
-  const brandEl = document.getElementById('brand_car');
-  const modelEl = document.getElementById('model_car');
+  const API = location.pathname.replace(/\/?$/, '') + '?__api=1';
+  const carsContainer = document.getElementById('cars');
+
   const typeEl = document.getElementById('vehicle_type');
   const bodyEl = document.getElementById('vehicle_body');
+  const brandEl = document.getElementById('brand_car');
+  const modelEl = document.getElementById('model_car');
   const yearFromEl = document.getElementById('year_from');
   const yearToEl = document.getElementById('year_to');
-  const transmissionEl = document.getElementById('transmission');
   const fuelEl = document.getElementById('fuel');
+  const transEl = document.getElementById('transmission');
   const priceFromEl = document.getElementById('price_from');
   const priceToEl = document.getElementById('price_to');
   const searchEl = document.getElementById('search');
   const clearBtn = document.getElementById('clearFilters');
-  const container = document.getElementById('cars');
 
-  let lookups = {};
-  let lookupsLoaded = false;
-  let lastItems = [];           // cache last successful result
-  let currentRequestId = 0;     // token to ignore stale responses
-  let debounceTimer = null;
+  let modelsByBrand = {};
+  let bodiesByType = {};
+  let debounce = null;
 
-  function optionValue(obj){
-    if (!obj) return '';
-    if (typeof obj === 'object') {
-      if (obj.id !== undefined && obj.id !== null && obj.id !== '') return String(obj.id);
-      if (obj.key !== undefined && obj.key !== null && obj.key !== '') return String(obj.key);
-      if (obj.name !== undefined) return String(obj.name);
-    }
-    return String(obj);
-  }
-  function optionLabel(obj){
-    if (!obj) return '';
-    if (typeof obj === 'object') return String(obj.name ?? obj.label ?? obj.value ?? obj.id);
-    return String(obj);
-  }
+  function safeText(v){ return v === null || v === undefined ? '' : String(v).trim(); }
 
-  function setSelectOptions(sel, items, placeholder){
+  function setOptions(sel, items, placeholder){
     if(!sel) return;
     const prev = sel.value;
     sel.innerHTML = '';
     const o0 = document.createElement('option'); o0.value=''; o0.textContent = placeholder || '—'; sel.appendChild(o0);
     if (!Array.isArray(items) || !items.length) { sel.selectedIndex = 0; return; }
     for(const it of items){
-      const val = optionValue(it);
-      const lab = optionLabel(it);
+      const label = it.name ?? (it.label??'');
+      const val = (it.id !== undefined && it.id !== null && String(it.id) !== '') ? String(it.id) : String(label);
       const opt = document.createElement('option');
       opt.value = val;
-      opt.textContent = lab;
-      if (typeof it === 'object' && it.name) opt.dataset.name = it.name;
+      opt.textContent = label;
       sel.appendChild(opt);
     }
-    if (prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev;
+    if (prev && Array.from(sel.options).some(o=>o.value===prev)) sel.value = prev;
     else sel.selectedIndex = 0;
   }
 
-  function buildModelsMap(modelsRaw){
-    const map = {};
-    if (!Array.isArray(modelsRaw)) return map;
-    for(const m of modelsRaw){
-      const bid = String(m.brand_id ?? m.brand ?? '');
-      if (!bid) continue;
-      if (!map[bid]) map[bid] = [];
-      map[bid].push({ id: m.id ?? m.name, name: m.name ?? m.model ?? m.id });
-    }
-    for(const k in map){
-      const seen = new Set();
-      map[k] = map[k].filter(x => { if(seen.has(x.name)) return false; seen.add(x.name); return true; });
-    }
-    return map;
-  }
-
-  function buildBodiesMap(bodiesRaw){
-    const map = {};
-    if (!Array.isArray(bodiesRaw)) return map;
-    for(const b of bodiesRaw){
-      const tid = String(b.vehicle_type_id ?? b.type_id ?? b.type ?? '');
-      if (!tid) continue;
-      if (!map[tid]) map[tid] = [];
-      map[tid].push({ id: b.id ?? b.name, name: b.name });
-    }
-    for(const k in map){
-      const seen = new Set();
-      map[k] = map[k].filter(x => { if(seen.has(x.name)) return false; seen.add(x.name); return true; });
-    }
-    return map;
-  }
-
-  function mergeLookups(resp){
-    if(!resp) return;
-    const data = resp.lookups ?? resp;
-    lookups.brands = Array.isArray(data.brands) ? data.brands : [];
-    lookups.models = Array.isArray(data.models) ? data.models : [];
-    lookups.vehicle_types = Array.isArray(data.vehicle_types) ? data.vehicle_types : [];
-    lookups.vehicle_bodies = Array.isArray(data.vehicle_bodies) ? data.vehicle_bodies : [];
-    lookups.fuel_types = Array.isArray(data.fuel_types) ? data.fuel_types : (Array.isArray(data.fuel) ? data.fuel : []);
-    lookups.gearboxes = Array.isArray(data.gearboxes) ? data.gearboxes : [];
-    lookups.modelsByBrand = buildModelsMap(lookups.models);
-    lookups.bodiesByType = buildBodiesMap(lookups.vehicle_bodies);
-    lookupsLoaded = true;
-  }
-
-  async function loadLookupsOnce(){
-    if (window.carList && window.carList.lookups) mergeLookups(window.carList.lookups);
-    if (!lookupsLoaded) {
-      try {
-        const resp = await fetch('/mehanik/api/cars.php', { credentials: 'same-origin' });
-        if (resp && resp.ok) {
-          const json = await resp.json();
-          mergeLookups(json.lookups ?? json);
-          // If server returns cars in top-level, we ignore them here (they will be loaded later)
-        }
-      } catch(err){
-        console.warn('loadLookupsOnce error', err);
-      }
-    }
-    // populate selects
-    setSelectOptions(typeEl, lookups.vehicle_types, 'Все типы');
-    if (bodyEl) { bodyEl.innerHTML = '<option value="">Сначала выберите тип</option>'; bodyEl.disabled = true; }
-    setSelectOptions(brandEl, lookups.brands, 'Все бренды');
-    if (modelEl) { modelEl.innerHTML = '<option value="">Сначала выберите бренд</option>'; modelEl.disabled = true; }
-    setSelectOptions(fuelEl, lookups.fuel_types, 'Любое');
-    if (lookups.gearboxes && lookups.gearboxes.length && transmissionEl) setSelectOptions(transmissionEl, lookups.gearboxes, 'Любая');
-  }
-
-  // collect filters and send aliases accepted by API
-  function collectFilters(){
-    const f = {};
-    const setIf = (key, el) => { if(!el) return; const v = String(el.value || '').trim(); if (v !== '') f[key] = v; };
-
-    setIf('vehicle_type', typeEl);
-    setIf('vehicle_body', bodyEl);
-
-    // brand/model: API expects 'brand' and 'model'
-    setIf('brand', brandEl);
-    setIf('model', modelEl);
-
-    setIf('year_from', yearFromEl);
-    setIf('year_to', yearToEl);
-
-    // transmission: send both gearbox (older API) and transmission (DB column)
-    if (transmissionEl && transmissionEl.value) {
-      f.transmission = String(transmissionEl.value).trim();
-      f.gearbox = String(transmissionEl.value).trim();
-    }
-
-    // fuel: send both variants
-    if (fuelEl && fuelEl.value) {
-      f.fuel = String(fuelEl.value).trim();
-      f.fuel_type = String(fuelEl.value).trim();
-    }
-
-    setIf('price_from', priceFromEl);
-    setIf('price_to', priceToEl);
-
-    const qv = (searchEl && searchEl.value) ? searchEl.value.trim() : '';
-    if (qv) f.q = qv;
-
-    return f;
-  }
-
-  function renderCars(items){
-    if (!Array.isArray(items)) items = [];
-    lastItems = items;
-    container.innerHTML = '';
-    if (!items.length) {
-      container.innerHTML = '<div class="no-cars"><p style="font-weight:700;margin:0 0 8px;">По вашему запросу ничего не найдено</p><p style="margin:0;color:#6b7280">Попробуйте изменить фильтры.</p></div>';
-      return;
-    }
-    const frag = document.createDocumentFragment();
-    for (const it of items) {
-      const card = document.createElement('article');
-      card.className = 'car-card';
-      card.dataset.id = String(it.id || '');
-
-      const thumb = document.createElement('div'); thumb.className='thumb';
-      const a = document.createElement('a'); a.href = '/mehanik/public/car.php?id='+encodeURIComponent(it.id);
-      a.style.display='block'; a.style.width='100%'; a.style.height='100%';
-      const img = document.createElement('img'); img.alt = (((it.brand||'') + ' ' + (it.model||'')).trim());
-      img.src = (it.photo && (it.photo.indexOf('/')===0 || /^https?:\/\//i.test(it.photo))) ? it.photo : (it.photo ? (window.uploadsPrefix + it.photo) : window.noPhoto);
-      a.appendChild(img); thumb.appendChild(a);
-
-      const body = document.createElement('div'); body.className='card-body';
-      const top = document.createElement('div'); top.className='price-row';
-      const left = document.createElement('div'); left.style.flex='1'; left.style.minWidth='0';
-      const title = document.createElement('div'); title.className='title';
-      title.textContent = (((it.brand||'') + ' ' + (it.model||'')).trim() + (it.year ? ' '+it.year : ''));
-      const meta = document.createElement('div'); meta.className='meta';
-      meta.textContent = ((it.transmission ? it.transmission + ' • ' : '') + (it.fuel ? it.fuel : '')).trim() || (it.vin ? 'VIN: '+it.vin : '-');
-      left.appendChild(title); left.appendChild(meta);
-
-      const rawVin = (it.vin || it.sku || '').toString();
-      const displayVin = rawVin.replace(/^VIN-/i, '').trim();
-      if (displayVin) {
-        const skuWrap = document.createElement('div'); skuWrap.className='sku-wrap';
-        const skuLink = document.createElement('a'); skuLink.className='sku-link'; skuLink.href = '/mehanik/public/car.php?id='+encodeURIComponent(it.id); skuLink.textContent = displayVin;
-        skuWrap.appendChild(skuLink);
-        const copyBtn = document.createElement('button'); copyBtn.type='button'; copyBtn.className='btn-copy-sku'; copyBtn.textContent='📋';
-        copyBtn.addEventListener('click', function(e){ e.preventDefault(); if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(displayVin).then(()=>{ const prev=copyBtn.textContent; copyBtn.textContent='✓'; setTimeout(()=>copyBtn.textContent=prev,1200); }).catch(()=>{}); } });
-        skuWrap.appendChild(copyBtn);
-        left.appendChild(skuWrap);
-      }
-
-      const right = document.createElement('div'); right.style.textAlign='right'; right.style.minWidth='140px';
-      const price = document.createElement('div'); price.className='price';
-      price.textContent = it.price ? (Number(it.price).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}) + ' TMT') : '-';
-      const idMeta = document.createElement('div'); idMeta.className='meta'; idMeta.style.marginTop='6px'; idMeta.style.fontSize='.85rem'; idMeta.textContent = 'ID: ' + (it.id||'-');
-      right.appendChild(price); right.appendChild(idMeta);
-
-      top.appendChild(left); top.appendChild(right);
-      body.appendChild(top);
-
-      const badges = document.createElement('div'); badges.className='badges';
-      const statusText = (it.status==='active' || it.status==='approved')? 'В продаже' : (String(it.status).toLowerCase().includes('sold')? 'Продан':'На модерации');
-      const status = document.createElement('div'); status.className='badge ' + ((it.status==='active' || it.status==='approved')? 'ok' : (String(it.status).toLowerCase().includes('sold')? 'rej':'pending'));
-      status.textContent = statusText;
-      const mileage = document.createElement('div'); mileage.className='meta'; mileage.style.background='#f3f5f8'; mileage.style.padding='6px 8px'; mileage.style.borderRadius='8px'; mileage.style.color='#334155'; mileage.textContent = 'Пробег: ' + (it.mileage ? (String(it.mileage) + ' км') : '-');
-      const added = document.createElement('div'); added.className='meta'; added.style.background='#f3f5f8'; added.style.padding='6px 8px'; added.style.borderRadius='8px'; added.style.color='#334155'; added.textContent = 'Добавлен: ' + (it.created_at ? new Date(it.created_at).toLocaleDateString() : '-');
-      badges.appendChild(status); badges.appendChild(mileage); badges.appendChild(added);
-      body.appendChild(badges);
-
-      const footer = document.createElement('div'); footer.className='card-footer';
-      const actions = document.createElement('div'); actions.className='actions';
-      const view = document.createElement('a'); view.className='btn-view'; view.href = '/mehanik/public/car.php?id='+encodeURIComponent(it.id); view.textContent = '👁 Просмотр';
-      actions.appendChild(view);
-      footer.appendChild(actions);
-
-      card.appendChild(thumb); card.appendChild(body); card.appendChild(footer);
-      frag.appendChild(card);
-    }
-    container.appendChild(frag);
-  }
-
-  // apply filters with request token, keep lastItems on failure
-  async function applyFilters(){
-    if (!lookupsLoaded) {
-      // if lookups not ready, still try (do not block)
-      console.debug('applyFilters: lookups not loaded yet, still attempting to fetch.');
-    }
-    const reqId = ++currentRequestId;
-    const filters = collectFilters();
-
-    // debugging: show built query params
-    console.debug('cars: applying filters', filters);
-
-    // prefer global loader if exists
-    if (window.carList && typeof carList.loadCars === 'function') {
-      try { await carList.loadCars(filters); return; } catch(e){ console.warn('carList.loadCars failed', e); }
-    }
-
+  async function loadLookups(){
     try {
-      const params = new URLSearchParams(filters);
-      const url = '/mehanik/api/cars.php?' + params.toString();
-      console.debug('cars: requesting', url);
-      const resp = await fetch(url, { credentials: 'same-origin' });
-      if (reqId !== currentRequestId) { console.debug('cars: stale response ignored'); return; }
-      if (!resp.ok) { console.warn('cars fetch not ok', resp.status); return; }
+      const resp = await fetch(API, { credentials: 'same-origin' });
+      if (!resp.ok) throw new Error('network');
       const json = await resp.json();
-      console.debug('cars: server response', json);
-      if (reqId !== currentRequestId) return;
-      const items = json.cars ?? json.products ?? json.items ?? json;
-      if (Array.isArray(items)) renderCars(items);
-      else {
-        const arr = json.cars ?? json.products ?? json.items;
-        if (Array.isArray(arr)) renderCars(arr);
-        else {
-          console.warn('cars: unexpected payload', json);
-          // keep previous list instead of clearing
-        }
-      }
+      if (!json.ok) throw new Error('api error');
 
-      // if API returned lookups update local lookups
-      if (json.lookups) {
-        mergeLookups(json.lookups);
-        const curBrand = brandEl ? brandEl.value : '';
-        setSelectOptions(brandEl, lookups.brands, 'Все бренды');
-        if (curBrand) brandEl.value = curBrand;
-        updateModelSelectAfterBrand(curBrand);
+      const lk = json.lookups || {};
+      // brands: [{id,name}]
+      const brands = lk.brands || [];
+      // models: [{id,name,brand_id}]
+      const models = lk.models || [];
+      modelsByBrand = {};
+      for(const m of models){
+        const bid = String(m.brand_id ?? '');
+        if (!bid) continue;
+        if (!modelsByBrand[bid]) modelsByBrand[bid] = [];
+        modelsByBrand[bid].push({ id: m.id, name: m.name });
       }
-    } catch(err){
-      console.warn('applyFilters error', err);
+      // vehicle types
+      const types = lk.vehicle_types || [];
+      // bodies
+      const bodies = lk.vehicle_bodies || [];
+      bodiesByType = {};
+      for(const b of bodies){
+        const tid = String(b.vehicle_type_id ?? '');
+        if (!tid) continue;
+        if (!bodiesByType[tid]) bodiesByType[tid] = [];
+        bodiesByType[tid].push({ id: b.id, name: b.name });
+      }
+      // fuel and gearboxes
+      const fuels = lk.fuel_types || [];
+      const gears = lk.gearboxes || [];
+      // years (we'll show years in selects if desired; for now year inputs are free)
+      const years = lk.vehicle_years || [];
+
+      // populate selects (use id for values)
+      setOptions(typeEl, types, 'Все типы');
+      if (bodyEl) { bodyEl.innerHTML = '<option value="">Сначала выберите тип</option>'; bodyEl.disabled = true; }
+      setOptions(brandEl, brands, 'Все бренды');
+      if (modelEl) { modelEl.innerHTML = '<option value="">Сначала выберите бренд</option>'; modelEl.disabled = true; }
+      setOptions(fuelEl, fuels, 'Любое');
+      setOptions(transEl, gears, 'Любая');
+
+    } catch(e) {
+      console.warn('loadLookups failed', e);
     }
   }
 
-  function updateModelSelectAfterBrand(brandVal){
+  function updateModelSelect(brandVal){
     if (!modelEl) return;
     if (!brandVal) {
       modelEl.innerHTML = '<option value="">Сначала выберите бренд</option>';
       modelEl.disabled = true;
       return;
     }
-    const models = lookups.modelsByBrand && lookups.modelsByBrand[brandVal] ? lookups.modelsByBrand[brandVal] : [];
-    setSelectOptions(modelEl, models, 'Все модели');
+    const list = modelsByBrand[brandVal] || [];
+    setOptions(modelEl, list, 'Все модели');
     modelEl.disabled = false;
   }
 
-  function updateBodySelectAfterType(typeVal){
+  function updateBodySelect(typeVal){
     if (!bodyEl) return;
     if (!typeVal) {
       bodyEl.innerHTML = '<option value="">Сначала выберите тип</option>';
       bodyEl.disabled = true;
       return;
     }
-    const list = lookups.bodiesByType && lookups.bodiesByType[typeVal] ? lookups.bodiesByType[typeVal] : [];
-    setSelectOptions(bodyEl, list, 'Все кузова');
+    const list = bodiesByType[typeVal] || [];
+    setOptions(bodyEl, list, 'Все кузова');
     bodyEl.disabled = false;
   }
 
-  function scheduleApply(){
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(()=>{ applyFilters(); debounceTimer = null; }, 220);
+  function collectFilters(){
+    const f = {};
+    const setIf = (k, el) => { if(!el) return; const v = safeText(el.value); if (v !== '') f[k] = v; };
+    setIf('vehicle_type', typeEl);
+    setIf('vehicle_body', bodyEl);
+    setIf('brand', brandEl);
+    setIf('model', modelEl);
+    setIf('year_from', yearFromEl);
+    setIf('year_to', yearToEl);
+    setIf('transmission', transEl);
+    setIf('fuel', fuelEl);
+    setIf('price_from', priceFromEl);
+    setIf('price_to', priceToEl);
+    const qv = safeText(searchEl && searchEl.value);
+    if (qv) f.q = qv;
+    return f;
   }
 
-  // events wiring
-  if (typeEl) typeEl.addEventListener('change', function(){ updateBodySelectAfterType(this.value); scheduleApply(); });
-  if (brandEl) brandEl.addEventListener('change', function(){ updateModelSelectAfterBrand(this.value); scheduleApply(); });
-  if (modelEl) modelEl.addEventListener('change', scheduleApply);
-  if (bodyEl) bodyEl.addEventListener('change', scheduleApply);
-  [yearFromEl, yearToEl, transmissionEl, fuelEl, priceFromEl, priceToEl].forEach(el => { if (!el) return; el.addEventListener('change', scheduleApply); });
-  if (searchEl) searchEl.addEventListener('input', function(){ if (debounceTimer) clearTimeout(debounceTimer); debounceTimer = setTimeout(()=>{ applyFilters(); debounceTimer=null; }, 300); });
+  // Robust image URL builder to correctly handle different formats stored in DB.
+  function buildPhotoUrl(photo) {
+    if (!photo) return window.noPhoto;
+    photo = String(photo).trim();
+    // absolute URL -> return as-is
+    if (/^https?:\/\//i.test(photo)) return photo;
+    // absolute path -> return as-is
+    if (photo.charAt(0) === '/') return photo;
+
+    // ensure uploadsPrefix ends with single slash
+    const upPrefix = (window.uploadsPrefix || '/uploads/cars/').replace(/\/+$/, '/') ;
+
+    // prefer last occurrence of 'uploads/cars/' to avoid doubled prefixes
+    const marker = 'uploads/cars/';
+    const lastIdx = photo.lastIndexOf(marker);
+    if (lastIdx !== -1) {
+      const tail = photo.substring(lastIdx + marker.length);
+      if (tail === '') return upPrefix;
+      return upPrefix + tail;
+    }
+
+    // if contains 'uploads/' fallback to absolute path from that
+    const uploadsIdx = photo.lastIndexOf('uploads/');
+    if (uploadsIdx !== -1) {
+      const tail = photo.substring(uploadsIdx);
+      return '/' + tail.replace(/^\/+/, '');
+    }
+
+    // otherwise treat as filename relative to uploadsPrefix
+    return upPrefix + photo.replace(/^\/+/, '');
+  }
+
+  async function fetchCars(){
+    carsContainer.innerHTML = '<div class="muted">Загрузка...</div>';
+    const filters = collectFilters();
+    const params = new URLSearchParams(filters);
+    try {
+      const resp = await fetch(API + '&' + params.toString(), { credentials: 'same-origin' });
+      if (!resp.ok) throw new Error('network');
+      const json = await resp.json();
+      if (!json.ok) {
+        console.warn('api error', json);
+        carsContainer.innerHTML = '<div class="muted">Ошибка API — см. консоль</div>';
+        return;
+      }
+      const items = json.cars || [];
+      renderCars(items);
+    } catch (e) {
+      console.warn('fetchCars err', e);
+      carsContainer.innerHTML = '<div class="muted">Ошибка загрузки</div>';
+    }
+  }
+
+  function renderCars(items){
+    carsContainer.innerHTML = '';
+    if (!Array.isArray(items) || items.length === 0) {
+      carsContainer.innerHTML = '<div class="no-cars"><p style="font-weight:700;margin:0 0 8px;">По вашему запросу ничего не найдено</p><p style="margin:0;color:#6b7280">Попробуйте изменить фильтры.</p></div>';
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for(const it of items){
+      const card = document.createElement('article'); card.className = 'car-card';
+      const thumb = document.createElement('div'); thumb.className = 'thumb';
+      const a = document.createElement('a'); a.href = '/mehanik/public/car.php?id=' + encodeURIComponent(it.id);
+      const img = document.createElement('img');
+      img.alt = ((it.brand||'') + ' ' + (it.model||'')).trim();
+      // Use robust builder for photo path
+      img.src = buildPhotoUrl(it.photo);
+      a.appendChild(img); thumb.appendChild(a);
+
+      const body = document.createElement('div'); body.className = 'card-body';
+      const top = document.createElement('div'); top.className = 'price-row';
+      const left = document.createElement('div'); left.style.flex = '1'; left.style.minWidth = '0';
+      const title = document.createElement('div'); title.className = 'title';
+      title.textContent = (((it.brand||'') + ' ' + (it.model||'')).trim() + (it.year ? ' '+it.year : ''));
+      const meta = document.createElement('div'); meta.className = 'meta';
+      meta.textContent = ((it.transmission ? it.transmission + ' • ' : '') + (it.fuel ? it.fuel : '')).trim() || (it.vin ? 'VIN: '+it.vin : '-');
+      left.appendChild(title); left.appendChild(meta);
+
+      const right = document.createElement('div'); right.style.textAlign = 'right'; right.style.minWidth = '140px';
+      const price = document.createElement('div'); price.className = 'price';
+      price.textContent = it.price ? (Number(it.price).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}) + ' TMT') : '-';
+      const idMeta = document.createElement('div'); idMeta.className = 'meta'; idMeta.style.marginTop='6px'; idMeta.style.fontSize='.85rem'; idMeta.textContent = 'ID: ' + (it.id||'-');
+      right.appendChild(price); right.appendChild(idMeta);
+
+      top.appendChild(left); top.appendChild(right);
+      body.appendChild(top);
+
+      const footer = document.createElement('div'); footer.className = 'card-footer';
+      const actions = document.createElement('div'); actions.className = 'actions';
+      const view = document.createElement('a'); view.className = 'btn-view'; view.href = '/mehanik/public/car.php?id=' + encodeURIComponent(it.id); view.textContent = '👁 Просмотр';
+      actions.appendChild(view);
+      footer.appendChild(actions);
+
+      card.appendChild(thumb); card.appendChild(body); card.appendChild(footer);
+      frag.appendChild(card);
+    }
+    carsContainer.appendChild(frag);
+  }
+
+  function scheduleFetch(){
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(()=>{ fetchCars(); debounce=null; }, 220);
+  }
+
+  // wiring
+  if (typeEl) typeEl.addEventListener('change', function(){ updateBodySelect(this.value); scheduleFetch(); });
+  if (brandEl) brandEl.addEventListener('change', function(){ updateModelSelect(this.value); scheduleFetch(); });
+  if (modelEl) modelEl.addEventListener('change', scheduleFetch);
+  if (bodyEl) bodyEl.addEventListener('change', scheduleFetch);
+  [yearFromEl, yearToEl, fuelEl, transEl, priceFromEl, priceToEl].forEach(el => { if (el) el.addEventListener('change', scheduleFetch); });
+  if (searchEl) searchEl.addEventListener('input', function(){ if (debounce) clearTimeout(debounce); debounce = setTimeout(()=>{ fetchCars(); debounce=null; }, 300); });
 
   if (clearBtn) clearBtn.addEventListener('click', function(e){
     e.preventDefault();
-    [brandEl, modelEl, typeEl, bodyEl, yearFromEl, yearToEl, transmissionEl, fuelEl, priceFromEl, priceToEl, searchEl].forEach(el=>{
+    [brandEl, modelEl, typeEl, bodyEl, yearFromEl, yearToEl, fuelEl, transEl, priceFromEl, priceToEl, searchEl].forEach(el=>{
       if(!el) return;
-      if(el.tagName && el.tagName.toLowerCase()==='select') el.selectedIndex = 0;
+      if (el.tagName && el.tagName.toLowerCase()==='select') el.selectedIndex = 0;
       else el.value = '';
     });
-    updateModelSelectAfterBrand('');
-    updateBodySelectAfterType('');
-    scheduleApply();
+    updateModelSelect('');
+    updateBodySelect('');
+    scheduleFetch();
   });
 
   (async function init(){
-    await loadLookupsOnce();
-    // try to pre-populate models/body if URL contains params (optional)
-    const urlParams = new URLSearchParams(window.location.search);
-    const b = urlParams.get('brand') || urlParams.get('brand_car') || '';
-    const t = urlParams.get('vehicle_type') || '';
-    if (b) { if (brandEl) { brandEl.value = b; updateModelSelectAfterBrand(b); } }
-    if (t) { if (typeEl) { typeEl.value = t; updateBodySelectAfterType(t); } }
-    // initial load
-    setTimeout(()=>{ applyFilters(); }, 50);
+    await loadLookups();
+    // small delay to let selects settle
+    setTimeout(()=>{ scheduleFetch(); }, 40);
   })();
 
 })();

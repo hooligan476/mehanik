@@ -57,7 +57,6 @@ try {
         $gearboxes = $pdo->query("SELECT id, name, `key`, `order`, active FROM gearboxes ORDER BY `order` ASC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
     }
 } catch (Throwable $e) {
-    // non-fatal, we will fallback to defaults in the form where needed
     error_log("add-car: load lookups error: " . $e->getMessage());
 }
 
@@ -226,53 +225,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // validation
     if ($brand_save === '') $errors[] = 'Бренд обязателен';
-    if ($model_save === '') $errors[] = 'Модель обязателна';
+    if ($model_save === '') $errors[] = 'Модель обязательна';
     if ($year < $minYear || $year > $currentYear) $errors[] = "Год должен быть в диапазоне {$minYear}—{$currentYear}";
     if ($price < 0) $errors[] = 'Цена некорректна';
+    // <-- NEW: require fuel and transmission
+    if (trim($transmission) === '') $errors[] = 'Коробка передач обязательна';
+    if (trim($fuel) === '') $errors[] = 'Тип топлива обязателен';
 
-    // files handling (same as before) — keep but add try/catch around random_bytes
-    $uploadDir = __DIR__ . '/../uploads/cars/';
-    if (!is_dir($uploadDir)) @mkdir($uploadDir, 0755, true);
-    $allowed_exts = ['jpg','jpeg','png','webp'];
+    // ---------- FILES: collect uploaded file info (do NOT move yet) ----------
+    $accepted_exts = ['jpg','jpeg','png','webp'];
     $max_files = 6;
-    $savedMain = null;
-    $savedExtras = [];
+    $uploadPending = []; // each: ['tmp'=>..., 'orig'=>..., 'ext'=>...]
+    $savedMainIndex = null;
 
     try {
+        // main photo field
         if (!empty($_FILES['photo']['tmp_name']) && is_uploaded_file($_FILES['photo']['tmp_name'])) {
             $orig = basename($_FILES['photo']['name'] ?? '');
             $ext = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
-            if (in_array($ext, $allowed_exts, true) && ($_FILES['photo']['error'] ?? UPLOAD_ERR_OK) === UPLOAD_ERR_OK) {
-                $name = time() . '_' . bin2hex(random_bytes(6)) . '_main.' . $ext;
-                if (@move_uploaded_file($_FILES['photo']['tmp_name'], $uploadDir . $name)) {
-                    $savedMain = 'uploads/cars/' . $name;
-                }
+            if (in_array($ext, $accepted_exts, true) && ($_FILES['photo']['error'] ?? UPLOAD_ERR_OK) === UPLOAD_ERR_OK) {
+                $uploadPending[] = ['tmp' => $_FILES['photo']['tmp_name'], 'orig' => $orig, 'ext' => $ext];
+                $savedMainIndex = count($uploadPending) - 1;
             }
         }
 
+        // other photos
         if (!empty($_FILES['photos']) && is_array($_FILES['photos']['tmp_name'])) {
             $cnt = count($_FILES['photos']['tmp_name']);
-            for ($i=0; $i<$cnt && count($savedExtras) < $max_files; $i++) {
+            for ($i=0; $i<$cnt && count($uploadPending) < $max_files; $i++) {
                 if (!is_uploaded_file($_FILES['photos']['tmp_name'][$i])) continue;
-                $orig = basename($_FILES['photos']['name'][$i] ?? '');
                 $err = $_FILES['photos']['error'][$i] ?? UPLOAD_ERR_NO_FILE;
                 if ($err !== UPLOAD_ERR_OK) continue;
+                $orig = basename($_FILES['photos']['name'][$i] ?? '');
                 $ext = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
-                if (!in_array($ext, $allowed_exts, true)) continue;
-                $name = time() . '_' . bin2hex(random_bytes(6)) . "_{$i}." . $ext;
-                if (@move_uploaded_file($_FILES['photos']['tmp_name'][$i], $uploadDir . $name)) {
-                    $savedExtras[] = 'uploads/cars/' . $name;
-                }
+                if (!in_array($ext, $accepted_exts, true)) continue;
+                $uploadPending[] = ['tmp' => $_FILES['photos']['tmp_name'][$i], 'orig' => $orig, 'ext' => $ext];
             }
         }
     } catch (Throwable $e) {
-        error_log("add-car: file upload error: " . $e->getMessage());
-        $errors[] = 'Ошибка при загрузке файлов';
+        error_log("add-car: file collect error: " . $e->getMessage());
+        $errors[] = 'Ошибка при обработке загружаемых файлов';
     }
 
-    if ($savedMain === null && count($savedExtras) > 0) {
-        $savedMain = array_shift($savedExtras);
-    }
+    if ($savedMainIndex === null && count($uploadPending) > 0) $savedMainIndex = 0;
 
     // VIN handling as before
     $useVinColumn = false;
@@ -309,6 +304,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $cols = [
                 'user_id','brand','model','year','body','mileage','transmission','fuel','price','photo','description','contact_phone'
             ];
+            // note: photo will be empty now; we'll update after moving files
+            $savedMain = ''; // placeholder, will update after moving
             $values = [
                 $user_id,
                 $brand_save,
@@ -359,7 +356,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $bindParams = [];
                 $bindParams[] = & $types;
                 for ($i = 0; $i < count($values); $i++) {
-                    // create variable variables to have references
                     ${"p".$i} = $values[$i];
                     $bindParams[] = &${"p".$i};
                 }
@@ -376,23 +372,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $newId = $stmt->insert_id;
                 $stmt->close();
 
+                // Now move uploaded files into folder uploads/cars/{id} and rename
+                $movedMain = null;
+                $savedExtras = [];
+                if (!empty($uploadPending) && !empty($newId)) {
+                    $destDirRel = 'uploads/cars/' . intval($newId);
+                    $destDir = __DIR__ . '/../' . $destDirRel;
+                    if (!is_dir($destDir)) @mkdir($destDir, 0755, true);
+
+                    $counter = 1;
+                    $zeroPad = function($num, $len=10){ return str_pad((string)$num, $len, '0', STR_PAD_LEFT); };
+
+                    foreach ($uploadPending as $idx => $item) {
+                        $ext = $item['ext'] ?? 'jpg';
+                        if ($idx === $savedMainIndex) {
+                            $fileName = 'car' . intval($newId) . '_' . $zeroPad($counter) . '_main.' . $ext;
+                        } else {
+                            $fileName = 'car' . intval($newId) . '_' . $zeroPad($counter) . '.' . $ext;
+                        }
+                        $counter++;
+                        $destPath = $destDir . '/' . $fileName;
+                        if (@move_uploaded_file($item['tmp'], $destPath)) {
+                            $relPath = $destDirRel . '/' . $fileName;
+                            if ($idx === $savedMainIndex) $movedMain = $relPath;
+                            else $savedExtras[] = $relPath;
+                        } else {
+                            error_log("add-car: move_uploaded_file failed for tmp={$item['tmp']} -> dest={$destPath}");
+                        }
+                    }
+
+                    // Update cars.photo with main image if moved
+                    if (!empty($movedMain)) {
+                        try {
+                            $up = $mysqli->prepare("UPDATE cars SET photo = ? WHERE id = ? LIMIT 1");
+                            if ($up) { $up->bind_param('si', $movedMain, $newId); $up->execute(); $up->close(); }
+                        } catch (Throwable $e) {
+                            error_log("add-car: failed to update photo path in DB for id={$newId} : " . $e->getMessage());
+                        }
+                    }
+
+                    // (Optional) if you have a separate car_photos table, insert extras there.
+                    // foreach ($savedExtras as $p) { $ins = $mysqli->prepare("INSERT INTO car_photos (car_id, photo) VALUES (?, ?)"); if($ins){ $ins->bind_param('is',$newId,$p); $ins->execute(); $ins->close(); } }
+                }
+
                 // generate SKU
                 $skuGenerated = 'CAR-' . str_pad((string)$newId, 6, '0', STR_PAD_LEFT);
                 $up = $mysqli->prepare("UPDATE cars SET sku = ? WHERE id = ? LIMIT 1");
                 if ($up) { $up->bind_param('si', $skuGenerated, $newId); $up->execute(); $up->close(); }
-
-                // debug log for vehicle_type
-                if ($useVehicleTypeColumn) {
-                    error_log("add-car: inserted id={$newId}, vehicle_type_save=" . var_export($vehicle_type_save, true));
-                    // try to fetch saved vehicle_type to confirm
-                    try {
-                        $r = $mysqli->query("SELECT vehicle_type FROM cars WHERE id = " . ((int)$newId) . " LIMIT 1");
-                        if ($r) {
-                            $row = $r->fetch_assoc();
-                            error_log("add-car: vehicle_type in DB for id={$newId}: " . var_export($row['vehicle_type'] ?? null, true));
-                        }
-                    } catch (Throwable $_) {}
-                }
 
                 if ($isAjax) jsonOk(['id'=>$newId, 'sku'=>$skuGenerated]);
                 header('Location: ' . $basePublic . '/my-cars.php?msg=' . urlencode('Автомобиль добавлен и отправлен на модерацию.'));
@@ -400,7 +426,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             } elseif (isset($pdo) && $pdo instanceof PDO) {
                 // PDO path: named placeholders
-                $insertCols = $cols; // not including created_at
+                $insertCols = $cols;
                 $namedPlaceholders = [];
                 $params = [];
                 foreach ($values as $k => $v) {
@@ -416,19 +442,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $newId = (int)$pdo->lastInsertId();
 
+                // Now move uploaded files into folder uploads/cars/{id} and rename (PDO path)
+                $movedMain = null;
+                $savedExtras = [];
+                if (!empty($uploadPending) && !empty($newId)) {
+                    $destDirRel = 'uploads/cars/' . intval($newId);
+                    $destDir = __DIR__ . '/../' . $destDirRel;
+                    if (!is_dir($destDir)) @mkdir($destDir, 0755, true);
+
+                    $counter = 1;
+                    $zeroPad = function($num, $len=10){ return str_pad((string)$num, $len, '0', STR_PAD_LEFT); };
+
+                    foreach ($uploadPending as $idx => $item) {
+                        $ext = $item['ext'] ?? 'jpg';
+                        if ($idx === $savedMainIndex) {
+                            $fileName = 'car' . intval($newId) . '_' . $zeroPad($counter) . '_main.' . $ext;
+                        } else {
+                            $fileName = 'car' . intval($newId) . '_' . $zeroPad($counter) . '.' . $ext;
+                        }
+                        $counter++;
+                        $destPath = $destDir . '/' . $fileName;
+                        if (@move_uploaded_file($item['tmp'], $destPath)) {
+                            $relPath = $destDirRel . '/' . $fileName;
+                            if ($idx === $savedMainIndex) $movedMain = $relPath;
+                            else $savedExtras[] = $relPath;
+                        } else {
+                            error_log("add-car: move_uploaded_file failed for tmp={$item['tmp']} -> dest={$destPath}");
+                        }
+                    }
+
+                    // Update cars.photo with main image if moved
+                    if (!empty($movedMain)) {
+                        try {
+                            $up = $pdo->prepare("UPDATE cars SET photo = :p WHERE id = :id");
+                            $up->execute([':p' => $movedMain, ':id' => $newId]);
+                        } catch (Throwable $e) {
+                            error_log("add-car: failed to update photo path in DB (PDO) for id={$newId} : " . $e->getMessage());
+                        }
+                    }
+
+                    // (Optional) insert extras into car_photos table for PDO if exists
+                    // foreach ($savedExtras as $p) { $ins = $pdo->prepare("INSERT INTO car_photos (car_id, photo) VALUES (:id, :p)"); $ins->execute([':id'=>$newId,':p'=>$p]); }
+                }
+
                 $skuGenerated = 'CAR-' . str_pad((string)$newId, 6, '0', STR_PAD_LEFT);
                 $upd = $pdo->prepare("UPDATE cars SET sku = :sku WHERE id = :id");
                 $upd->execute([':sku' => $skuGenerated, ':id' => $newId]);
-
-                if ($useVehicleTypeColumn) {
-                    error_log("add-car (PDO): inserted id={$newId}, vehicle_type_save=" . var_export($vehicle_type_save, true));
-                    try {
-                        $check = $pdo->prepare("SELECT vehicle_type FROM cars WHERE id = :id LIMIT 1");
-                        $check->execute([':id' => $newId]);
-                        $row = $check->fetch(PDO::FETCH_ASSOC);
-                        error_log("add-car (PDO): vehicle_type in DB for id={$newId}: " . var_export($row['vehicle_type'] ?? null, true));
-                    } catch (Throwable $_) {}
-                }
 
                 if ($isAjax) jsonOk(['id'=>$newId, 'sku'=>$skuGenerated]);
                 header('Location: ' . $basePublic . '/my-cars.php?msg=' . urlencode('Автомобиль добавлен и отправлен на модерацию.'));
@@ -439,7 +498,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
         } catch (Throwable $e) {
-            // Logging + user-friendly message
             error_log("add-car: save error: " . $e->getMessage() . " | SQL: " . ($sql ?? ($sql2 ?? 'n/a')));
             $errors[] = 'Ошибка при сохранении: ' . $e->getMessage();
             if ($isAjax) jsonError($errors[count($errors)-1]);
@@ -458,7 +516,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <link rel="stylesheet" href="/mehanik/assets/css/header.css">
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
   <style>
-    /* inline styles restored */
     .page { max-width:1100px; margin:18px auto; padding:14px; box-sizing:border-box; }
     .card { background:#fff; border-radius:10px; box-shadow:0 8px 24px rgba(2,6,23,0.06); overflow:hidden; }
     .card-body { padding:18px; }
@@ -564,8 +621,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           </div>
 
           <div>
-            <label class="block">Коробка передач</label>
-            <select name="transmission">
+            <label class="block">Коробка передач *</label>
+            <select id="transmission" name="transmission" required>
               <option value="">— выберите —</option>
               <?php if (!empty($gearboxes)): ?>
                 <?php foreach ($gearboxes as $g): if ((int)($g['active'] ?? 1) !== 1) continue; ?>
@@ -581,8 +638,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           </div>
 
           <div>
-            <label class="block">Тип топлива</label>
-            <select name="fuel">
+            <label class="block">Тип топлива *</label>
+            <select id="fuel" name="fuel" required>
               <option value="">— выберите —</option>
               <?php if (!empty($fuel_types)): ?>
                 <?php foreach ($fuel_types as $f): if ((int)($f['active'] ?? 1) !== 1) continue; ?>
@@ -640,6 +697,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   const modelEl = document.getElementById('model');
   const vehicleTypeEl = document.getElementById('vehicle_type');
   const bodyEl = document.getElementById('body_type');
+  const fuelEl = document.getElementById('fuel');
+  const transEl = document.getElementById('transmission');
 
   async function loadModels(brandId) {
     modelEl.innerHTML = '<option value="">Загрузка...</option>';
@@ -751,8 +810,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     const year = parseInt(document.getElementById('year').value || '0', 10);
     const minY = <?= json_encode($minYear) ?>;
     const maxY = <?= json_encode($currentYear) ?>;
+    const fuel = fuelEl.value;
+    const trans = transEl.value;
     if (!brand || !model) { e.preventDefault(); alert('Пожалуйста выберите бренд и модель'); return false; }
     if (!year || year < minY || year > maxY) { e.preventDefault(); alert('Выберите корректный год'); return false; }
+    if (!fuel) { e.preventDefault(); alert('Пожалуйста выберите тип топлива'); return false; }
+    if (!trans) { e.preventDefault(); alert('Пожалуйста выберите коробку передач'); return false; }
 
     e.preventDefault();
     const fd = new FormData();
@@ -779,7 +842,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
           const j = JSON.parse(xhr.responseText || '{}');
           if (j && j.ok) {
-            // success — go to my-cars
             window.location.href = '<?= $basePublic ?>/my-cars.php';
             return;
           } else if (j && j.error) {
@@ -787,7 +849,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             return;
           }
         } catch (err) {
-          // fallback - reload
           location.reload();
         }
       } else {
