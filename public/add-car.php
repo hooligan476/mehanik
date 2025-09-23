@@ -228,13 +228,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($model_save === '') $errors[] = 'Модель обязательна';
     if ($year < $minYear || $year > $currentYear) $errors[] = "Год должен быть в диапазоне {$minYear}—{$currentYear}";
     if ($price < 0) $errors[] = 'Цена некорректна';
-    // <-- NEW: require fuel and transmission
+    // require fuel and transmission
     if (trim($transmission) === '') $errors[] = 'Коробка передач обязательна';
     if (trim($fuel) === '') $errors[] = 'Тип топлива обязателен';
 
     // ---------- FILES: collect uploaded file info (do NOT move yet) ----------
     $accepted_exts = ['jpg','jpeg','png','webp'];
-    $max_files = 6;
+    $max_files = 10; // increased from 6 to 10
     $uploadPending = []; // each: ['tmp'=>..., 'orig'=>..., 'ext'=>...]
     $savedMainIndex = null;
 
@@ -374,7 +374,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // Now move uploaded files into folder uploads/cars/{id} and rename
                 $movedMain = null;
-                $savedExtras = [];
+                $savedFiles = []; // all moved files (rel paths)
                 if (!empty($uploadPending) && !empty($newId)) {
                     $destDirRel = 'uploads/cars/' . intval($newId);
                     $destDir = __DIR__ . '/../' . $destDirRel;
@@ -394,8 +394,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $destPath = $destDir . '/' . $fileName;
                         if (@move_uploaded_file($item['tmp'], $destPath)) {
                             $relPath = $destDirRel . '/' . $fileName;
+                            $savedFiles[] = $relPath;
                             if ($idx === $savedMainIndex) $movedMain = $relPath;
-                            else $savedExtras[] = $relPath;
                         } else {
                             error_log("add-car: move_uploaded_file failed for tmp={$item['tmp']} -> dest={$destPath}");
                         }
@@ -411,8 +411,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     }
 
-                    // (Optional) if you have a separate car_photos table, insert extras there.
-                    // foreach ($savedExtras as $p) { $ins = $mysqli->prepare("INSERT INTO car_photos (car_id, photo) VALUES (?, ?)"); if($ins){ $ins->bind_param('is',$newId,$p); $ins->execute(); $ins->close(); } }
+                    // Insert all saved files into car_photos if table exists
+                    try {
+                        $tblCheck = $mysqli->query("SHOW TABLES LIKE 'car_photos'");
+                        if ($tblCheck && $tblCheck->num_rows > 0 && !empty($savedFiles)) {
+                            // find best column to insert path into
+                            $colRes = $mysqli->query("SHOW COLUMNS FROM car_photos");
+                            $cols = [];
+                            while ($cr = $colRes->fetch_assoc()) $cols[] = $cr['Field'];
+                            $prefer = ['file_path','file','filepath','filename','path','photo','url'];
+                            $useCol = null;
+                            foreach ($prefer as $cname) {
+                                if (in_array($cname, $cols, true)) { $useCol = $cname; break; }
+                            }
+                            if ($useCol === null) {
+                                // fallback: pick first non-meta column
+                                foreach ($cols as $cname) {
+                                    if (!in_array($cname, ['id','car_id','created_at','created','updated','updated_at','user_id'], true)) {
+                                        $useCol = $cname;
+                                        break;
+                                    }
+                                }
+                            }
+                            if ($useCol === null) {
+                                // fallback to 'photo' or 'path' if present
+                                $useCol = (in_array('photo', $cols, true) ? 'photo' : (in_array('path', $cols, true) ? 'path' : null));
+                            }
+
+                            if ($useCol) {
+                                $insSql = "INSERT INTO car_photos (car_id, {$useCol}, created_at) VALUES (?, ?, NOW())";
+                                $insStmt = $mysqli->prepare($insSql);
+                                if ($insStmt) {
+                                    foreach ($savedFiles as $p) {
+                                        $insStmt->bind_param('is', $newId, $p);
+                                        $insStmt->execute();
+                                    }
+                                    $insStmt->close();
+                                }
+                            }
+                        }
+                    } catch (Throwable $e) {
+                        error_log("add-car: failed to insert into car_photos: " . $e->getMessage());
+                    }
                 }
 
                 // generate SKU
@@ -444,7 +484,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // Now move uploaded files into folder uploads/cars/{id} and rename (PDO path)
                 $movedMain = null;
-                $savedExtras = [];
+                $savedFiles = [];
                 if (!empty($uploadPending) && !empty($newId)) {
                     $destDirRel = 'uploads/cars/' . intval($newId);
                     $destDir = __DIR__ . '/../' . $destDirRel;
@@ -464,8 +504,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $destPath = $destDir . '/' . $fileName;
                         if (@move_uploaded_file($item['tmp'], $destPath)) {
                             $relPath = $destDirRel . '/' . $fileName;
+                            $savedFiles[] = $relPath;
                             if ($idx === $savedMainIndex) $movedMain = $relPath;
-                            else $savedExtras[] = $relPath;
                         } else {
                             error_log("add-car: move_uploaded_file failed for tmp={$item['tmp']} -> dest={$destPath}");
                         }
@@ -481,8 +521,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     }
 
-                    // (Optional) insert extras into car_photos table for PDO if exists
-                    // foreach ($savedExtras as $p) { $ins = $pdo->prepare("INSERT INTO car_photos (car_id, photo) VALUES (:id, :p)"); $ins->execute([':id'=>$newId,':p'=>$p]); }
+                    // insert into car_photos if exists (PDO)
+                    try {
+                        $tblCheck = $pdo->query("SHOW TABLES LIKE 'car_photos'");
+                        $ok = $tblCheck && $tblCheck->fetchColumn() !== false;
+                        if ($ok && !empty($savedFiles)) {
+                            $colRes = $pdo->query("SHOW COLUMNS FROM car_photos");
+                            $cols = $colRes->fetchAll(PDO::FETCH_COLUMN);
+                            $prefer = ['file_path','file','filepath','filename','path','photo','url'];
+                            $useCol = null;
+                            foreach ($prefer as $cname) {
+                                if (in_array($cname, $cols, true)) { $useCol = $cname; break; }
+                            }
+                            if ($useCol === null) {
+                                foreach ($cols as $cname) {
+                                    if (!in_array($cname, ['id','car_id','created_at','created','updated','updated_at','user_id'], true)) {
+                                        $useCol = $cname;
+                                        break;
+                                    }
+                                }
+                            }
+                            if ($useCol === null) {
+                                $useCol = (in_array('photo', $cols, true) ? 'photo' : (in_array('path', $cols, true) ? 'path' : null));
+                            }
+
+                            if ($useCol) {
+                                $ins = $pdo->prepare("INSERT INTO car_photos (car_id, {$useCol}, created_at) VALUES (:id, :p, NOW())");
+                                foreach ($savedFiles as $p) {
+                                    $ins->execute([':id'=>$newId, ':p'=>$p]);
+                                }
+                            }
+                        }
+                    } catch (Throwable $e) {
+                        error_log("add-car: failed to insert into car_photos (PDO): " . $e->getMessage());
+                    }
                 }
 
                 $skuGenerated = 'CAR-' . str_pad((string)$newId, 6, '0', STR_PAD_LEFT);
@@ -665,10 +737,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           </div>
 
           <div>
-            <label class="block">Фотографии (макс.6)</label>
+            <label class="block">Фотографии (макс.10)</label>
             <div id="dropzone" class="dropzone">Перетащите фото сюда или нажмите для выбора</div>
             <input id="p_photos" type="file" name="photos[]" accept="image/*" multiple style="display:none">
-            <div class="small">Рекомендуется не больше 6 фото. Выберите главное фото звёздочкой (★).</div>
+            <div class="small">Рекомендуется не больше 10 фото. Выберите главное фото звёздочкой (★).</div>
             <div id="previews" class="photo-preview" aria-hidden="true"></div>
           </div>
 
@@ -747,7 +819,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   const dropzone = document.getElementById('dropzone');
   const photosInput = document.getElementById('p_photos');
   const previews = document.getElementById('previews');
-  const MAX = 6;
+  const MAX = 10; // increased from 6
   const ALLOWED = ['image/jpeg','image/png','image/webp'];
   let files = [];
   let mainIndex = null;

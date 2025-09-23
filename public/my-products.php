@@ -1,5 +1,5 @@
 <?php
-// public/my-products.php — страница "Мои товары" (фронтенд фильтрации для запчастей)
+// public/my-products.php
 // Внимание: здесь НЕ присутствует параметр `mine` и ничего, что с ним связано.
 require_once __DIR__ . '/../middleware.php';
 require_auth();
@@ -62,7 +62,7 @@ html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial
 .thumb img, .card img{width:auto;height:100%;object-fit:contain;display:block}
 
 /* Main content */
-.card-body, .product-content{padding:0 6px 0 0;flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:4px}
+.card-body, .product-content{padding:0 6px 0 0;flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}
 .title{font-size:1rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#0f172a}
 .product-sub,.meta{font-size:0.88rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
@@ -71,11 +71,11 @@ html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial
 .sku-link{font-weight:600;color:var(--accent);text-decoration:underline;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .btn-copy-sku{padding:4px 8px;border-radius:6px;border:1px solid #e6e9ef;background:#fff;cursor:pointer;font-size:0.9rem}
 
-/* price & id column */
+/* price column */
 .price-row{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .price{font-weight:800;font-size:0.98rem;color:var(--accent);white-space:nowrap}
 
-/* badges compact */
+/* compact badges */
 .badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px}
 .badge{padding:5px 8px;border-radius:999px;font-weight:700;font-size:0.78rem;color:#fff}
 .badge.ok{background:var(--ok)}.badge.rej{background:var(--danger)}.badge.pending{background:var(--pending)}
@@ -167,7 +167,7 @@ html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial
       </div>
 
       <div class="form-row">
-        <label for="search">Поиск (название / артикул / ID)</label>
+        <label for="search">Поиск (название / артикул)</label>
         <input id="search" placeholder="например: тормоз или 123">
       </div>
 
@@ -362,13 +362,26 @@ window.fetchJSON = async function(url, opts = {}){ try{ const resp = await fetch
       // body
       const body = document.createElement('div'); body.className='card-body';
 
-      // top row: left(title/meta) + right(price/id)
+      // top row: left(title/meta) + right(price)
       const topRow = document.createElement('div'); topRow.className='price-row';
       const left = document.createElement('div'); left.style.flex='1'; left.style.minWidth='0';
       const title = document.createElement('div'); title.className='title'; title.textContent = it.name || 'Без названия';
       title.title = it.name || '';
-      const meta = document.createElement('div'); meta.className='meta'; meta.textContent = it.manufacturer || (it.brand || '-') ;
-      left.appendChild(title); left.appendChild(meta);
+
+      // product-sub: brand / model / complex part / component
+      const brandVal = it.brand_name || it.brand || it.manufacturer || '';
+      const modelVal = it.model_name || it.model || '';
+      const complexVal = it.complex_part_name || it.complex_part || it.complex || '';
+      const componentVal = it.component_name || it.component || '';
+      const productSub = document.createElement('div'); productSub.className='product-sub';
+      const parts = [];
+      if(brandVal) parts.push(String(brandVal));
+      if(modelVal) parts.push(String(modelVal));
+      if(complexVal) parts.push(String(complexVal));
+      if(componentVal) parts.push(String(componentVal));
+      productSub.textContent = parts.length ? parts.join(' · ') : '-';
+
+      left.appendChild(title); left.appendChild(productSub);
 
       // SKU
       const rawSku = (it.sku || it.article || it.code || '').toString();
@@ -416,20 +429,30 @@ window.fetchJSON = async function(url, opts = {}){ try{ const resp = await fetch
       const right = document.createElement('div'); right.style.textAlign='right'; right.style.minWidth='110px';
       const price = document.createElement('div'); price.className='price';
       price.textContent = it.price ? (Number(it.price).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' TMT') : '-';
-      const idMeta = document.createElement('div'); idMeta.className='meta'; idMeta.style.marginTop='6px'; idMeta.style.fontSize='.85rem'; idMeta.textContent = 'ID: ' + (it.id||'-');
-      right.appendChild(price); right.appendChild(idMeta);
+      right.appendChild(price);
 
       topRow.appendChild(left); topRow.appendChild(right);
       body.appendChild(topRow);
 
-      // badges
+      // badges: убираем статус, добавляем наличие, дату, и строку со состоянием/качество
       const badges = document.createElement('div'); badges.className='badges';
-      const statusText = (it.status==='approved')? 'Подтвержён' : (String(it.status).toLowerCase().indexOf('reject')!==-1? 'Отклонён' : 'На модерации');
-      const status = document.createElement('div'); status.className='badge ' + ((it.status==='approved')? 'ok' : (String(it.status).toLowerCase().indexOf('reject')!==-1? 'rej':'pending'));
-      status.textContent = statusText;
+
       const avail = document.createElement('div'); avail.className='meta'; avail.style.background='#f3f5f8'; avail.style.padding='6px 8px'; avail.style.borderRadius='8px'; avail.style.color='#334155'; avail.textContent = 'Наличие: ' + (it.availability ? String(it.availability) : '0');
       const added = document.createElement('div'); added.className='meta'; added.style.background='#f3f5f8'; added.style.padding='6px 8px'; added.style.borderRadius='8px'; added.style.color='#334155'; added.textContent = 'Добавлен: ' + (it.created_at ? new Date(it.created_at).toLocaleDateString() : '-');
-      badges.appendChild(status); badges.appendChild(avail); badges.appendChild(added);
+
+      // состояние и качество
+      const conditionText = it.quality || it.condition || it.state || '';
+      const ratingText = (typeof it.rating !== 'undefined' && it.rating !== null && it.rating !== '') ? (Number(it.rating).toFixed(1)) : '';
+      if(conditionText){
+        const cond = document.createElement('div'); cond.className='meta'; cond.style.background='#f3f5f8'; cond.style.padding='6px 8px'; cond.style.borderRadius='8px'; cond.style.color='#334155'; cond.textContent = 'Состояние: ' + String(conditionText);
+        badges.appendChild(cond);
+      }
+      if(ratingText){
+        const rq = document.createElement('div'); rq.className='meta'; rq.style.background='#f3f5f8'; rq.style.padding='6px 8px'; rq.style.borderRadius='8px'; rq.style.color='#334155'; rq.textContent = 'Качество: ' + ratingText;
+        badges.appendChild(rq);
+      }
+
+      badges.appendChild(avail); badges.appendChild(added);
       body.appendChild(badges);
 
       // footer / actions (only "Просмотр")

@@ -67,36 +67,69 @@ if ($statusNormalized !== 'approved' && !$is_owner && !$is_admin) {
     exit;
 }
 
-// assemble photo URLs
+// base URL (site prefix). Example: '/mehanik' or full URL 'https://site.com/mehanik'
 $baseUrl = rtrim($config['base_url'] ?? '/mehanik', '/');
-$mainPhoto = null;
-if (!empty($car['photo'])) {
-    $p = $car['photo'];
-    if (preg_match('~^https?://~i', $p) || str_starts_with($p, '/')) {
-        $mainPhoto = $p;
-    } else {
-        // saved like 'uploads/cars/....'
-        $mainPhoto = $baseUrl . '/' . ltrim($p, '/');
+
+// helper to normalize/resolve image path -> absolute URL or site-root path
+function resolve_image_path($p, $baseUrl) {
+    $p = trim((string)$p);
+    if ($p === '') return null;
+
+    // already absolute URL
+    if (preg_match('~^https?://~i', $p)) return $p;
+
+    // already absolute root path like "/uploads/..."
+    if (strpos($p, '/') === 0) {
+        // collapse multiple slashes
+        return preg_replace('#/+#','/',$p);
     }
+
+    // if contains uploads/cars/ somewhere, prefer tail after last occurrence
+    $marker = 'uploads/cars/';
+    $pos = stripos($p, $marker);
+    if ($pos !== false) {
+        $tail = substr($p, $pos + strlen($marker));
+        $tail = ltrim($tail, '/');
+        return rtrim($baseUrl, '/') . '/' . $marker . $tail;
+    }
+
+    // if contains uploads/ somewhere, use tail
+    $marker2 = 'uploads/';
+    $pos2 = stripos($p, $marker2);
+    if ($pos2 !== false) {
+        $tail = substr($p, $pos2);
+        $tail = '/' . ltrim($tail, '/');
+        return preg_replace('#/+#','/',$tail);
+    }
+
+    // otherwise treat as relative path and prefix with baseUrl
+    return rtrim($baseUrl, '/') . '/' . ltrim($p, '/');
 }
 
-// load extra photos from car_photos table if exists
+// assemble main photo
+$mainPhoto = null;
+if (!empty($car['photo'])) {
+    $mainPhoto = resolve_image_path($car['photo'], $baseUrl);
+}
+
+// load extra photos from car_photos.file_path (robust detection)
 $gallery = [];
 try {
     $check = $mysqli->query("SHOW TABLES LIKE 'car_photos'");
     if ($check && $check->num_rows > 0) {
-        // try to detect column name for path
+        // detect column name for path
         $colRes = $mysqli->query("SHOW COLUMNS FROM car_photos");
         $cols = [];
         while ($cr = $colRes->fetch_assoc()) $cols[] = $cr['Field'];
-        // prefer these names if present:
-        $prefer = ['file_path','filepath','filename','path','url','file'];
+
         $useCol = null;
+        // common names in order of preference (include 'photo' as well)
+        $prefer = ['file_path','file','filepath','filename','path','photo','url'];
         foreach ($prefer as $cname) {
             if (in_array($cname, $cols, true)) { $useCol = $cname; break; }
         }
+        // fallback: pick first non-meta column
         if ($useCol === null) {
-            // fallback: pick second column (not id/product/car_id/created_at)
             foreach ($cols as $cname) {
                 if (!in_array($cname, ['id','car_id','created_at','created','updated','updated_at','user_id'], true)) {
                     $useCol = $cname;
@@ -104,36 +137,79 @@ try {
                 }
             }
         }
+
         if ($useCol) {
-            $st = $mysqli->prepare("SELECT {$useCol} as path FROM car_photos WHERE car_id = ? ORDER BY id ASC");
+            $st = $mysqli->prepare("SELECT {$useCol} AS path FROM car_photos WHERE car_id = ? ORDER BY id ASC");
             if ($st) {
                 $st->bind_param('i', $id);
                 $st->execute();
                 $rr = $st->get_result();
                 while ($row = $rr->fetch_assoc()) {
-                    $p = $row['path'];
-                    if (!$p) continue;
-                    if (preg_match('~^https?://~i', $p) || str_starts_with($p, '/')) $gallery[] = $p;
-                    else $gallery[] = $baseUrl . '/' . ltrim($p, '/');
+                    $p = trim((string)($row['path'] ?? ''));
+                    if ($p === '') continue;
+
+                    // try to resolve URL
+                    $resolved = resolve_image_path($p, $baseUrl);
+
+                    // server-side existence checks & fallbacks
+                    if (!preg_match('~^https?://~i', $resolved)) {
+                        // get path portion (works for "/mehanik/uploads/..." or "/uploads/...")
+                        $urlPath = parse_url($resolved, PHP_URL_PATH) ?: $resolved;
+                        $candidateFs = realpath(__DIR__ . '/..' . $urlPath);
+                        if (!$candidateFs || !file_exists($candidateFs)) {
+                            // try with leading slash version of original p
+                            $alt = '/' . ltrim($p, '/');
+                            $altFs = realpath(__DIR__ . '/..' . $alt);
+                            if ($altFs && file_exists($altFs)) {
+                                $resolved = $alt;
+                            } else {
+                                // try with baseUrl + '/' + original p
+                                $alt2 = rtrim($baseUrl, '/') . '/' . ltrim($p, '/');
+                                $urlPath2 = parse_url($alt2, PHP_URL_PATH) ?: $alt2;
+                                $altFs2 = realpath(__DIR__ . '/..' . $urlPath2);
+                                if ($altFs2 && file_exists($altFs2)) {
+                                    $resolved = $alt2;
+                                } else {
+                                    // last resort: use $resolved as-is (may be inaccessible)
+                                    // log for debugging
+                                    error_log("car.php: image path not found on disk: tried '{$resolved}', '{$alt}', '{$alt2}'");
+                                }
+                            }
+                        }
+                    }
+
+                    $gallery[] = $resolved;
                 }
                 $st->close();
             }
         }
     }
 } catch (Throwable $e) {
-    // ignore gallery problems
+    // ignore gallery errors but log if you want
+    error_log("car.php: gallery read failed: " . $e->getMessage());
 }
 
-// ensure main photo is first in gallery
+// ensure main photo is first and unique
 if ($mainPhoto) {
     array_unshift($gallery, $mainPhoto);
-    // remove duplicate occurrences of mainPhoto later in array
-    $gallery = array_values(array_unique($gallery));
-} else {
-    // if no main photo and gallery present, take first gallery as main
-    if (!empty($gallery)) {
-        $mainPhoto = $gallery[0];
+}
+if (!empty($gallery)) {
+    // remove duplicates while preserving order
+    $seen = [];
+    $uniq = [];
+    foreach ($gallery as $g) {
+        if ($g === null) continue;
+        if (!isset($seen[$g])) { $seen[$g] = true; $uniq[] = $g; }
     }
+    $gallery = $uniq;
+    if (empty($mainPhoto)) {
+        // set main as first gallery if not set earlier
+        $mainPhoto = $gallery[0] ?? null;
+    }
+} else {
+    // no gallery at all
+    $gallery = [];
+    if (!$mainPhoto) $mainPhoto = null;
 }
 
 // helper to format value
@@ -141,6 +217,7 @@ function esc($v) { return htmlspecialchars((string)($v ?? ''), ENT_QUOTES | ENT_
 
 $rejectReason = $car['reject_reason'] ?? '';
 $car_sku = trim((string)($car['sku'] ?? ''));
+$noPhoto = $baseUrl . '/assets/no-photo.png'; // fallback
 ?>
 <!doctype html>
 <html lang="ru">
@@ -149,184 +226,217 @@ $car_sku = trim((string)($car['sku'] ?? ''));
 <title><?= esc($car['brand'] ?? $car['name'] ?? 'Автомобиль') ?> — <?= esc($config['site_name'] ?? 'Mehanik') ?></title>
 <link rel="stylesheet" href="/mehanik/assets/css/style.css">
 <style>
-/* layout */
-.container { max-width:1100px; margin:22px auto; padding:18px; }
-.top { display:flex; gap:20px; align-items:flex-start; flex-wrap:wrap; }
-@media (max-width:900px){ .top { flex-direction:column } }
+/* Container */
+.container { max-width:1200px; margin:22px auto; padding:18px; font-family:Inter, system-ui, Arial, sans-serif; color:#0f172a; }
+.header-row { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+.title { font-size:1.5rem; font-weight:800; margin:0; }
 
-/* gallery/info sizes */
-.gallery { flex: 0 0 52%; min-width:280px; max-width:580px; }
-@media (max-width:900px){ .gallery { flex: 1 1 auto; width:100% } }
-.main-photo { background:#f7f7f9; border-radius:12px; padding:10px; display:flex; align-items:center; justify-content:center; min-height:360px; }
-.main-photo img { max-width:100%; max-height:620px; object-fit:contain; border-radius:8px; }
-.thumbs { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
-.thumb { width:80px; height:60px; overflow:hidden; border-radius:8px; border:1px solid #e6eef7; cursor:pointer; display:inline-block; }
+/* Two-column layout: gallery / info */
+.content-grid { display:grid; grid-template-columns: 1fr 420px; gap:18px; align-items:start; }
+@media (max-width:1000px){ .content-grid { grid-template-columns: 1fr; } }
+
+/* gallery */
+.gallery { background:#fff; border-radius:12px; padding:12px; box-shadow:0 8px 24px rgba(2,6,23,0.06); }
+.main-photo { display:flex; align-items:center; justify-content:center; background:#f7f8fa; border-radius:8px; min-height:360px; max-height:720px; overflow:hidden; }
+.main-photo img { max-width:100%; max-height:720px; object-fit:contain; display:block; cursor:zoom-in; border-radius:6px; }
+.thumbs { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+.thumb { width:92px; height:68px; flex:0 0 auto; border-radius:8px; overflow:hidden; border:1px solid #eef3f7; background:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; }
 .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
 
-/* info column */
-.info { flex:1 1 360px; min-width:300px; }
-.card { background:#fff; border-radius:12px; box-shadow:0 8px 20px rgba(2,6,23,0.06); padding:16px; }
-h1 { margin:0 0 8px; font-size:1.4rem; }
+/* info card */
+.info { background:#fff; border-radius:12px; padding:16px; box-shadow:0 8px 24px rgba(2,6,23,0.06); }
+.badges { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+.badge { padding:6px 10px; border-radius:999px; background:#f2f4f7; font-weight:700; font-size:.95rem; }
 
-/* status badges */
-.badge { display:inline-block; padding:6px 10px; border-radius:999px; background:#f2f4f7; margin-right:8px; font-weight:700; font-size:0.95rem; }
-.status-approved { background:#e7f8ea; color:#116b1d; border:1px solid #bfe9c6; padding:10px; border-radius:8px; margin-bottom:10px; }
-.status-pending { background:#fff6e6; color:#8a5600; border:1px solid #ffe1a6; padding:10px; border-radius:8px; margin-bottom:10px; }
-.status-rejected { background:#ffeaea; color:#8f1a1a; border:1px solid #ffbcbc; padding:10px; border-radius:8px; margin-bottom:10px; }
+/* price and meta */
+.price { font-size:1.6rem; color:#0b57a4; font-weight:800; margin-bottom:6px; white-space:nowrap; }
+.meta-small { color:#6b7280; font-size:.95rem; }
 
 /* specs grid */
-.rows { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:12px; }
-@media(max-width:700px){ .rows { grid-template-columns: 1fr; } }
-.row-item { background:#fbfdff; padding:10px; border-radius:8px; border:1px solid #eef3f7; }
-
-/* price */
-.price { font-size:1.4rem; font-weight:800; color:#0b57a4; }
+.specs { display:grid; grid-template-columns: repeat(2, 1fr); gap:10px; margin-top:12px; }
+@media (max-width:600px){ .specs { grid-template-columns: 1fr; } }
+.spec { background:#fbfdff; padding:10px; border-radius:8px; border:1px solid #eef3f7; }
 
 /* description */
-.desc { margin-top:12px; padding:12px; background:#fafbff; border-radius:8px; border:1px dashed #e7e9f3; white-space:pre-wrap; }
+.desc { margin-top:12px; padding:12px; background:#fafbff; border-radius:8px; border:1px dashed #e7e9f3; white-space:pre-wrap; word-break:break-word; }
 
-/* contact */
+/* contact + actions */
 .contact { margin-top:12px; }
-.small { font-size:.95rem; color:#6b7280; }
+.actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+.btn { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:8px; text-decoration:none; font-weight:700; cursor:pointer; }
+.btn.primary { background:#0b57a4; color:#fff; border:0; }
+.btn.ghost { background:transparent; color:#0b57a4; border:1px solid rgba(11,87,164,0.08); }
+.btn.warn { background:#fff7ed; color:#a16207; border:1px solid rgba(161,98,7,0.08); }
+.btn.danger { background:#fff6f6; color:#ef4444; border:1px solid rgba(239,68,68,0.06); }
+
+/* status */
+.status { margin-bottom:12px; padding:10px; border-radius:8px; font-weight:700; }
+.status.approved { background:#e7f8ea; color:#116b1d; border:1px solid #bfe9c6; }
+.status.pending { background:#fff6e6; color:#8a5600; border:1px solid #ffe1a6; }
+.status.rejected { background:#ffeaea; color:#8f1a1a; border:1px solid #ffbcbc; }
 
 /* SKU */
-.sku-row { display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap; }
-.sku-text { font-weight:700; color:#0b57a4; text-decoration:underline; }
-.sku-copy { padding:6px 8px; border-radius:6px; border:1px solid #e6e9ef; background:#fff; cursor:pointer; }
+.sku { margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.sku .code { font-weight:800; color:#0b57a4; word-break:break-all; }
 
-/* actions: row on wide screens, column on small */
-.actions { margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-.actions .btn { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:8px; text-decoration:none; font-weight:700; cursor:pointer; }
-.btn { background:#0b57a4; color:#fff; border:0; }
-.btn.ghost { background:transparent; color:#0b57a4; border:1px solid rgba(11,87,164,0.08); }
-.btn.danger { background:#fff6f6; color:#ef4444; border:1px solid rgba(239,68,68,0.06); }
-.btn.edit { background:#fff7ed; color:#a16207; border:1px solid rgba(161,98,7,0.08); }
-@media(max-width:700px){ .actions { flex-direction:column; align-items:stretch; } .actions .btn { width:100%; justify-content:center; } }
+/* lightbox */
+#lightbox { position:fixed; inset:0; background:rgba(2,6,23,0.85); display:none; align-items:center; justify-content:center; z-index:9999; }
+#lightbox img { max-width:92%; max-height:92%; object-fit:contain; border-radius:8px; }
+.lightbox-close { position:fixed; right:18px; top:18px; background:transparent; color:#fff; border:0; font-size:22px; cursor:pointer; }
 
-/* misc */
-.muted { color:#6b7280; font-size:0.95rem; }
+/* small helpers */
+.muted { color:#6b7280; font-size:.95rem; }
 </style>
 </head>
 <body>
 <?php require_once __DIR__ . '/header.php'; ?>
 
 <div class="container">
-  <h1><?= esc($car['brand'] ?: $car['model'] ?: $car['id']) ?> <?= esc($car['model'] ?: '') ?> <?= $car['year'] ? '(' . (int)$car['year'] . ')' : '' ?></h1>
+  <div class="header-row">
+    <h1 class="title"><?= esc($car['brand'] ?: $car['model'] ?: 'Автомобиль') ?> <?= esc($car['model'] ?: '') ?> <?php if ($car['year']): ?><small style="font-weight:600;color:#374151"> (<?= (int)$car['year'] ?>)</small><?php endif; ?></h1>
+    <div>
+      <a href="/mehanik/public/my-cars.php" class="btn ghost">← К списку</a>
+      <!-- Редактирование и удаление скрыты по требованию -->
+    </div>
+  </div>
 
   <?php if ($statusNormalized === 'approved'): ?>
-    <div class="status-approved">✅ Объявление подтверждено</div>
+    <div class="status approved">✅ Объявление подтверждено</div>
   <?php elseif ($statusNormalized === 'rejected'): ?>
-    <div class="status-rejected">❌ Объявление отклонено
-      <?php if ($rejectReason): ?><div class="small" style="margin-top:6px;"><strong>Причина:</strong> <?= nl2br(esc($rejectReason)) ?></div><?php endif; ?>
+    <div class="status rejected">❌ Объявление отклонено
+      <?php if ($rejectReason): ?><div class="muted" style="margin-top:8px;"><strong>Причина:</strong> <?= nl2br(esc($rejectReason)) ?></div><?php endif; ?>
     </div>
   <?php else: ?>
-    <div class="status-pending">⏳ На модерации</div>
+    <div class="status pending">⏳ На модерации</div>
   <?php endif; ?>
 
-  <div class="top">
-    <div class="gallery card" aria-live="polite">
+  <div class="content-grid">
+    <div class="gallery">
       <div class="main-photo" id="mainPhotoWrap">
         <?php if ($mainPhoto): ?>
           <img id="mainPhotoImg" src="<?= esc($mainPhoto) ?>" alt="<?= esc($car['brand'].' '.$car['model']) ?>">
         <?php else: ?>
-          <img id="mainPhotoImg" src="/mehanik/assets/no-photo.png" alt="Нет фото">
+          <img id="mainPhotoImg" src="<?= esc($noPhoto) ?>" alt="Нет фото">
         <?php endif; ?>
       </div>
 
       <?php if (!empty($gallery)): ?>
-        <div class="thumbs" id="thumbs" role="list">
+        <div class="thumbs" id="thumbs" aria-label="Галерея">
           <?php foreach ($gallery as $idx => $g): ?>
-            <div class="thumb" data-src="<?= esc($g) ?>" role="listitem" aria-label="Фото <?= $idx+1 ?>">
-              <img src="<?= esc($g) ?>" alt="Фото <?= $idx+1 ?>">
+            <div class="thumb" data-src="<?= esc($g) ?>" title="Фото <?= $idx + 1 ?>">
+              <img src="<?= esc($g) ?>" alt="Фото <?= $idx + 1 ?>">
             </div>
           <?php endforeach; ?>
         </div>
+      <?php else: ?>
+        <div class="muted" style="margin-top:12px;">Фотографии не добавлены.</div>
       <?php endif; ?>
     </div>
 
-    <div class="info card">
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+    <div class="info">
+      <div class="badges">
+        <?php if (!empty($car['brand'])): ?><div class="badge"><?= esc($car['brand']) ?></div><?php endif; ?>
+        <?php if (!empty($car['model'])): ?><div class="badge"><?= esc($car['model']) ?></div><?php endif; ?>
+        <?php if (!empty($car['body'])): ?><div class="badge"><?= esc($car['body']) ?></div><?php endif; ?>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
         <div>
-          <?php if (!empty($car['brand'])): ?><span class="badge"><?= esc($car['brand']) ?></span><?php endif; ?>
-          <?php if (!empty($car['model'])): ?><span class="badge"><?= esc($car['model']) ?></span><?php endif; ?>
-          <?php if (!empty($car['body'])): ?><span class="badge"><?= esc($car['body']) ?></span><?php endif; ?>
-        </div>
-        <div style="text-align:right;">
           <div class="price"><?= number_format((float)($car['price'] ?? 0), 2) ?> TMT</div>
-          <div class="small muted">Добавлено: <?= $car['created_at'] ? date('d.m.Y H:i', strtotime($car['created_at'])) : '-' ?></div>
+          <div class="muted">Добавлено: <?= $car['created_at'] ? date('d.m.Y H:i', strtotime($car['created_at'])) : '-' ?></div>
         </div>
       </div>
 
-      <div class="rows" role="list">
-        <div class="row-item" role="listitem"><strong>VIN:</strong> <?= esc($car['vin'] ?? '-') ?></div>
-        <div class="row-item" role="listitem"><strong>Пробег:</strong> <?= $car['mileage'] ? number_format((int)$car['mileage']) . ' км' : '—' ?></div>
-        <div class="row-item" role="listitem"><strong>Коробка:</strong> <?= esc($car['transmission'] ?? '-') ?></div>
-        <div class="row-item" role="listitem"><strong>Топливо:</strong> <?= esc($car['fuel'] ?? '-') ?></div>
+      <div class="specs" role="list">
+        <div class="spec"><strong>VIN</strong><div class="muted"><?= esc($car['vin'] ?: '—') ?></div></div>
+        <div class="spec"><strong>Пробег</strong><div class="muted"><?= $car['mileage'] ? number_format((int)$car['mileage']) . ' км' : '—' ?></div></div>
+        <div class="spec"><strong>Коробка</strong><div class="muted"><?= esc($car['transmission'] ?: '—') ?></div></div>
+        <div class="spec"><strong>Топливо</strong><div class="muted"><?= esc($car['fuel'] ?: '—') ?></div></div>
       </div>
 
-      <!-- SKU display -->
-      <div style="margin-top:12px;">
+      <div class="sku">
         <strong>Артикул:</strong>
         <?php if ($car_sku !== ''): ?>
-          <div class="sku-row">
-            <span id="skuText" class="sku-text"><?= esc($car_sku) ?></span>
-            <button type="button" id="copySkuBtn" class="sku-copy" aria-label="Копировать артикул">📋</button>
-          </div>
+          <div class="code" id="skuText"><?= esc($car_sku) ?></div>
+          <button id="copySkuBtn" class="btn ghost">📋 Скопировать</button>
         <?php else: ?>
-          <div class="small muted" style="margin-top:6px;">—</div>
+          <div class="muted">—</div>
         <?php endif; ?>
       </div>
 
       <?php if (!empty($car['description'])): ?>
-        <div class="section-title" style="margin-top:12px;font-weight:700;">Описание</div>
         <div class="desc"><?= nl2br(esc($car['description'])) ?></div>
       <?php endif; ?>
 
-      <div class="section-title" style="margin-top:12px;font-weight:700;">Контакты продавца</div>
       <div class="contact">
+        <h4 style="margin:12px 0 6px;">Контакты продавца</h4>
         <div><strong>Имя:</strong> <?= esc($car['owner_name'] ?? '-') ?></div>
         <div style="margin-top:6px;">
           <?php $phone = trim((string)($car['owner_phone'] ?? '')); ?>
           <?php if ($phone): ?>
             <strong>Телефон:</strong> <a href="tel:<?= esc(preg_replace('~\D+~', '', $phone)) ?>"><?= esc($phone) ?></a>
           <?php else: ?>
-            <span class="muted">Контакты не указаны</span>
+            <div class="muted">Контакты не указаны</div>
           <?php endif; ?>
         </div>
       </div>
 
-      <div class="actions" role="toolbar" aria-label="Действия с объявлением">
-        <a class="btn ghost" href="/mehanik/public/index.php" title="Назад">⬅ Назад</a>
-
-        <?php if ($is_owner || $is_admin): ?>
-          <a class="btn edit" href="/mehanik/public/edit-car.php?id=<?= (int)$car['id'] ?>" title="Редактировать">✏ Редактировать</a>
-
-          <!-- delete uses JS POST to API -->
-          <button class="btn danger" id="deleteCarBtn" data-id="<?= (int)$car['id'] ?>" type="button" title="Удалить">🗑 Удалить</button>
-        <?php endif; ?>
+      <div class="actions">
+        <!-- Кнопки редактирования/удаления скрыты по требованию -->
       </div>
     </div>
   </div>
 </div>
 
+<!-- Simple lightbox -->
+<div id="lightbox" role="dialog" aria-hidden="true">
+  <button class="lightbox-close" id="lightboxClose" aria-label="Закрыть">✕</button>
+  <img id="lightboxImg" src="" alt="Большое фото">
+</div>
+
 <script>
 (function(){
-  // gallery thumbnails -> main image swap
   const mainImg = document.getElementById('mainPhotoImg');
   const thumbs = document.getElementById('thumbs');
+
+  // Thumbnail click -> swap main
   if (thumbs && mainImg) {
     thumbs.addEventListener('click', function(e){
       const t = e.target.closest('.thumb');
       if (!t) return;
       const src = t.getAttribute('data-src');
       if (src) {
-        // nice UX: preload image then swap to avoid flicker
         const pre = new Image();
         pre.onload = () => { mainImg.src = src; };
         pre.onerror = () => { mainImg.src = src; };
         pre.src = src;
-        mainImg.scrollIntoView({behavior:'smooth', block:'center'});
       }
+    });
+  }
+
+  // Click main image -> open lightbox
+  const lb = document.getElementById('lightbox');
+  const lbImg = document.getElementById('lightboxImg');
+  const lbClose = document.getElementById('lightboxClose');
+
+  if (mainImg && lb && lbImg && lbClose) {
+    mainImg.addEventListener('click', () => {
+      lbImg.src = mainImg.src;
+      lb.style.display = 'flex';
+      lb.setAttribute('aria-hidden','false');
+    });
+    lbClose.addEventListener('click', () => {
+      lb.style.display = 'none';
+      lb.setAttribute('aria-hidden','true');
+      lbImg.src = '';
+    });
+    lb.addEventListener('click', (e) => {
+      if (e.target === lb) {
+        lbClose.click();
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && lb.style.display === 'flex') lbClose.click();
     });
   }
 
@@ -341,7 +451,7 @@ h1 { margin:0 0 8px; font-size:1.4rem; }
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(()=> {
           const prev = copyBtn.textContent;
-          copyBtn.textContent = '✓';
+          copyBtn.textContent = '✓ Скопировано';
           setTimeout(()=> copyBtn.textContent = prev, 1200);
         }).catch(()=> fallbackCopy(text));
       } else {
@@ -361,7 +471,7 @@ h1 { margin:0 0 8px; font-size:1.4rem; }
         document.body.removeChild(ta);
         if (ok) {
           copyBtn.textContent = '✓';
-          setTimeout(()=> copyBtn.textContent = '📋', 1200);
+          setTimeout(()=> copyBtn.textContent = '📋 Скопировать', 1200);
         } else {
           alert('Не удалось скопировать артикул');
         }
@@ -371,42 +481,8 @@ h1 { margin:0 0 8px; font-size:1.4rem; }
     }
   })();
 
-  // delete handler — sends POST to API endpoint and redirects on success
-  (function(){
-    const delBtn = document.getElementById('deleteCarBtn');
-    if (!delBtn) return;
-    delBtn.addEventListener('click', async function(){
-      if (!confirm('Удалить объявление? Это действие нельзя будет отменить.')) return;
-      const id = delBtn.getAttribute('data-id');
-      if (!id) return alert('Не указан ID');
-      try {
-        const fd = new FormData();
-        fd.append('id', id);
-        // optional: allow API to require auth cookie (credentials included)
-        const resp = await fetch('/mehanik/api/delete-car.php', {
-          method: 'POST',
-          credentials: 'same-origin',
-          body: fd
-        });
-        if (!resp.ok) {
-          const text = await resp.text().catch(()=>null);
-          throw new Error('Сервер вернул ошибку: ' + (resp.status + (text?(' — '+text):'')));
-        }
-        const json = await resp.json().catch(()=>null);
-        if (json && (json.ok || json.success)) {
-          // redirect to my-cars with message
-          window.location.href = '/mehanik/public/my-cars.php?msg=' + encodeURIComponent('Объявление удалено');
-        } else {
-          const err = (json && (json.error || json.message)) ? (json.error || json.message) : 'Не удалось удалить объявление';
-          alert(err);
-        }
-      } catch (err) {
-        alert('Ошибка при удалении: ' + (err && err.message ? err.message : err));
-      }
-    });
-  })();
-
 })();
 </script>
+
 </body>
 </html>

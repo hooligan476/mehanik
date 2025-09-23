@@ -173,15 +173,28 @@ $displaySku = $rawSku === '' ? '' : preg_replace('/^SKU-/i', '', $rawSku);
 <title><?= htmlspecialchars($product['name']) ?> — <?= htmlspecialchars($config['site_name'] ?? 'Mehanik') ?></title>
 <link rel="stylesheet" href="/mehanik/assets/css/style.css">
 <style>
-.product-wrap { display:grid; grid-template-columns: 1fr 1.2fr; gap:24px; align-items:start; }
-@media (max-width: 900px){ .product-wrap { grid-template-columns: 1fr; } }
+/* Layout: фото сверху, контент снизу */
+.product-wrap { display:grid; grid-template-columns: 1fr; gap:18px; align-items:start; }
+@media (min-width: 900px){
+  /* на широких экранах оставляем фото крупным сверху, контент снизу */
+  .product-wrap { grid-template-columns: 1fr; }
+}
 .card { background:#fff; border-radius:14px; box-shadow:0 6px 18px rgba(0,0,0,.08); overflow:hidden; }
 .card-body { padding:20px; }
-.photo { background:#f7f7f9; display:flex; align-items:center; justify-content:center; min-height:320px; }
-.photo img { max-width:100%; max-height:520px; object-fit:contain; }
-.thumbs { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+
+/* Photo block */
+.photo { background:#f7f7f9; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:420px; }
+.photo-inner { width:100% !important; max-width:100% !important; position:relative; }
+.photo-card { width:100% !important; }
+.photo-display { width:100% !important; height:520px; border-radius:12px; overflow:hidden; background:#eaeef6; display:flex; align-items:center; justify-content:center; }
+.photo-display img { width:100% !important; height:100% !important; object-fit:cover !important; display:block !important; }
+
+.thumbs { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; justify-content:flex-start; }
 .thumb { width:78px; height:78px; border-radius:8px; overflow:hidden; border:1px solid #eee; cursor:pointer; background:#fafafa; display:flex; align-items:center; justify-content:center; }
 .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.thumb.active { box-shadow:0 6px 18px rgba(11,87,164,0.12); border:2px solid rgba(11,87,164,0.12); }
+
+/* Details */
 .status-msg { padding:12px 14px; border-radius:10px; font-weight:600; margin: 0 0 14px 0; }
 .status-approved { background:#e7f8ea; color:#116b1d; border:1px solid #bfe9c6; }
 .status-rejected { background:#ffeaea; color:#8f1a1a; border:1px solid #ffbcbc; }
@@ -201,15 +214,12 @@ $displaySku = $rawSku === '' ? '' : preg_replace('/^SKU-/i', '', $rawSku);
 .sku-text { font-weight:700; color:#0b57a4; text-decoration:underline; }
 .sku-copy { padding:6px 8px; border-radius:6px; border:1px solid #e6e9ef; background:#fff; cursor:pointer; }
 
-/* Super / Premium buttons styles */
-.btn-super { background:#f59e0b; color:#101010; }
-.btn-premium { background:#8b5cf6; color:#fff; }
-
-/* small spacing on mobile */
+/* Responsive tweaks */
 @media (max-width: 600px) {
   .sku-row { flex-direction: column; align-items:flex-start; gap:6px; }
   .btn { display:block; width:100%; text-align:center; }
   .btn + .btn { margin-top:8px; }
+  .photo-display { height:320px; }
 }
 </style>
 </head>
@@ -234,35 +244,36 @@ $displaySku = $rawSku === '' ? '' : preg_replace('/^SKU-/i', '', $rawSku);
 <?php endif; ?>
 
 <div class="product-wrap">
-  <!-- Фото -->
-  <div class="card">
+  <!-- Фото (вверху) -->
+  <div class="card photo-card">
     <div class="photo" id="photoWrapper">
-      <?php if ($hasAnyPhoto): ?>
-        <img id="mainPhoto" src="<?= htmlspecialchars($galleryUrls[0]) ?>" alt="<?= htmlspecialchars($product['name']) ?>">
-      <?php else: ?>
-        <img id="mainPhoto" src="/mehanik/assets/no-photo.png" alt="Нет фото">
-      <?php endif; ?>
-    </div>
-
-    <?php if ($hasAnyPhoto && count($galleryUrls) > 1): ?>
-      <div style="padding:12px;">
-        <div class="thumbs" id="thumbs">
-          <?php foreach ($galleryUrls as $idx => $g): ?>
-            <div class="thumb" data-idx="<?= $idx ?>">
-              <img src="<?= htmlspecialchars($g) ?>" alt="Фото <?= $idx+1 ?>">
-            </div>
-          <?php endforeach; ?>
+      <div class="photo-inner">
+        <div class="photo-display">
+          <?php if ($hasAnyPhoto): ?>
+            <img id="mainPhoto" src="<?= htmlspecialchars($galleryUrls[0]) ?>" alt="<?= htmlspecialchars($product['name']) ?>">
+          <?php else: ?>
+            <img id="mainPhoto" src="/mehanik/assets/no-photo.png" alt="Нет фото">
+          <?php endif; ?>
         </div>
+
+        <?php if ($hasAnyPhoto && count($galleryUrls) > 1): ?>
+          <div class="thumbs" id="thumbs">
+            <?php foreach ($galleryUrls as $idx => $g): ?>
+              <div class="thumb<?= $idx === 0 ? ' active' : '' ?>" data-idx="<?= $idx ?>">
+                <img src="<?= htmlspecialchars($g) ?>" alt="Фото <?= $idx+1 ?>">
+              </div>
+            <?php endforeach; ?>
+          </div>
+        <?php endif; ?>
+
       </div>
-    <?php endif; ?>
+    </div>
   </div>
 
-  <!-- Описание -->
-  <div class="card">
+  <!-- Описание (под фото) -->
+  <div class="card info-card">
     <div class="card-body">
-      <?php if ($logoUrl): ?>
-        <img class="logo" src="<?= htmlspecialchars($logoUrl) ?>" alt="Логотип" style="max-width:140px; max-height:80px; object-fit:contain;">
-      <?php endif; ?>
+      
 
       <div style="margin-bottom:8px;">
         <?php foreach (['brand_name','model_name','complex_part_name','component_name'] as $field): ?>
@@ -314,40 +325,38 @@ $displaySku = $rawSku === '' ? '' : preg_replace('/^SKU-/i', '', $rawSku);
 
       <div style="margin-top:16px;">
         <a class="btn" href="/mehanik/public/index.php">⬅ Назад к каталогу</a>
-
-        <!-- Добавлены кнопки Super / Premium -->
-        <button type="button" id="superBtn" class="btn btn-super" style="margin-left:8px;">★ Super</button>
-        <button type="button" id="premiumBtn" class="btn btn-premium" style="margin-left:8px;">✨ Premium</button>
-
-        <?php if ($is_owner || $is_admin): ?>
-          <!-- если владелец или админ — показываем редактировать/удалить тут тоже -->
-          <a href="/mehanik/public/edit-product.php?id=<?= urlencode($id) ?>" class="btn" style="background:#0ea5a4; margin-left:8px;">✏ Редактировать</a>
-        <?php endif; ?>
+        <!-- Кнопки Super / Premium / Редактировать убраны по запросу -->
       </div>
     </div>
   </div>
 </div>
 
 <script>
-// gallery thumbnail click -> swap main image
+// gallery thumbnail click -> swap main image + active state
 (function(){
   const thumbs = document.getElementById('thumbs');
   const main = document.getElementById('mainPhoto');
   if (!thumbs || !main) return;
+
   thumbs.addEventListener('click', function(e){
     let t = e.target;
-    // find .thumb
     while (t && !t.classList.contains('thumb')) t = t.parentElement;
     if (!t) return;
-    const idx = t.getAttribute('data-idx');
-    if (idx === null) return;
+    const idx = parseInt(t.getAttribute('data-idx'), 10);
+    if (Number.isNaN(idx)) return;
     const imgs = thumbs.querySelectorAll('img');
     const src = imgs[idx] ? imgs[idx].src : null;
     if (src) {
-      main.src = src;
-      // optionally update active thumb styles
-      thumbs.querySelectorAll('.thumb').forEach(th => th.style.boxShadow = '');
-      t.style.boxShadow = '0 4px 14px rgba(11,87,164,0.14)';
+      // плавная подмена
+      main.style.opacity = 0;
+      setTimeout(()=> {
+        main.src = src;
+        main.style.opacity = 1;
+      }, 120);
+
+      // active thumb
+      thumbs.querySelectorAll('.thumb').forEach(th => th.classList.remove('active'));
+      t.classList.add('active');
     }
   });
 })();
@@ -394,25 +403,6 @@ $displaySku = $rawSku === '' ? '' : preg_replace('/^SKU-/i', '', $rawSku);
   }
 })();
 
-// Super / Premium buttons (заглушки)
-(function(){
-  const superBtn = document.getElementById('superBtn');
-  const premiumBtn = document.getElementById('premiumBtn');
-
-  if (superBtn) {
-    superBtn.addEventListener('click', function(e){
-      e.preventDefault();
-      alert('Super: функция заглушка — позже подключим оплату/подсветку товара.');
-    });
-  }
-
-  if (premiumBtn) {
-    premiumBtn.addEventListener('click', function(e){
-      e.preventDefault();
-      alert('Premium: функция заглушка — позже подключим оплату/выделение.');
-    });
-  }
-})();
 </script>
 </body>
 </html>

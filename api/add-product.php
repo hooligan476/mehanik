@@ -30,6 +30,9 @@ $comp         = ($_POST['component_id']    ?? '') !== '' ? (int)$_POST['componen
 
 $desc         = trim($_POST['description'] ?? '');
 
+// contact phone (hidden input filled by the form or fallback to session)
+$contact_phone = trim($_POST['contact_phone'] ?? $_SESSION['user']['phone'] ?? '');
+
 // Validation
 if (!$name || $price <= 0 || !$brand_id || !$model_id) {
     if ($isAjax) {
@@ -163,40 +166,39 @@ if (!empty($_FILES['photos']['name']) && is_array($_FILES['photos']['name'])) {
 
 // Insert into DB
 try {
+    // detect whether products table has contact_phone column
+    $hasContactPhone = false;
+    if (isset($mysqli) && $mysqli instanceof mysqli) {
+        try {
+            $r = $mysqli->query("SHOW COLUMNS FROM products LIKE 'contact_phone'");
+            if ($r && $r->num_rows > 0) $hasContactPhone = true;
+            if ($r) $r->free();
+        } catch (Throwable $_) { $hasContactPhone = false; }
+    } elseif (isset($pdo) && $pdo instanceof PDO) {
+        try {
+            $st = $pdo->query("SHOW COLUMNS FROM products LIKE 'contact_phone'");
+            $row = $st->fetch(PDO::FETCH_NUM);
+            if ($row) $hasContactPhone = true;
+        } catch (Throwable $_) { $hasContactPhone = false; }
+    }
+
     if (isset($mysqli) && $mysqli instanceof mysqli) {
         $mysqli->begin_transaction();
 
-        $sql = "
-          INSERT INTO products (
-            user_id, brand_id, model_id, year_from, year_to,
-            complex_part_id, component_id, sku, name, manufacturer,
-            quality, rating, availability, price, description, logo, photo, created_at, status
-          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),'active')
-        ";
-        $stmt = $mysqli->prepare($sql);
-        if (!$stmt) throw new Exception('Prepare failed: ' . $mysqli->error);
-
-        // prepare values (use nulls where appropriate)
-        $brand_id_b = $brand_id === null ? null : $brand_id;
-        $model_id_b = $model_id === null ? null : $model_id;
-        $year_from_b = $year_from === null ? null : $year_from;
-        $year_to_b = $year_to === null ? null : $year_to;
-        $cpart_b = $cpart === null ? null : $cpart;
-        $comp_b = $comp === null ? null : $comp;
-
-        // types: i i i i i i i s s s s d i d s s (17)
-        // 'i' for integers, 'd' for double, 's' for string
-        $types = 'iiiiiiissssdidsss';
-
-        $bind_ok = $stmt->bind_param(
-            $types,
+        // Build dynamic columns and values
+        $cols = [
+            'user_id','brand_id','model_id','year_from','year_to',
+            'complex_part_id','component_id','sku','name','manufacturer',
+            'quality','rating','availability','price','description','logo','photo'
+        ];
+        $values = [
             $user_id,
-            $brand_id_b,
-            $model_id_b,
-            $year_from_b,
-            $year_to_b,
-            $cpart_b,
-            $comp_b,
+            $brand_id === null ? null : $brand_id,
+            $model_id === null ? null : $model_id,
+            $year_from === null ? null : $year_from,
+            $year_to === null ? null : $year_to,
+            $cpart === null ? null : $cpart,
+            $comp === null ? null : $comp,
             $sku,
             $name,
             $manufacturer,
@@ -207,8 +209,43 @@ try {
             $desc,
             $logoDb,
             $photoDb
-        );
-        if (!$bind_ok) throw new Exception('Bind failed: ' . $stmt->error);
+        ];
+
+        if ($hasContactPhone) {
+            $cols[] = 'contact_phone';
+            $values[] = $contact_phone !== '' ? $contact_phone : null;
+        }
+
+        // status
+        $cols[] = 'status';
+        $values[] = 'active';
+
+        // placeholders
+        $placeholders = array_fill(0, count($values), '?');
+        $sql = "INSERT INTO products (" . implode(',', $cols) . ", created_at) VALUES (" . implode(',', $placeholders) . ", NOW())";
+
+        // build types string dynamically
+        $types = '';
+        foreach ($values as $v) {
+            if (is_int($v)) $types .= 'i';
+            elseif (is_float($v) || is_double($v)) $types .= 'd';
+            else $types .= 's';
+        }
+
+        $stmt = $mysqli->prepare($sql);
+        if (!$stmt) throw new Exception('Prepare failed: ' . $mysqli->error);
+
+        // build references for bind_param
+        $bindParams = [];
+        $bindParams[] = & $types;
+        for ($i = 0; $i < count($values); $i++) {
+            ${"p".$i} = $values[$i];
+            $bindParams[] = &${"p".$i};
+        }
+
+        if (!call_user_func_array([$stmt, 'bind_param'], $bindParams)) {
+            throw new Exception('Bind failed: ' . $stmt->error);
+        }
 
         if (!$stmt->execute()) throw new Exception('Execute failed: ' . $stmt->error);
         $newId = $stmt->insert_id;
@@ -242,7 +279,7 @@ try {
 
         if ($isAjax) {
             header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['ok'=>true,'id'=>$newId,'sku'=>$sku]); // sku without SKU- prefix
+            echo json_encode(['ok'=>true,'id'=>$newId,'sku'=>$sku]);
             exit;
         } else {
             header('Location: /mehanik/public/product.php?id=' . (int)$newId);
@@ -252,35 +289,51 @@ try {
     } elseif (isset($pdo) && $pdo instanceof PDO) {
         $pdo->beginTransaction();
 
-        $sql = "INSERT INTO products (
-            user_id, brand_id, model_id, year_from, year_to,
-            complex_part_id, component_id, sku, name, manufacturer,
-            quality, rating, availability, price, description, logo, photo, created_at, status
-          ) VALUES (
-            :user_id, :brand_id, :model_id, :year_from, :year_to,
-            :complex_part_id, :component_id, :sku, :name, :manufacturer,
-            :quality, :rating, :availability, :price, :description, :logo, :photo, NOW(), 'active'
-          )";
+        // Build dynamic columns and params for PDO
+        $cols = [
+            'user_id','brand_id','model_id','year_from','year_to',
+            'complex_part_id','component_id','sku','name','manufacturer',
+            'quality','rating','availability','price','description','logo','photo'
+        ];
+        $params = [
+            ':user_id' => $user_id,
+            ':brand_id' => $brand_id,
+            ':model_id' => $model_id,
+            ':year_from' => $year_from,
+            ':year_to' => $year_to,
+            ':complex_part_id' => $cpart,
+            ':component_id' => $comp,
+            ':sku' => $sku,
+            ':name' => $name,
+            ':manufacturer' => $manufacturer,
+            ':quality' => $quality,
+            ':rating' => $rating,
+            ':availability' => $availability,
+            ':price' => $price,
+            ':description' => $desc,
+            ':logo' => $logoDb ?? null,
+            ':photo' => $photoDb ?? null
+        ];
+
+        if ($hasContactPhone) {
+            $cols[] = 'contact_phone';
+            $params[':contact_phone'] = $contact_phone !== '' ? $contact_phone : null;
+        }
+
+        // status
+        $cols[] = 'status';
+        $params[':status'] = 'active';
+
+        // build sql
+        $phKeys = [];
+        $i = 0;
+        foreach ($params as $k => $v) {
+            $phKeys[] = $k;
+            $i++;
+        }
+        $sql = "INSERT INTO products (" . implode(',', $cols) . ", created_at) VALUES (" . implode(',', $phKeys) . ", NOW())";
         $st = $pdo->prepare($sql);
-        $st->execute([
-            ':user_id'=>$user_id,
-            ':brand_id'=>$brand_id,
-            ':model_id'=>$model_id,
-            ':year_from'=>$year_from,
-            ':year_to'=>$year_to,
-            ':complex_part_id'=>$cpart,
-            ':component_id'=>$comp,
-            ':sku'=>$sku,
-            ':name'=>$name,
-            ':manufacturer'=>$manufacturer,
-            ':quality'=>$quality,
-            ':rating'=>$rating,
-            ':availability'=>$availability,
-            ':price'=>$price,
-            ':description'=>$desc,
-            ':logo'=>$logoDb ?? null,
-            ':photo'=>$photoDb ?? null
-        ]);
+        $st->execute($params);
         $newId = $pdo->lastInsertId();
 
         if (!empty($extraFiles)) {
@@ -300,7 +353,7 @@ try {
 
         if ($isAjax) {
             header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['ok'=>true,'id'=>$newId,'sku'=>$sku]); // sku without SKU- prefix
+            echo json_encode(['ok'=>true,'id'=>$newId,'sku'=>$sku]);
             exit;
         } else {
             header('Location: /mehanik/public/product.php?id=' . (int)$newId);

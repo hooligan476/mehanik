@@ -226,7 +226,7 @@ html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui,Arial,
 #cars{display:flex;flex-direction:column;gap:10px;padding:6px 0}
 .car-card{display:flex;gap:12px;padding:10px;border-radius:12px;background:var(--card-bg);box-shadow:0 6px 18px rgba(2,6,23,0.06);border:1px solid rgba(15,23,42,0.04);align-items:center}
 .thumb{flex:0 0 140px;width:140px;height:84px;border-radius:8px;overflow:hidden;background:#f7f9fc;display:flex;align-items:center;justify-content:center}
-.thumb img{width:auto;height:100%;object-fit:contain}
+.thumb img{width:100%;height:100%;object-fit:contain}
 .card-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
 .title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .meta{color:var(--muted);font-size:.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -513,6 +513,12 @@ window.noPhoto = <?= json_encode($noPhoto) ?>;
     }
   }
 
+  function formatNumber(n){
+    try{
+      return Number(n).toLocaleString();
+    }catch(e){ return String(n); }
+  }
+
   function renderCars(items){
     carsContainer.innerHTML = '';
     if (!Array.isArray(items) || items.length === 0) {
@@ -542,8 +548,24 @@ window.noPhoto = <?= json_encode($noPhoto) ?>;
       const right = document.createElement('div'); right.style.textAlign = 'right'; right.style.minWidth = '140px';
       const price = document.createElement('div'); price.className = 'price';
       price.textContent = it.price ? (Number(it.price).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}) + ' TMT') : '-';
-      const idMeta = document.createElement('div'); idMeta.className = 'meta'; idMeta.style.marginTop='6px'; idMeta.style.fontSize='.85rem'; idMeta.textContent = 'ID: ' + (it.id||'-');
-      right.appendChild(price); right.appendChild(idMeta);
+
+      // Show SKU instead of raw ID
+      const skuMeta = document.createElement('div');
+      skuMeta.className = 'meta';
+      skuMeta.style.marginTop = '6px';
+      skuMeta.style.fontSize = '.85rem';
+      skuMeta.textContent = 'Артикул: ' + (it.sku ? it.sku : '-');
+
+      // Show mileage
+      const mileageMeta = document.createElement('div');
+      mileageMeta.className = 'meta';
+      mileageMeta.style.marginTop = '6px';
+      mileageMeta.style.fontSize = '.85rem';
+      mileageMeta.textContent = 'Пробег: ' + (it.mileage ? (formatNumber(it.mileage) + ' км') : '-');
+
+      right.appendChild(price);
+      right.appendChild(skuMeta);
+      right.appendChild(mileageMeta);
 
       top.appendChild(left); top.appendChild(right);
       body.appendChild(top);
