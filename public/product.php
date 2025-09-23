@@ -297,6 +297,14 @@ $displaySku = $rawSku === '' ? '' : preg_replace('/^SKU-/i', '', $rawSku);
         </div>
 
         <div class="row"><strong>Производитель:</strong> <?= htmlspecialchars($product['manufacturer'] ?? '-') ?></div>
+
+        <!-- Новые строки: информация о доставке -->
+        <div class="row"><strong>Доставка:</strong> <?= htmlspecialchars($product['delivery'] ?? '-') ?></div>
+
+        <?php if (isset($product['delivery_price']) && $product['delivery_price'] !== null && $product['delivery_price'] !== ''): ?>
+          <div class="row"><strong>Стоимость доставки:</strong> <?= number_format((float)$product['delivery_price'], 2) ?> TMT</div>
+        <?php endif; ?>
+
         <div class="row"><strong>Состояние:</strong> <?= htmlspecialchars($product['quality'] ?? '-') ?></div>
         <div class="row"><strong>Качество:</strong> <?= number_format((float)($product['rating'] ?? 0),1) ?></div>
         <div class="row"><strong>Годы выпуска:</strong> <?= ($product['year_from'] ? htmlspecialchars($product['year_from']) : '—') ?> — <?= ($product['year_to'] ? htmlspecialchars($product['year_to']) : '—') ?></div>

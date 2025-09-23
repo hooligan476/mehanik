@@ -44,14 +44,10 @@ if (!$name || $price <= 0 || !$brand_id || !$model_id) {
     exit;
 }
 
-// -------------------------------------------------
 // SKU generation — store *without* "SKU-" prefix
-// -------------------------------------------------
 try {
-    // create 8-символьный HEX код (e.g. A1B2C3D4)
     $sku = strtoupper(bin2hex(random_bytes(4)));
 } catch (Throwable $e) {
-    // fallback: generate pseudo-random hex and pad to 8 chars
     $sku = strtoupper(str_pad(dechex(mt_rand(0, 0x7FFFFFFF)), 8, '0', STR_PAD_LEFT));
 }
 
@@ -63,41 +59,6 @@ if (!is_dir($uploadDir)) @mkdir($uploadDir, 0755, true);
 $allowed = ['image/jpeg','image/png','image/webp'];
 $maxFileSize = 3 * 1024 * 1024; // 3MB
 
-// determine next AUTO_INCREMENT for naming (best-effort)
-$nextId = null;
-if (isset($mysqli) && $mysqli instanceof mysqli) {
-    $resAI = $mysqli->query("SELECT AUTO_INCREMENT AS ai FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products'");
-    if ($resAI && $rowAI = $resAI->fetch_assoc()) $nextId = (int)$rowAI['ai'];
-    if ($resAI) $resAI->free();
-    if (!$nextId) {
-      $resMax = $mysqli->query("SELECT MAX(id) AS max_id FROM products");
-      if ($resMax && ($rowMax = $resMax->fetch_assoc())) $nextId = (int)($rowMax['max_id'] ?? 0) + 1;
-      if ($resMax) $resMax->free();
-    }
-} elseif (isset($pdo) && $pdo instanceof PDO) {
-    try {
-        $st = $pdo->query("SELECT AUTO_INCREMENT AS ai FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products'");
-        $r = $st->fetch(PDO::FETCH_ASSOC);
-        if ($r && !empty($r['ai'])) $nextId = (int)$r['ai'];
-        if (!$nextId) {
-            $st2 = $pdo->query("SELECT MAX(id) AS max_id FROM products");
-            $r2 = $st2->fetch(PDO::FETCH_ASSOC);
-            $nextId = (int)($r2['max_id'] ?? 0) + 1;
-        }
-    } catch (Throwable $e) {
-        $nextId = time();
-    }
-} else {
-    $nextId = time();
-}
-
-$pad = str_pad((string)$nextId, 9, '0', STR_PAD_LEFT);
-
-// file name arrays
-$logoName = null;
-$mainPhotoName = null;
-$extraFiles = []; // store full web paths to insert into product_photos
-
 // helper to sanitize extension
 $cleanExt = function($ext){
     $ext = strtolower($ext);
@@ -105,7 +66,7 @@ $cleanExt = function($ext){
     return $ext ?: 'jpg';
 };
 
-// helper to respond with error (declared early for use)
+// helper to respond with error
 function respondWithError($msg) {
     global $isAjax;
     if ($isAjax) {
@@ -117,34 +78,40 @@ function respondWithError($msg) {
     exit;
 }
 
+// We'll save uploaded files first to uploads/products/ with temporary unique names,
+// then AFTER successful DB insert we'll create uploads/products/{id}/ and move files there,
+// rename them to consistent names (logo_{id}.ext, photo_{id}.ext, photo_{id}_1.ext, ...)
+// and finally update products.logo / products.photo and insert product_photos with final paths.
+
+// Track temporary saved files (basename in uploads/products)
+$tmpLogo = null;        // basename or null
+$tmpMain = null;        // basename or null
+$tmpExtras = [];        // array of basenames
+
 // handle logo (optional)
 if (!empty($_FILES['logo']['name']) && is_uploaded_file($_FILES['logo']['tmp_name'])) {
     if ($_FILES['logo']['size'] > $maxFileSize) {
         respondWithError('Логотип слишком большой');
     }
-    $fType = mime_content_type($_FILES['logo']['tmp_name']);
+    $fType = @mime_content_type($_FILES['logo']['tmp_name']);
     if (!in_array($fType, $allowed, true)) respondWithError('Недопустимый формат логотипа');
     $ext = $cleanExt(pathinfo($_FILES['logo']['name'], PATHINFO_EXTENSION));
-    $logoName = 'logo_' . $pad . '.' . $ext;
-    if (!move_uploaded_file($_FILES['logo']['tmp_name'], $uploadDir . '/' . $logoName)) {
+    $tmpName = uniqid('tmp_logo_', true) . '.' . $ext;
+    if (!move_uploaded_file($_FILES['logo']['tmp_name'], $uploadDir . '/' . $tmpName)) {
         respondWithError('Ошибка сохранения логотипа');
     }
-    $logoDb = $webPrefix . $logoName;
-} else {
-    $logoDb = null;
+    $tmpLogo = $tmpName;
 }
 
 // handle main photo (optional)
 if (!empty($_FILES['photo']['name']) && is_uploaded_file($_FILES['photo']['tmp_name'])) {
     if ($_FILES['photo']['size'] > $maxFileSize) respondWithError('Основное фото слишком большое');
-    $fType = mime_content_type($_FILES['photo']['tmp_name']);
+    $fType = @mime_content_type($_FILES['photo']['tmp_name']);
     if (!in_array($fType, $allowed, true)) respondWithError('Недопустимый формат основного фото');
     $ext = $cleanExt(pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION));
-    $mainPhotoName = $pad . '.' . $ext;
-    if (!move_uploaded_file($_FILES['photo']['tmp_name'], $uploadDir . '/' . $mainPhotoName)) respondWithError('Ошибка сохранения основного фото');
-    $photoDb = $webPrefix . $mainPhotoName;
-} else {
-    $photoDb = null;
+    $tmpName = uniqid('tmp_photo_', true) . '.' . $ext;
+    if (!move_uploaded_file($_FILES['photo']['tmp_name'], $uploadDir . '/' . $tmpName)) respondWithError('Ошибка сохранения основного фото');
+    $tmpMain = $tmpName;
 }
 
 // handle additional photos (photos[] up to 10)
@@ -155,41 +122,38 @@ if (!empty($_FILES['photos']['name']) && is_array($_FILES['photos']['name'])) {
         if (!is_uploaded_file($_FILES['photos']['tmp_name'][$i])) continue;
         if ($_FILES['photos']['size'][$i] > $maxFileSize) respondWithError('Один из файлов слишком большой');
         $tmp = $_FILES['photos']['tmp_name'][$i];
-        $t = mime_content_type($tmp);
+        $t = @mime_content_type($tmp);
         if (!in_array($t, $allowed, true)) respondWithError('Неподдерживаемый формат одного из фото');
         $ext = $cleanExt(pathinfo($_FILES['photos']['name'][$i], PATHINFO_EXTENSION));
-        $fileName = $pad . '_' . ($i+1) . '.' . $ext;
-        if (!move_uploaded_file($tmp, $uploadDir . '/' . $fileName)) respondWithError('Ошибка сохранения одного из фото');
-        $extraFiles[] = $webPrefix . $fileName;
+        $tmpName = uniqid('tmp_photo_extra_', true) . '.' . $ext;
+        if (!move_uploaded_file($tmp, $uploadDir . '/' . $tmpName)) respondWithError('Ошибка сохранения одного из фото');
+        $tmpExtras[] = $tmpName;
     }
 }
 
-// Insert into DB
+// detect whether products table has contact_phone column
+$hasContactPhone = false;
 try {
-    // detect whether products table has contact_phone column
-    $hasContactPhone = false;
     if (isset($mysqli) && $mysqli instanceof mysqli) {
-        try {
-            $r = $mysqli->query("SHOW COLUMNS FROM products LIKE 'contact_phone'");
-            if ($r && $r->num_rows > 0) $hasContactPhone = true;
-            if ($r) $r->free();
-        } catch (Throwable $_) { $hasContactPhone = false; }
+        $r = $mysqli->query("SHOW COLUMNS FROM products LIKE 'contact_phone'");
+        if ($r && $r->num_rows > 0) $hasContactPhone = true;
+        if ($r) $r->free();
     } elseif (isset($pdo) && $pdo instanceof PDO) {
-        try {
-            $st = $pdo->query("SHOW COLUMNS FROM products LIKE 'contact_phone'");
-            $row = $st->fetch(PDO::FETCH_NUM);
-            if ($row) $hasContactPhone = true;
-        } catch (Throwable $_) { $hasContactPhone = false; }
+        $st = $pdo->query("SHOW COLUMNS FROM products LIKE 'contact_phone'");
+        $row = $st->fetch(PDO::FETCH_NUM);
+        if ($row) $hasContactPhone = true;
     }
+} catch (Throwable $_) { $hasContactPhone = false; }
 
+try {
     if (isset($mysqli) && $mysqli instanceof mysqli) {
         $mysqli->begin_transaction();
 
-        // Build dynamic columns and values
+        // Build dynamic columns and values (NOTE: do NOT include logo/photo here — we'll update them after moving files)
         $cols = [
             'user_id','brand_id','model_id','year_from','year_to',
             'complex_part_id','component_id','sku','name','manufacturer',
-            'quality','rating','availability','price','description','logo','photo'
+            'quality','rating','availability','price','description'
         ];
         $values = [
             $user_id,
@@ -206,9 +170,7 @@ try {
             $rating,
             $availability,
             $price,
-            $desc,
-            $logoDb,
-            $photoDb
+            $desc
         ];
 
         if ($hasContactPhone) {
@@ -251,8 +213,67 @@ try {
         $newId = $stmt->insert_id;
         $stmt->close();
 
-        // create product_photos table if missing (uses file_path column and stores web path)
-        if (!empty($extraFiles)) {
+        // Create product folder and move files into it, rename consistently
+        $prodDir = $uploadDir . '/' . (int)$newId;
+        if (!is_dir($prodDir)) {
+            if (!mkdir($prodDir, 0755, true)) throw new Exception('Не удалось создать папку для продукта');
+        }
+
+        // final web paths to write to DB
+        $finalLogoPath = null;
+        $finalPhotoPath = null;
+        $finalExtrasWeb = [];
+
+        // move logo
+        if ($tmpLogo) {
+            $ext = pathinfo($tmpLogo, PATHINFO_EXTENSION);
+            $finalName = 'logo_' . (int)$newId . '.' . $ext;
+            if (!@rename($uploadDir . '/' . $tmpLogo, $prodDir . '/' . $finalName)) throw new Exception('Не удалось переместить логотип');
+            $finalLogoPath = $webPrefix . $newId . '/' . $finalName;
+        }
+
+        // move main photo
+        if ($tmpMain) {
+            $ext = pathinfo($tmpMain, PATHINFO_EXTENSION);
+            $finalName = 'photo_' . (int)$newId . '.' . $ext;
+            if (!@rename($uploadDir . '/' . $tmpMain, $prodDir . '/' . $finalName)) throw new Exception('Не удалось переместить основное фото');
+            $finalPhotoPath = $webPrefix . $newId . '/' . $finalName;
+        }
+
+        // move extras
+        $i = 1;
+        foreach ($tmpExtras as $tmp) {
+            $ext = pathinfo($tmp, PATHINFO_EXTENSION);
+            $finalName = 'photo_' . (int)$newId . '_' . $i . '.' . $ext;
+            if (!@rename($uploadDir . '/' . $tmp, $prodDir . '/' . $finalName)) throw new Exception('Не удалось переместить одно из фото');
+            $finalExtrasWeb[] = $webPrefix . $newId . '/' . $finalName;
+            $i++;
+        }
+
+        // update products table with logo/photo if present
+        if ($finalLogoPath !== null || $finalPhotoPath !== null) {
+            $updParts = [];
+            $updVals = [];
+            if ($finalLogoPath !== null) { $updParts[] = 'logo = ?'; $updVals[] = $finalLogoPath; }
+            if ($finalPhotoPath !== null) { $updParts[] = 'photo = ?'; $updVals[] = $finalPhotoPath; }
+            $updVals[] = $newId;
+            $typesUpd = str_repeat('s', count($updVals)-1) . 'i'; // final param is id
+            $sqlUpd = "UPDATE products SET " . implode(',', $updParts) . " WHERE id = ?";
+            $stUpd = $mysqli->prepare($sqlUpd);
+            if (!$stUpd) throw new Exception('Prepare update product failed: ' . $mysqli->error);
+            $bind = [];
+            $bind[] = & $typesUpd;
+            for ($k=0;$k<count($updVals);$k++){
+                ${"u".$k} = $updVals[$k];
+                $bind[] = &${"u".$k};
+            }
+            if (!call_user_func_array([$stUpd, 'bind_param'], $bind)) throw new Exception('Bind update failed: ' . $stUpd->error);
+            if (!$stUpd->execute()) throw new Exception('Execute update failed: ' . $stUpd->error);
+            $stUpd->close();
+        }
+
+        // insert product_photos if any
+        if (!empty($finalExtrasWeb)) {
             $check = $mysqli->query("SHOW TABLES LIKE 'product_photos'");
             if ($check && $check->num_rows === 0) {
                 $mysqli->query("
@@ -268,7 +289,7 @@ try {
             }
             $stmt2 = $mysqli->prepare("INSERT INTO product_photos (product_id, file_path) VALUES (?, ?)");
             if (!$stmt2) throw new Exception('Prepare product_photos failed: ' . $mysqli->error);
-            foreach ($extraFiles as $fn) {
+            foreach ($finalExtrasWeb as $fn) {
                 $stmt2->bind_param('is', $newId, $fn);
                 if (!$stmt2->execute()) throw new Exception('Insert photo failed: ' . $stmt2->error);
             }
@@ -289,11 +310,11 @@ try {
     } elseif (isset($pdo) && $pdo instanceof PDO) {
         $pdo->beginTransaction();
 
-        // Build dynamic columns and params for PDO
+        // Build dynamic columns and params for PDO (omit logo/photo for now)
         $cols = [
             'user_id','brand_id','model_id','year_from','year_to',
             'complex_part_id','component_id','sku','name','manufacturer',
-            'quality','rating','availability','price','description','logo','photo'
+            'quality','rating','availability','price','description'
         ];
         $params = [
             ':user_id' => $user_id,
@@ -310,9 +331,7 @@ try {
             ':rating' => $rating,
             ':availability' => $availability,
             ':price' => $price,
-            ':description' => $desc,
-            ':logo' => $logoDb ?? null,
-            ':photo' => $photoDb ?? null
+            ':description' => $desc
         ];
 
         if ($hasContactPhone) {
@@ -324,19 +343,61 @@ try {
         $cols[] = 'status';
         $params[':status'] = 'active';
 
-        // build sql
-        $phKeys = [];
-        $i = 0;
-        foreach ($params as $k => $v) {
-            $phKeys[] = $k;
-            $i++;
-        }
-        $sql = "INSERT INTO products (" . implode(',', $cols) . ", created_at) VALUES (" . implode(',', $phKeys) . ", NOW())";
+        $sql = "INSERT INTO products (" . implode(',', $cols) . ", created_at) VALUES (" . implode(',', array_keys($params)) . ", NOW())";
         $st = $pdo->prepare($sql);
         $st->execute($params);
         $newId = $pdo->lastInsertId();
 
-        if (!empty($extraFiles)) {
+        // Create product folder and move files into it, rename consistently
+        $prodDir = $uploadDir . '/' . (int)$newId;
+        if (!is_dir($prodDir)) {
+            if (!mkdir($prodDir, 0755, true)) throw new Exception('Не удалось создать папку для продукта');
+        }
+
+        // final web paths to write to DB
+        $finalLogoPath = null;
+        $finalPhotoPath = null;
+        $finalExtrasWeb = [];
+
+        // move logo
+        if ($tmpLogo) {
+            $ext = pathinfo($tmpLogo, PATHINFO_EXTENSION);
+            $finalName = 'logo_' . (int)$newId . '.' . $ext;
+            if (!@rename($uploadDir . '/' . $tmpLogo, $prodDir . '/' . $finalName)) throw new Exception('Не удалось переместить логотип');
+            $finalLogoPath = $webPrefix . $newId . '/' . $finalName;
+        }
+
+        // move main photo
+        if ($tmpMain) {
+            $ext = pathinfo($tmpMain, PATHINFO_EXTENSION);
+            $finalName = 'photo_' . (int)$newId . '.' . $ext;
+            if (!@rename($uploadDir . '/' . $tmpMain, $prodDir . '/' . $finalName)) throw new Exception('Не удалось переместить основное фото');
+            $finalPhotoPath = $webPrefix . $newId . '/' . $finalName;
+        }
+
+        // move extras
+        $i = 1;
+        foreach ($tmpExtras as $tmp) {
+            $ext = pathinfo($tmp, PATHINFO_EXTENSION);
+            $finalName = 'photo_' . (int)$newId . '_' . $i . '.' . $ext;
+            if (!@rename($uploadDir . '/' . $tmp, $prodDir . '/' . $finalName)) throw new Exception('Не удалось переместить одно из фото');
+            $finalExtrasWeb[] = $webPrefix . $newId . '/' . $finalName;
+            $i++;
+        }
+
+        // update products table with logo/photo if present
+        if ($finalLogoPath !== null || $finalPhotoPath !== null) {
+            $updParts = [];
+            $paramsUpd = [':id' => $newId];
+            if ($finalLogoPath !== null) { $updParts[] = 'logo = :logo'; $paramsUpd[':logo'] = $finalLogoPath; }
+            if ($finalPhotoPath !== null) { $updParts[] = 'photo = :photo'; $paramsUpd[':photo'] = $finalPhotoPath; }
+            $sqlUpd = "UPDATE products SET " . implode(',', $updParts) . " WHERE id = :id";
+            $stUpd = $pdo->prepare($sqlUpd);
+            $stUpd->execute($paramsUpd);
+        }
+
+        // insert product_photos if any
+        if (!empty($finalExtrasWeb)) {
             $pdo->exec("CREATE TABLE IF NOT EXISTS product_photos (
                 id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
                 product_id INT NOT NULL,
@@ -346,7 +407,7 @@ try {
               ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             ");
             $st2 = $pdo->prepare("INSERT INTO product_photos (product_id, file_path) VALUES (:pid, :fn)");
-            foreach ($extraFiles as $fn) $st2->execute([':pid'=>$newId, ':fn'=>$fn]);
+            foreach ($finalExtrasWeb as $fn) $st2->execute([':pid'=>$newId, ':fn'=>$fn]);
         }
 
         $pdo->commit();
@@ -365,14 +426,22 @@ try {
     }
 
 } catch (Throwable $e) {
-    // cleanup files on error
-    foreach (array_filter([$logoName,$mainPhotoName]) as $f) {
-        if ($f && file_exists($uploadDir . '/' . $f)) @unlink($uploadDir . '/' . $f);
-    }
-    // cleanup extraFiles (they are web paths — strip prefix to unlink)
-    foreach ($extraFiles as $web) {
-        $fn = basename($web);
-        if ($fn && file_exists($uploadDir . '/' . $fn)) @unlink($uploadDir . '/' . $fn);
+    // cleanup files on error (tmp files)
+    $toRemove = [];
+    if (!empty($tmpLogo)) $toRemove[] = $uploadDir . '/' . $tmpLogo;
+    if (!empty($tmpMain)) $toRemove[] = $uploadDir . '/' . $tmpMain;
+    foreach ($tmpExtras as $t) $toRemove[] = $uploadDir . '/' . $t;
+    foreach ($toRemove as $f) if ($f && file_exists($f)) @unlink($f);
+
+    // In case we partially moved files into a product folder, try to remove that folder
+    // (best-effort cleanup — don't stop error handling)
+    if (!empty($newId)) {
+        $prodDir = $uploadDir . '/' . (int)$newId;
+        if (is_dir($prodDir)) {
+            $files = glob($prodDir . '/*');
+            if (is_array($files)) foreach ($files as $ff) @unlink($ff);
+            @rmdir($prodDir);
+        }
     }
 
     if (isset($mysqli) && $mysqli instanceof mysqli) {
@@ -386,7 +455,6 @@ try {
         header('Content-Type: application/json; charset=utf-8', true, 500);
         echo json_encode(['ok'=>false,'error'=>'Ошибка сервера: ' . $e->getMessage()]);
     } else {
-        // simple redirect with error (you can change to better UX)
         header('Location: /mehanik/public/add-product.php?err=server');
     }
     exit;
