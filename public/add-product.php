@@ -221,7 +221,7 @@ if (isset($mysqli) && $mysqli instanceof mysqli) {
         </div>
 
         <div class="actions">
-          <a href="/mehanik/public/products.php" class="btn-ghost">← К списку</a>
+          <a href="/mehanik/public/my-products.php" class="btn-ghost">← К списку</a>
           <button id="submitBtn" type="submit" class="btn">Сохранить</button>
         </div>
 
