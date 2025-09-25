@@ -1,5 +1,5 @@
 <?php
-// public/service.php — Google Maps version (replace YOUR_GOOGLE_API_KEY with your key)
+// public/service.php — Google Maps version (redesigned visuals, all previous CSS removed)
 session_start();
 require_once __DIR__ . '/../db.php';
 $config = file_exists(__DIR__ . '/../config.php') ? require __DIR__ . '/../config.php' : ['base_url'=>'/mehanik'];
@@ -203,9 +203,9 @@ function render_reviews_tree(array $nodes, $level = 0) {
         $hasChildren = !empty($n['children']);
         $indent = max(0, $level * 18);
         $html .= '<div class="review-card" id="review-' . $id . '" style="margin-left:' . $indent . 'px;margin-top:10px;">';
-        $html .= '<div class="review-meta" style="align-items:flex-start;">';
+        $html .= '<div class="review-meta">';
         $html .= '<div><span class="review-name">' . $userName . '</span> <span class="review-time">' . $time . '</span></div>';
-        $html .= '<div style="margin-left:auto; display:flex; gap:8px; align-items:center;"></div>';
+        $html .= '<div class="review-actions"></div>';
         $html .= '</div>';
         $html .= '<div class="review-comment">' . $commentEsc . '</div>';
         if ($hasChildren) {
@@ -230,53 +230,97 @@ function toPublicUrl($rel){
   <meta charset="utf-8">
   <title><?= $service ? htmlspecialchars($service['name']) . ' — Mehanik' : 'Сервис — Mehanik' ?></title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <link rel="stylesheet" href="/mehanik/assets/css/header.css">
-  <link rel="stylesheet" href="/mehanik/assets/css/style.css">
-  <style>
-    :root{ --accent:#0b57a4; --muted:#6b7280; --card:#fff; --radius:12px; }
-    body{ background:#f6f8fb; color:#222; }
-    .container{ max-width:1200px; margin:20px auto; padding:16px; }
 
-    /* layout styles (same as before) */
-    .svc-grid{ display:grid; grid-template-columns:320px 1fr 300px; gap:20px; align-items:start; }
-    .card{ background:var(--card); border-radius:var(--radius); padding:16px; box-shadow:0 8px 30px rgba(12,20,30,.04); border:1px solid #eef3f8; }
-    .logo{ width:100%; height:180px; object-fit:cover; border-radius:10px; border:1px solid #e6eef7; background:#fff; }
-    h1.title{ margin:12px 0 0; font-size:1.35rem; color:var(--accent); }
-    .contact-list{ margin-top:12px; display:flex; flex-direction:column; gap:8px; font-size:.95rem; }
-    .prices{ margin-top:12px; border-top:1px dashed #eef3f8; padding-top:10px; }
-    .price-row{ display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed #f5f8fb; }
-    .map-card{ height:260px; border-radius:10px; overflow:hidden; border:1px solid #e6eef7; }
-    .photos-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:12px; margin-top:12px; }
-    .thumb{ width:100%; height:110px; overflow:hidden; border-radius:8px; border:1px solid #eee; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; }
-    .thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
-    .stars{ position:relative; display:inline-block; font-size:20px; line-height:1; letter-spacing:2px; }
-    .stars::before{ content:'★★★★★'; color:#e5e7eb; }
-    .stars::after{ content:'★★★★★'; color:#fbbf24; position:absolute; left:0; top:0; white-space:nowrap; overflow:hidden; width:var(--percent,0%); }
-    .avg-num{ font-size:1.6rem; font-weight:800; color:var(--accent); }
-    .avg-meta{ color:var(--muted); font-size:.95rem; }
-    .review-card{ background:#fff; border-radius:10px; padding:12px; border:1px solid #eef3f8; margin-bottom:8px; }
-    .review-meta{ display:flex; align-items:center; gap:8px; }
-    .review-name{ font-weight:700; }
-    .review-time{ color:var(--muted); font-size:.88rem; margin-left:6px; }
-    .review-comment{ margin-top:8px; color:#333; white-space:pre-wrap; }
-    .btn{ background:var(--accent); color:#fff; padding:10px 14px; border-radius:10px; border:0; cursor:pointer; font-weight:700; }
-    .btn-ghost{ background:transparent; color:var(--accent); border:1px solid #dbeeff; padding:10px 14px; border-radius:10px; font-weight:700; }
-    .btn-small{ padding:6px 8px; border-radius:8px; background:#fff; border:1px solid #eef3f8; cursor:pointer; }
-    .btn-wide{ width:100%; display:block; text-align:center; margin-top:10px; }
-    .reply-indicator{ font-size:.9rem; color:var(--muted); margin-bottom:8px; display:flex; gap:8px; align-items:center; }
-    .lb-overlay{ position:fixed; inset:0; background:rgba(0,0,0,.8); display:none; align-items:center; justify-content:center; z-index:1200; padding:20px; }
-    .lb-overlay.active{ display:flex; }
-    .lb-img{ max-width:calc(100% - 40px); max-height:calc(100% - 40px); box-shadow:0 10px 40px rgba(0,0,0,.6); border-radius:8px; }
-    .lb-close{ position:absolute; top:18px; right:18px; background:#fff; border-radius:6px; padding:6px 8px; cursor:pointer; font-weight:700; }
-    .input{ width:100%; border:1px solid #e6e7eb; border-radius:10px; padding:10px 12px; font-size:14px; box-sizing:border-box; }
-    textarea.input{ min-height:90px; max-height:220px; line-height:1.4; resize:vertical; }
-    .staff-card{ background:#fff; border:1px solid #eef3f8; border-radius:12px; padding:12px; display:flex; gap:10px; align-items:flex-start; }
-    .staff-photo{ width:64px; height:64px; border-radius:50%; object-fit:cover; border:1px solid #e6eef7; background:#fff; }
-    .staff-name{ font-weight:800; }
-    .staff-pos{ color:var(--muted); font-size:.92rem; margin-top:2px; }
-    .staff-rating{ margin-top:6px; font-size:.95rem; color:#111; }
-    @media(max-width:1200px){ .container{ max-width:1100px; } }
-    @media(max-width:1000px){ .svc-grid{ grid-template-columns:1fr; } .logo{ height:220px; } }
+  <!-- Previous external CSS removed. New self-contained styles below. -->
+  <style>
+    /* --- Minimal reset --- */
+    *,*::before,*::after{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;font-family:Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:#f3f6f9;color:#0f1724;line-height:1.4}
+
+    :root{
+      --bg:#f3f6f9;
+      --card:#ffffff;
+      --muted:#6b7280;
+      --accent:#0b57a4;
+      --radius:12px;
+      --glass: rgba(255,255,255,0.85);
+      --shadow: 0 10px 30px rgba(12,20,30,0.06);
+      --max-width:1200px;
+    }
+
+    a{color:var(--accent);text-decoration:none}
+    a:hover{text-decoration:underline}
+
+    .container{max-width:var(--max-width);margin:28px auto;padding:18px}
+
+    /* Layout grid */
+    .svc-grid{display:grid;grid-template-columns:320px 1fr 300px;gap:24px;align-items:start}
+
+    /* card */
+    .card{background:var(--card);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);border:1px solid rgba(10,25,50,0.04)}
+
+    /* LEFT */
+    .logo{width:100%;height:180px;object-fit:cover;border-radius:10px;border:1px solid rgba(15,23,36,0.04);background:linear-gradient(180deg,#ffffff,#fafcff);display:block}
+    .logo--placeholder{display:flex;align-items:center;justify-content:center;height:180px;border-radius:10px;background:linear-gradient(180deg,#fbfdff,#f7fbff);color:#9aa3af;font-weight:700;border:1px dashed rgba(11,87,164,0.08)}
+    h1.title{margin:12px 0 6px;font-size:1.25rem;color:var(--accent);letter-spacing:-0.2px}
+    .contact-list{margin-top:10px;display:flex;flex-direction:column;gap:8px;font-size:0.96rem;color:var(--muted)}
+    .contact-list strong{color:#111;font-weight:700}
+
+    .btn{display:inline-flex;align-items:center;gap:10px;padding:10px 14px;border-radius:999px;border:0;background:var(--accent);color:#fff;font-weight:700;cursor:pointer}
+    .btn-ghost{display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border-radius:999px;border:1px solid rgba(11,87,164,0.12);background:transparent;color:var(--accent);font-weight:700;cursor:pointer}
+    .btn-wide{width:100%;justify-content:center}
+
+    .prices{margin-top:14px;padding:12px;background:linear-gradient(180deg,#fff,#fbfdff)}
+    .price-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed rgba(10,25,50,0.03)}
+
+    /* MIDDLE */
+    main .card > h2.section-title{margin:0 0 8px 0;font-size:1rem;color:#0f1724}
+    .description{color:#112;white-space:pre-wrap}
+
+    .map-card{height:280px;border-radius:10px;overflow:hidden;border:1px solid rgba(10,25,50,0.04);background:linear-gradient(180deg,#fbfcff,#f7fbff);display:flex;align-items:center;justify-content:center;color:var(--muted)}
+
+    .photos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-top:12px}
+    .thumb{width:100%;height:110px;overflow:hidden;border-radius:10px;border:1px solid rgba(10,25,50,0.03);background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
+    .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+
+    /* Rating */
+    .rating-row{display:flex;align-items:center;gap:12px;margin-top:8px}
+    .avg-num{font-size:1.5rem;font-weight:800;color:var(--accent)}
+    .avg-meta{color:var(--muted);font-size:0.95rem}
+    .stars{position:relative;display:inline-block;font-size:18px;line-height:1;letter-spacing:2px}
+    .stars::before{content:'★★★★★';color:#e5e7eb}
+    .stars::after{content:'★★★★★';color:#fbbf24;position:absolute;left:0;top:0;white-space:nowrap;overflow:hidden;width:var(--percent,0%)}
+
+    /* Reviews */
+    .review-card{background:linear-gradient(180deg,#fff,#fcfeff);border-radius:10px;padding:12px;border:1px solid rgba(10,25,50,0.04);margin-bottom:10px}
+    .review-meta{display:flex;align-items:center;gap:10px}
+    .review-name{font-weight:800}
+    .review-time{color:var(--muted);font-size:0.88rem;margin-left:6px}
+    .review-comment{margin-top:8px;color:#111}
+    .review-actions{margin-left:auto;display:flex;gap:8px}
+    .btn-small{padding:6px 8px;border-radius:8px;background:#fff;border:1px solid rgba(10,25,50,0.04);cursor:pointer;font-weight:700}
+
+    .reply-indicator{font-size:0.95rem;color:var(--muted);margin-bottom:8px;display:flex;gap:8px;align-items:center}
+
+    .input{width:100%;border:1px solid rgba(10,25,50,0.06);border-radius:10px;padding:10px 12px;font-size:14px;box-sizing:border-box}
+    textarea.input{min-height:90px;max-height:220px;line-height:1.4;resize:vertical}
+
+    /* Staff */
+    .staff-card{background:linear-gradient(180deg,#fff,#fbfdff);border:1px solid rgba(10,25,50,0.04);border-radius:12px;padding:12px;display:flex;gap:12px;align-items:flex-start}
+    .staff-photo{width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid rgba(10,25,50,0.04);background:#fff}
+    .staff-name{font-weight:800}
+    .staff-pos{color:var(--muted);font-size:0.92rem;margin-top:2px}
+
+    /* Lightbox */
+    .lb-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.7);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}
+    .lb-overlay.active{display:flex}
+    .lb-img{max-width:calc(100% - 40px);max-height:calc(100% - 40px);box-shadow:0 12px 50px rgba(2,6,23,0.6);border-radius:8px}
+    .lb-close{position:absolute;top:18px;right:18px;background:#fff;border-radius:6px;padding:8px 10px;cursor:pointer;font-weight:700;border:0}
+
+    footer.site-footer{padding:20px;text-align:center;color:var(--muted);font-size:0.9rem;margin-top:20px}
+
+    @media(max-width:1100px){.container{padding:14px}.svc-grid{grid-template-columns:1fr}.logo{height:200px}.map-card{height:240px}}
   </style>
 </head>
 <body>
@@ -296,7 +340,7 @@ function toPublicUrl($rel){
         <?php if ($logoUrl): ?>
           <img src="<?= htmlspecialchars($logoUrl) ?>" alt="Логотип" class="logo">
         <?php else: ?>
-          <div class="logo" style="display:flex;align-items:center;justify-content:center;color:#999;font-weight:700;">Нет логотипа</div>
+          <div class="logo--placeholder">Нет логотипа</div>
         <?php endif; ?>
 
         <h1 class="title"><?= htmlspecialchars($service['name']) ?></h1>
@@ -312,7 +356,7 @@ function toPublicUrl($rel){
         <a class="btn btn-wide" href="booking.php?service_id=<?= $id ?>">Записаться</a>
 
         <?php if (!empty($prices)): ?>
-          <div class="prices card" style="margin-top:12px; padding:12px;">
+          <div class="prices card" style="margin-top:14px; padding:12px;">
             <div style="font-weight:800; margin-bottom:8px;">Цены на услуги</div>
             <?php foreach ($prices as $p): ?>
               <div class="price-row">
@@ -329,17 +373,17 @@ function toPublicUrl($rel){
       <!-- MIDDLE -->
       <main>
         <div class="card">
-          <h2 style="margin:0 0 8px 0;">Описание</h2>
-          <p style="margin:0; color:#333;"><?= nl2br(htmlspecialchars($service['description'])) ?></p>
+          <h2 class="section-title">Описание</h2>
+          <p class="description"><?= nl2br(htmlspecialchars($service['description'])) ?></p>
 
           <div style="margin-top:14px;">
-            <h3 style="margin:0 0 8px 0;">Местоположение</h3>
+            <h3 class="section-title">Местоположение</h3>
             <div id="map" class="map-card"></div>
           </div>
 
           <?php if (!empty($photos)): ?>
             <div style="margin-top:14px;">
-              <h3 style="margin:0 0 8px 0;">Фотографии</h3>
+              <h3 class="section-title">Фотографии</h3>
               <div class="photos-grid">
                 <?php foreach ($photos as $p):
                     $val = $p['photo'] ?? '';
@@ -360,9 +404,8 @@ function toPublicUrl($rel){
           <?php endif; ?>
         </div>
 
-        <!-- Reviews & Rating (unchanged markup/logic) -->
+        <!-- Reviews & Rating -->
         <section class="card" id="reviews" style="margin-top:18px;">
-          <!-- ... reviews rendering (same as before) ... -->
           <?php
             // Render reviews tree (we will render interactive buttons with JS)
             function render_tree_for_display($nodes, $userId, $isAdmin) {
@@ -378,7 +421,7 @@ function toPublicUrl($rel){
                     $out .= '<div class="review-card" id="review-' . $rid . '">';
                     $out .= '<div class="review-meta">';
                     $out .= '<div><span class="review-name">' . $userName . '</span> <span class="review-time">' . $time . '</span></div>';
-                    $out .= '<div style="margin-left:auto; display:flex; gap:8px;">';
+                    $out .= '<div class="review-actions">';
                     $out .= '<button class="btn-small" type="button" onclick="startReply(' . $rid . ', ' . json_encode($userName) . ')">Ответить</button>';
                     if ($canManage) {
                         $out .= '<button class="btn-small" type="button" onclick="startEdit(' . $rid . ')">Изменить</button>';
@@ -394,21 +437,201 @@ function toPublicUrl($rel){
                 return $out;
             }
 
-            if (empty($reviews)) {
-                echo '<div class="review-card">Пока нет отзывов — будьте первым!</div>';
-            } else {
-                echo render_tree_for_display($reviews, $userId, $isAdmin);
-            }
-          ?>
+            
+// --- вставьте перед выводом блока отзывов ---
+// Функция ищет отзыв текущего пользователя в дереве отзывов
+function find_user_review_in_tree($nodes, $uid) {
+    foreach ($nodes as $n) {
+        if (!empty($n['user_id']) && (int)$n['user_id'] === (int)$uid) {
+            return [
+                'id' => (int)$n['id'],
+                'rating' => isset($n['rating']) ? (float)$n['rating'] : 0,
+                'comment' => $n['comment'] ?? ''
+            ];
+        }
+        if (!empty($n['children'])) {
+            $found = find_user_review_in_tree($n['children'], $uid);
+            if ($found) return $found;
+        }
+    }
+    return null;
+}
 
-          <!-- Add / edit form (unchanged) -->
+$userReview = ($userId > 0) ? find_user_review_in_tree($reviews, $userId) : null;
+?>
+
+<?php if (empty($reviews)): ?>
+  <div class="review-card">
+    <!-- 10-star picker (слева направо) + умная кнопка Отправить -->
+    <div style="margin-bottom:12px;">
+      <label style="display:block;font-weight:700;margin-bottom:8px;">Оцените сервис (1–10)</label>
+
+      <style>
+        /* локальные стили для 10-звёздного пикера */
+        #ten-star-picker { display:flex; gap:6px; align-items:center; }
+        #ten-star-picker input[type="radio"]{ display:none; }
+        #ten-star-picker label{
+          cursor:pointer;
+          font-size:22px;
+          color:#e5e7eb;
+          user-select:none;
+          transition: color 120ms ease;
+        }
+        #ten-star-picker label.active { color:#fbbf24; }
+        #ten-star-picker label.preview { color:#ffd966; } /* hover preview */
+      </style>
+
+      <div style="display:flex; gap:12px; align-items:center;">
+        <div id="ten-star-picker" role="radiogroup" aria-label="10-star rating">
+          <?php for ($s = 1; $s <= 10; $s++): $idStar = 'pick-' . $s; ?>
+            <input type="radio" id="<?= $idStar ?>" name="first_rating" value="<?= $s ?>">
+            <label for="<?= $idStar ?>" data-value="<?= $s ?>" title="<?= $s ?>"><?= '★' ?></label>
+          <?php endfor; ?>
+        </div>
+
+        <button id="ten-star-apply" class="btn btn-small" type="button">Отправить</button>
+      </div>
+    </div>
+
+    <div>Пока нет отзывов — будьте первым!</div>
+  </div>
+
+  <script>
+    (function(){
+      const picker = document.getElementById('ten-star-picker');
+      const labels = Array.from(picker.querySelectorAll('label[data-value]'));
+      const radios = Array.from(picker.querySelectorAll('input[type=radio]'));
+      const applyBtn = document.getElementById('ten-star-apply');
+      // Информация о существующем отзыве текущего пользователя (если есть)
+      const existingReview = <?= json_encode($userReview ?? null, JSON_UNESCAPED_UNICODE) ?>;
+
+      // Установим поведение: hover - предпросмотр, click - выбор
+      labels.forEach(lbl => {
+        const v = parseInt(lbl.getAttribute('data-value'), 10);
+
+        lbl.addEventListener('mouseenter', () => {
+          // пометить все <= v классом preview
+          labels.forEach(l => {
+            const lv = parseInt(l.getAttribute('data-value'),10);
+            l.classList.toggle('preview', lv <= v);
+          });
+        });
+        lbl.addEventListener('mouseleave', () => {
+          labels.forEach(l => l.classList.remove('preview'));
+        });
+
+        lbl.addEventListener('click', (e) => {
+          // отметить радио и подсветить все <= выбранной
+          const value = v;
+          // check corresponding radio
+          const radio = document.getElementById('pick-' + value);
+          if (radio) radio.checked = true;
+
+          // set active class to all <= value
+          labels.forEach(l => {
+            const lv = parseInt(l.getAttribute('data-value'),10);
+            l.classList.toggle('active', lv <= value);
+          });
+        });
+      });
+
+      // Если у пользователя уже есть отзыв — подсветим его рейтинг
+      if (existingReview && existingReview.rating) {
+        const r = Math.round(existingReview.rating); // rating может быть десятичным
+        const radio = document.getElementById('pick-' + r);
+        if (radio) radio.checked = true;
+        labels.forEach(l => {
+          const lv = parseInt(l.getAttribute('data-value'),10);
+          l.classList.toggle('active', lv <= r);
+        });
+        // Поменяем текст кнопки: пользователь будет редактировать
+        applyBtn.textContent = 'Редактировать мой отзыв';
+      }
+
+      // Поведение кнопки: если есть существующий отзыв — заполнить форму для редактирования,
+      // иначе подставить выбранную оценку в форму для создания (и прокрутить к форме).
+      applyBtn.addEventListener('click', () => {
+        const selected = picker.querySelector('input[name="first_rating"]:checked');
+        if (!selected) {
+          alert('Пожалуйста, выберите рейтинг (1–10).');
+          return;
+        }
+        const val = selected.value;
+
+        const form = document.getElementById('reviewForm');
+        if (!form) {
+          alert('Форма добавления отзыва не найдена.');
+          return;
+        }
+
+        // Поле review_rating (скрытое) — создаём, если нет
+        let hidden = form.querySelector('input[name="review_rating"][type="hidden"]');
+        if (!hidden) {
+          hidden = document.createElement('input');
+          hidden.type = 'hidden';
+          hidden.name = 'review_rating';
+          form.appendChild(hidden);
+        }
+        hidden.value = val;
+
+        // Если у пользователя уже есть отзыв — заполним форму данными и поставим editing id
+        if (existingReview && existingReview.id) {
+          // подставим id в editing_review_id
+          const editIdEl = form.querySelector('#editing_review_id');
+          if (editIdEl) editIdEl.value = existingReview.id;
+
+          // подставим комментарий если есть
+          const commentEl = form.querySelector('#comment');
+          if (commentEl && existingReview.comment) commentEl.value = existingReview.comment;
+
+          // поменяем название формы
+          const titleEl = document.getElementById('formTitle');
+          if (titleEl) titleEl.textContent = 'Редактировать отзыв';
+
+          // прокрутить к форме
+          form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // подсказка
+          if (commentEl) commentEl.focus();
+          alert('У вас уже есть отзыв — отредактируйте его и нажмите «Отправить».');
+        } else {
+          // Новый отзыв: убедимся, что editing id = '', parent=0
+          const editIdEl = form.querySelector('#editing_review_id');
+          const parentIdEl = form.querySelector('#parent_id');
+          if (editIdEl) editIdEl.value = '';
+          if (parentIdEl) parentIdEl.value = '0';
+
+          // прокрутить к форме и сфокусировать комментарий
+          const commentEl = form.querySelector('#comment');
+          form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          if (commentEl) {
+            commentEl.focus();
+            commentEl.placeholder = 'Вы выбрали ' + val + ' звезд(ы). Напишите комментарий и нажмите «Отправить».';
+          }
+        }
+      });
+
+    })();
+  </script>
+
+<?php else: ?>
+
+  <?php
+    // Если уже есть отзывы — показываем дерево (оставляем прежнюю функцию/логику)
+    echo render_reviews_tree($reviews);
+  ?>
+
+<?php endif; ?>
+
+
+
+          <!-- Add / edit form -->
           <div class="review-card" style="margin-top:12px;">
             <div id="replyIndicator" class="reply-indicator" style="display:none;">
               <span id="replyToText"></span>
               <button class="btn-ghost" type="button" onclick="cancelReply()">Отменить ответ</button>
             </div>
 
-            <h3 style="margin:0 0 8px 0;" id="formTitle">Оставить отзыв</h3>
+            <h3 class="section-title" id="formTitle">Оставить отзыв</h3>
             <form id="reviewForm" method="post" action="service.php?id=<?= $id ?>#reviews">
               <?php if ($userId <= 0): ?>
                 <div style="margin-bottom:8px;">
@@ -436,11 +659,11 @@ function toPublicUrl($rel){
         </section>
       </main>
 
-      <!-- RIGHT: сотрудники (unchanged) -->
+      <!-- RIGHT: сотрудники -->
       <aside class="card">
-        <h3 style="margin:0 0 8px 0;">Сотрудники</h3>
+        <h3 class="section-title">Сотрудники</h3>
         <?php if (empty($staff)): ?>
-          <div style="color:#6b7280;">Информация пока не добавлена.</div>
+          <div style="color:var(--muted);">Информация пока не добавлена.</div>
         <?php else: ?>
           <div style="display:flex; flex-direction:column; gap:10px;">
             <?php foreach ($staff as $s):
@@ -474,7 +697,7 @@ function toPublicUrl($rel){
   <?php endif; ?>
 </div>
 
-<footer style="padding:20px;text-align:center;color:#777;font-size:.9rem;">&copy; <?= date('Y') ?> Mehanik</footer>
+<footer class="site-footer">&copy; <?= date('Y') ?> Mehanik</footer>
 
 <!-- Google Maps init (replaces Leaflet) -->
 <script>
@@ -508,9 +731,6 @@ function initMap() {
 setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps === 'undefined') { console.warn('Google Maps not available'); var mapEl = document.getElementById('map'); if (mapEl) mapEl.innerHTML = '<div style="padding:18px;color:#444">Карта недоступна.</div>'; } }, 6000);
 </script>
 
-<!-- Insert your API key below: replace YOUR_GOOGLE_API_KEY with your real key -->
-<script async defer src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_API_KEY&callback=initMap"></script>
-
 <!-- Lightbox + reviews helpers (unchanged) -->
 <script>
 function openLightbox(src){ const lb=document.getElementById('lb'); const img=document.getElementById('lbImg'); img.src=src; lb.classList.add('active'); }
@@ -523,6 +743,7 @@ function cancelReply(){ const parentIdEl = document.getElementById('parent_id');
 function resetReviewForm(){ const f=document.getElementById('reviewForm'); if (!f) return; f.reset(); const editIdEl = document.getElementById('editing_review_id'); const parentIdEl = document.getElementById('parent_id'); const formTitle = document.getElementById('formTitle'); const replyInd = document.getElementById('replyIndicator'); if (editIdEl) editIdEl.value = ''; if (parentIdEl) parentIdEl.value = 0; if (formTitle) formTitle.textContent = 'Оставить отзыв'; if (replyInd) replyInd.style.display = 'none'; }
 </script>
 
-<script src="/mehanik/assets/js/main.js"></script>
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_API_KEY&callback=initMap"></script>
+
 </body>
 </html>
