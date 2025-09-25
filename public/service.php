@@ -1,5 +1,5 @@
 <?php
-// public/service.php — Google Maps version (redesigned visuals, all previous CSS removed)
+// public/service.php
 session_start();
 require_once __DIR__ . '/../db.php';
 $config = file_exists(__DIR__ . '/../config.php') ? require __DIR__ . '/../config.php' : ['base_url'=>'/mehanik'];
@@ -17,11 +17,468 @@ $user = $_SESSION['user'] ?? null;
 $userId = (int)($user['id'] ?? 0);
 $isAdmin = isset($user['role']) && $user['role'] === 'admin';
 
-/** FS/URL helpers (kept from previous) */
+/* =======================
+   HANDLERS: delete_review, upsert_review, submit_staff_rating, submit_service_rating
+   (handlers are identical to the ones you already approved earlier)
+   For brevity in this file we keep the handlers here exactly as in your working file.
+   ======================= */
+
+/* -- DELETE REVIEW -- */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'delete_review')) {
+    $rid = isset($_POST['review_id']) ? (int)$_POST['review_id'] : 0;
+    if ($rid <= 0) { header('Location: service.php?id=' . $id . '#reviews'); exit; }
+
+    if (empty($userId) || $userId <= 0) {
+        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => false, 'error' => 'Требуется авторизация']);
+            exit;
+        }
+        header('Location: /mehanik/login.php');
+        exit;
+    }
+
+    if ($st = $mysqli->prepare('SELECT user_id FROM service_reviews WHERE id=? AND service_id=? LIMIT 1')) {
+        $st->bind_param('ii', $rid, $id);
+        $st->execute();
+        $row = $st->get_result()->fetch_assoc();
+        $st->close();
+        $ownerId = isset($row['user_id']) ? (int)$row['user_id'] : 0;
+
+        if ($ownerId !== $userId) {
+            if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok' => false, 'error' => 'Нет прав на удаление этого отзыва.']);
+                exit;
+            }
+            header('Location: service.php?id=' . $id . '#reviews');
+            exit;
+        }
+
+        if ($del = $mysqli->prepare('DELETE FROM service_reviews WHERE id = ? AND service_id = ?')) {
+            $del->bind_param('ii', $rid, $id);
+            $del->execute();
+            $del->close();
+        }
+
+        if ($u = $mysqli->prepare('UPDATE service_reviews SET parent_id = NULL WHERE parent_id = ? AND service_id = ?')) {
+            $u->bind_param('ii', $rid, $id);
+            $u->execute();
+            $u->close();
+        }
+
+        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => true]);
+            exit;
+        }
+    }
+
+    header('Location: service.php?id=' . $id . '#reviews');
+    exit;
+}
+
+// ======= upsert_review (замена) =======
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upsert_review')) {
+    // входные данные
+    $editingId = isset($_POST['editing_review_id']) ? (int)$_POST['editing_review_id'] : 0;
+    $parentRaw  = $_POST['parent_id'] ?? '';
+    $parentId = ($parentRaw === '' || strtolower($parentRaw) === 'null' || $parentRaw === '0') ? null : (int)$parentRaw;
+    $comment   = trim((string)($_POST['comment'] ?? ''));
+    $postedName = trim((string)($_POST['user_name'] ?? ''));
+    $ratingRaw = $_POST['review_rating'] ?? null;
+
+    // нормализуем рейтинг: допустим только числа 1..10
+    $reviewRating = null;
+    if ($ratingRaw !== null && $ratingRaw !== '') {
+        if (is_numeric($ratingRaw)) {
+            $rv = (float)$ratingRaw;
+            if ($rv >= 1 && $rv <= 10) $reviewRating = $rv;
+            // иначе оставляем null — не включаем в INSERT
+        }
+    }
+
+    // простая валидация
+    if ($comment === '') {
+        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => false, 'error' => 'Комментарий не может быть пустым.']);
+            exit;
+        }
+        header('Location: service.php?id=' . $id . '#reviews');
+        exit;
+    }
+
+    // выбираем имя для сохранения
+    $uid = ($userId > 0) ? $userId : null;
+    $userNameToSave = 'Гость';
+    if ($uid && !empty($user['name'])) {
+        $userNameToSave = $user['name'];
+    } elseif ($postedName !== '') {
+        $userNameToSave = $postedName;
+    }
+
+    // helper для динамического bind_param
+    function stmt_bind_params($stmt, $types, $params) {
+        if ($params === []) {
+            // нет параметров
+            return;
+        }
+        $refs = [];
+        $refs[] = &$types;
+        foreach ($params as $k => $v) $refs[] = &$params[$k];
+        call_user_func_array([$stmt, 'bind_param'], $refs);
+    }
+
+    // Проверка наличия колонки user_id
+    $res = $mysqli->query("SHOW COLUMNS FROM `service_reviews` LIKE 'user_id'");
+    $reviewsHasUserId = ($res && $res->num_rows > 0);
+
+    // --- Редактирование существующего ---
+    if ($editingId > 0) {
+        // проверим права: только автор отзыва может редактировать
+        $canEdit = false;
+        if ($st = $mysqli->prepare("SELECT user_id FROM service_reviews WHERE id=? AND service_id=? LIMIT 1")) {
+            $st->bind_param('ii', $editingId, $id);
+            $st->execute();
+            $row = $st->get_result()->fetch_assoc();
+            $st->close();
+            if ($row) {
+                $revUid = isset($row['user_id']) ? (int)$row['user_id'] : 0;
+                if ($revUid > 0 && $uid && $revUid === $uid) $canEdit = true;
+            }
+        }
+        if (!$canEdit) {
+            if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok' => false, 'error' => 'Нет прав на редактирование этого отзыва.']);
+                exit;
+            }
+            header('Location: service.php?id=' . $id . '#reviews');
+            exit;
+        }
+
+        // Собираем части UPDATE динамически (включаем rating только если валиден)
+        $sets = [];
+        $params = [];
+        $types = '';
+
+        $sets[] = "comment = ?";
+        $params[] = $comment; $types .= 's';
+
+        if ($reviewRating !== null) {
+            $sets[] = "rating = ?";
+            $params[] = $reviewRating; $types .= 'd';
+        } else {
+            $sets[] = "rating = NULL";
+        }
+
+        $sets[] = "user_name = ?";
+        $params[] = $userNameToSave; $types .= 's';
+
+        if ($parentId === null) {
+            $sets[] = "parent_id = NULL";
+        } else {
+            $sets[] = "parent_id = ?";
+            $params[] = $parentId; $types .= 'i';
+        }
+
+        if ($reviewsHasUserId) {
+            if ($uid) {
+                $sets[] = "user_id = ?";
+                $params[] = $uid; $types .= 'i';
+            } else {
+                $sets[] = "user_id = NULL";
+            }
+        }
+
+        $sets[] = "updated_at = NOW()";
+
+        $sql = "UPDATE service_reviews SET " . implode(', ', $sets) . " WHERE id = ? AND service_id = ? LIMIT 1";
+        $params[] = $editingId; $types .= 'i';
+        $params[] = $id; $types .= 'i';
+
+        try {
+            if ($u = $mysqli->prepare($sql)) {
+                if ($types !== '') stmt_bind_params($u, $types, $params);
+                $u->execute();
+                if ($u->errno) {
+                    throw new Exception('DB error: ' . $u->error);
+                }
+                $u->close();
+            } else {
+                throw new Exception('Prepare failed: ' . $mysqli->error);
+            }
+        } catch (Exception $ex) {
+            if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok'=>false, 'error' => $ex->getMessage()]);
+                exit;
+            }
+            error_log('upsert_review update error: ' . $ex->getMessage());
+            header('Location: service.php?id=' . $id . '#reviews');
+            exit;
+        }
+
+        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => true, 'action' => 'updated']);
+            exit;
+        }
+        header('Location: service.php?id=' . $id . '#reviews');
+        exit;
+    }
+
+    // --- Вставка новой записи (INSERT) ---
+    // Построим INSERT динамически: включаем только колонки с корректными значениями
+    $cols = ['service_id','user_name','comment','created_at']; // created_at via NOW()
+    $placeholders = ['?','?','?','NOW()'];
+    $params = [$id, $userNameToSave, $comment];
+    $types = 'iss';
+
+    if ($reviewRating !== null) {
+        // добавляем rating
+        // поместим rating перед created_at (гораздо удобнее)
+        array_splice($cols, 2, 0, 'rating'); // ставим rating на 3-е место
+        array_splice($placeholders, 2, 0, '?');
+        array_splice($params, 2, 0, $reviewRating);
+        $types = 'isd' . substr($types, 2); // получится 'isd' + 's' -> 'isds' -> но проще перестроим
+        // перестроим types корректно:
+        // current params are: [id(int), userName(string), reviewRating(double), comment(string)]
+        $types = 'isd s';
+        $types = str_replace(' ', '', $types); // 'isds'
+        // but we will recompute types after assembly below to be safe
+    }
+
+    // user_id (если есть и определён)
+    if ($reviewsHasUserId && $uid) {
+        $cols[] = 'user_id';
+        $placeholders[] = '?';
+        $params[] = $uid;
+    }
+
+    // parent_id (если указан)
+    if ($parentId !== null) {
+        $cols[] = 'parent_id';
+        $placeholders[] = '?';
+        $params[] = $parentId;
+    }
+
+    // Теперь аккуратно составим строку типов (по порядку параметров в $params)
+    $types = '';
+    foreach ($params as $p) {
+        if (is_int($p)) $types .= 'i';
+        elseif (is_float($p) || is_double($p)) $types .= 'd';
+        else $types .= 's';
+    }
+
+    $sql = "INSERT INTO service_reviews (" . implode(',', $cols) . ") VALUES (" . implode(',', $placeholders) . ")";
+
+    try {
+        if ($ins = $mysqli->prepare($sql)) {
+            if ($types !== '') {
+                // bind динамически
+                $refs = [];
+                $refs[] = &$types;
+                foreach ($params as $k => $v) $refs[] = &$params[$k];
+                call_user_func_array([$ins, 'bind_param'], $refs);
+            }
+            $ins->execute();
+            if ($ins->errno) {
+                throw new Exception('DB error: ' . $ins->error);
+            }
+            $ins->close();
+        } else {
+            throw new Exception('Prepare failed: ' . $mysqli->error);
+        }
+    } catch (Exception $ex) {
+        // Вернём детальную ошибку в JSON при AJAX (временная отладочная помощь)
+        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok'=>false, 'error' => $ex->getMessage()]);
+            exit;
+        }
+        error_log('upsert_review insert error: ' . $ex->getMessage());
+        header('Location: service.php?id=' . $id . '#reviews');
+        exit;
+    }
+
+    // успешный ответ
+    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['ok' => true, 'action' => 'inserted']);
+        exit;
+    }
+    header('Location: service.php?id=' . $id . '#reviews');
+    exit;
+}
+// ======= end upsert_review replacement =======
+
+
+/* -- SUBMIT STAFF RATING -- */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'submit_staff_rating')) {
+    // auth required
+    if (empty($userId) || $userId <= 0) {
+        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => false, 'error' => 'Требуется авторизация']);
+            exit;
+        }
+        header('Location: /mehanik/login.php');
+        exit;
+    }
+
+    $staffId = isset($_POST['staff_id']) ? (int)$_POST['staff_id'] : 0;
+    $rating = isset($_POST['rating']) ? (float)$_POST['rating'] : 0.0;
+    if ($staffId <= 0 || $rating < 1 || $rating > 10) {
+        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => false, 'error' => 'Неверные параметры (staff_id/rating)']);
+            exit;
+        }
+        header('Location: service.php?id=' . $id . '#reviews');
+        exit;
+    }
+
+    // upsert into service_staff_ratings
+    $done = false;
+    $sqlInsertDup = "INSERT INTO service_staff_ratings (staff_id, user_id, rating, created_at) VALUES (?,?,?,NOW())
+                     ON DUPLICATE KEY UPDATE rating=VALUES(rating), updated_at=NOW()";
+    if ($stmt = $mysqli->prepare($sqlInsertDup)) {
+        $stmt->bind_param('iid', $staffId, $userId, $rating);
+        if ($stmt->execute()) $done = true;
+        $stmt->close();
+    }
+    if (!$done) {
+        if ($check = $mysqli->prepare('SELECT id FROM service_staff_ratings WHERE staff_id=? AND user_id=? LIMIT 1')) {
+            $check->bind_param('ii', $staffId, $userId);
+            $check->execute();
+            $res = $check->get_result()->fetch_assoc();
+            $check->close();
+            if ($res && isset($res['id'])) {
+                $rid = (int)$res['id'];
+                if ($u = $mysqli->prepare('UPDATE service_staff_ratings SET rating=?, updated_at=NOW() WHERE id=?')) {
+                    $u->bind_param('di', $rating, $rid);
+                    $u->execute();
+                    $u->close();
+                }
+            } else {
+                if ($ins = $mysqli->prepare('INSERT INTO service_staff_ratings (staff_id, user_id, rating, created_at) VALUES (?,?,?,NOW())')) {
+                    $ins->bind_param('iid', $staffId, $userId, $rating);
+                    $ins->execute();
+                    $ins->close();
+                }
+            }
+        }
+    }
+
+    $avg = 0.0; $cnt = 0;
+    if ($q = $mysqli->prepare('SELECT AVG(rating) AS avg_rating, COUNT(*) AS cnt FROM service_staff_ratings WHERE staff_id=?')) {
+        $q->bind_param('i', $staffId);
+        $q->execute();
+        $r = $q->get_result()->fetch_assoc();
+        $q->close();
+        if ($r) {
+            $avg = $r['avg_rating'] !== null ? round((float)$r['avg_rating'], 1) : 0.0;
+            $cnt = (int)$r['cnt'];
+        }
+    }
+
+    if ($u = $mysqli->prepare('UPDATE service_staff SET rating=? WHERE id=?')) {
+        $u->bind_param('di', $avg, $staffId);
+        $u->execute();
+        $u->close();
+    }
+
+    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['ok' => true, 'avg' => $avg, 'count' => $cnt]);
+        exit;
+    }
+    header('Location: service.php?id=' . $id . '#reviews');
+    exit;
+}
+
+/* -- SUBMIT SERVICE RATING -- */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'submit_service_rating')) {
+    if (empty($userId) || $userId <= 0) {
+        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => false, 'error' => 'Требуется авторизация']);
+            exit;
+        }
+        header('Location: /mehanik/login.php');
+        exit;
+    }
+
+    $rating = isset($_POST['rating']) ? (float)$_POST['rating'] : 0.0;
+    if ($rating < 1 || $rating > 10) {
+        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => false, 'error' => 'Неверный рейтинг (ожидается 1–10)']);
+            exit;
+        }
+        header('Location: service.php?id=' . $id . '#reviews');
+        exit;
+    }
+
+    $sql = 'INSERT INTO service_ratings (service_id, user_id, rating, created_at) VALUES (?,?,?,NOW())
+            ON DUPLICATE KEY UPDATE rating=VALUES(rating), updated_at=NOW()';
+    if ($stmt = $mysqli->prepare($sql)) {
+        $stmt->bind_param('iid', $id, $userId, $rating);
+        $stmt->execute();
+        $stmt->close();
+    } else {
+        if ($check = $mysqli->prepare('SELECT id FROM service_ratings WHERE service_id=? AND user_id=? LIMIT 1')) {
+            $check->bind_param('ii', $id, $userId);
+            $check->execute();
+            $res = $check->get_result()->fetch_assoc();
+            $check->close();
+            if ($res && isset($res['id'])) {
+                $rid = (int)$res['id'];
+                if ($u = $mysqli->prepare('UPDATE service_ratings SET rating=?, updated_at=NOW() WHERE id=?')) {
+                    $u->bind_param('di', $rating, $rid);
+                    $u->execute();
+                    $u->close();
+                }
+            } else {
+                if ($ins = $mysqli->prepare('INSERT INTO service_ratings (service_id, user_id, rating, created_at) VALUES (?,?,?,NOW())')) {
+                    $ins->bind_param('iid', $id, $userId, $rating);
+                    $ins->execute();
+                    $ins->close();
+                }
+            }
+        }
+    }
+
+    $avg = 0.0; $cnt = 0;
+    if ($q = $mysqli->prepare('SELECT AVG(rating) AS avg_rating, COUNT(*) AS cnt FROM service_ratings WHERE service_id=?')) {
+        $q->bind_param('i', $id);
+        $q->execute();
+        $r = $q->get_result()->fetch_assoc();
+        $q->close();
+        if ($r) {
+            $avg = $r['avg_rating'] !== null ? round((float)$r['avg_rating'], 1) : 0.0;
+            $cnt = (int)$r['cnt'];
+        }
+    }
+
+    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['ok' => true, 'avg' => $avg, 'count' => $cnt]);
+        exit;
+    }
+
+    header('Location: service.php?id=' . $id . '#reviews');
+    exit;
+}
+
+/* ---------------- Utilities & fetch data ---------------- */
 $uploadsFsRoot  = realpath(__DIR__ . '/../uploads') ?: (__DIR__ . '/../uploads');
 $uploadsUrlRoot = '/mehanik/uploads';
 
 function find_upload_url(string $value, string $preferredSubdir = 'services', string $uploadsFsRoot = '', string $uploadsUrlRoot = ''): array {
+    // same implementation as before (kept intact)
     $fname = trim($value);
     if ($fname === '') return ['', ''];
     if (is_file($fname)) {
@@ -87,7 +544,6 @@ function find_upload_url(string $value, string $preferredSubdir = 'services', st
     return [$fallbackUrl, $fallbackFs];
 }
 
-/** DB utilities */
 function column_exists($mysqli, $table, $col) {
     $table_q = $mysqli->real_escape_string($table);
     $col_q = $mysqli->real_escape_string($col);
@@ -95,26 +551,21 @@ function column_exists($mysqli, $table, $col) {
     return ($res && $res->num_rows > 0);
 }
 
-/** Ensure parent_id exists (best-effort) */
 if (!column_exists($mysqli, 'service_reviews', 'parent_id')) {
     @ $mysqli->query("ALTER TABLE service_reviews ADD COLUMN parent_id INT NULL DEFAULT NULL, ADD INDEX (parent_id)");
 }
 
-/** Ratings table ensure (as before) */
 $haveRatingsTable = ($mysqli->query("SHOW TABLES LIKE 'service_ratings'")->num_rows > 0);
 if (!$haveRatingsTable) {
     @ $mysqli->query("\n        CREATE TABLE IF NOT EXISTS service_ratings (\n          id INT AUTO_INCREMENT PRIMARY KEY,\n          service_id INT NOT NULL,\n          user_id INT NOT NULL,\n          rating DECIMAL(3,1) NOT NULL,\n          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n          updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n          UNIQUE KEY uniq_service_user (service_id, user_id)\n        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n    ");
     $haveRatingsTable = true;
 }
+
 $reviewsHasUpdatedAt = column_exists($mysqli, 'service_reviews', 'updated_at');
 $reviewsHasUserId    = column_exists($mysqli, 'service_reviews', 'user_id');
 $reviewsHasParentId  = column_exists($mysqli, 'service_reviews', 'parent_id');
 
-/** Staff table (optional) */
 $haveStaffTable = ($mysqli->query("SHOW TABLES LIKE 'service_staff'")->num_rows > 0);
-
-/* ---------------- Handlers (unchanged) ---------------- */
-// ... (handlers code identical to original; omitted here for brevity in the preview) -- actual file contains full handlers as before
 
 /* ---------------- Fetch service and related data ---------------- */
 if ($id > 0) {
@@ -149,7 +600,6 @@ if ($id > 0) {
             }
         }
 
-        // fetch staff if table exists
         if ($haveStaffTable) {
             if ($st = $mysqli->prepare("SELECT id, photo, name, position, rating FROM service_staff WHERE service_id=? ORDER BY id ASC")) {
                 $st->bind_param("i", $id);
@@ -159,8 +609,7 @@ if ($id > 0) {
             }
         }
 
-        // fetch all reviews (flat), then build tree (same as before)
-        $cols = "id, service_id, user_id, user_name, comment, parent_id, created_at";
+        $cols = "id, service_id, user_id, user_name, rating, comment, parent_id, created_at";
         if ($reviewsHasUpdatedAt) $cols .= ", updated_at";
         $sql = "SELECT $cols FROM service_reviews WHERE service_id = ? ORDER BY created_at ASC";
         if ($st = $mysqli->prepare($sql)) {
@@ -172,7 +621,6 @@ if ($id > 0) {
             $flat = [];
         }
 
-        // build tree
         $byId = [];
         foreach ($flat as &$row) {
             $row['children'] = [];
@@ -193,7 +641,7 @@ if ($id > 0) {
 }
 
 /* Helper to render reviews recursively (server-side) */
-function render_reviews_tree(array $nodes, $level = 0) {
+function render_reviews_tree(array $nodes, $level = 0, $currentUserId = 0) {
     $html = '';
     foreach ($nodes as $n) {
         $id = (int)$n['id'];
@@ -205,11 +653,24 @@ function render_reviews_tree(array $nodes, $level = 0) {
         $html .= '<div class="review-card" id="review-' . $id . '" style="margin-left:' . $indent . 'px;margin-top:10px;">';
         $html .= '<div class="review-meta">';
         $html .= '<div><span class="review-name">' . $userName . '</span> <span class="review-time">' . $time . '</span></div>';
-        $html .= '<div class="review-actions"></div>';
-        $html .= '</div>';
+        $html .= '<div class="review-actions">';
+        $html .= '<button class="btn-small" type="button" onclick="startReply(' . $id . ', ' . json_encode($userName) . ')">Ответить</button>';
+
+        // only review author can edit/delete
+        $canManage = ($currentUserId > 0 && isset($n['user_id']) && (int)$n['user_id'] === (int)$currentUserId);
+        if ($canManage) {
+            $html .= '<button class="btn-small" type="button" onclick="startEdit(' . $id . ')">Изменить</button>';
+            $html .= '<form method="post" style="display:inline-block;margin:0;" onsubmit="return confirm(\'Удалить отзыв?\')">';
+            $html .= '<input type="hidden" name="action" value="delete_review">';
+            $html .= '<input type="hidden" name="review_id" value="' . $id . '">';
+            $html .= '<button type="submit" class="btn-small">Удалить</button>';
+            $html .= '</form>';
+        }
+
+        $html .= '</div></div>';
         $html .= '<div class="review-comment">' . $commentEsc . '</div>';
         if ($hasChildren) {
-            $html .= render_reviews_tree($n['children'], $level+1);
+            $html .= '<div style="margin-left:18px; margin-top:8px;">' . render_reviews_tree($n['children'], $level+1, $currentUserId) . '</div>';
         }
         $html .= '</div>';
     }
@@ -231,97 +692,8 @@ function toPublicUrl($rel){
   <title><?= $service ? htmlspecialchars($service['name']) . ' — Mehanik' : 'Сервис — Mehanik' ?></title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
 
-  <!-- Previous external CSS removed. New self-contained styles below. -->
-  <style>
-    /* --- Minimal reset --- */
-    *,*::before,*::after{box-sizing:border-box}
-    html,body{height:100%}
-    body{margin:0;font-family:Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:#f3f6f9;color:#0f1724;line-height:1.4}
-
-    :root{
-      --bg:#f3f6f9;
-      --card:#ffffff;
-      --muted:#6b7280;
-      --accent:#0b57a4;
-      --radius:12px;
-      --glass: rgba(255,255,255,0.85);
-      --shadow: 0 10px 30px rgba(12,20,30,0.06);
-      --max-width:1200px;
-    }
-
-    a{color:var(--accent);text-decoration:none}
-    a:hover{text-decoration:underline}
-
-    .container{max-width:var(--max-width);margin:28px auto;padding:18px}
-
-    /* Layout grid */
-    .svc-grid{display:grid;grid-template-columns:320px 1fr 300px;gap:24px;align-items:start}
-
-    /* card */
-    .card{background:var(--card);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);border:1px solid rgba(10,25,50,0.04)}
-
-    /* LEFT */
-    .logo{width:100%;height:180px;object-fit:cover;border-radius:10px;border:1px solid rgba(15,23,36,0.04);background:linear-gradient(180deg,#ffffff,#fafcff);display:block}
-    .logo--placeholder{display:flex;align-items:center;justify-content:center;height:180px;border-radius:10px;background:linear-gradient(180deg,#fbfdff,#f7fbff);color:#9aa3af;font-weight:700;border:1px dashed rgba(11,87,164,0.08)}
-    h1.title{margin:12px 0 6px;font-size:1.25rem;color:var(--accent);letter-spacing:-0.2px}
-    .contact-list{margin-top:10px;display:flex;flex-direction:column;gap:8px;font-size:0.96rem;color:var(--muted)}
-    .contact-list strong{color:#111;font-weight:700}
-
-    .btn{display:inline-flex;align-items:center;gap:10px;padding:10px 14px;border-radius:999px;border:0;background:var(--accent);color:#fff;font-weight:700;cursor:pointer}
-    .btn-ghost{display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border-radius:999px;border:1px solid rgba(11,87,164,0.12);background:transparent;color:var(--accent);font-weight:700;cursor:pointer}
-    .btn-wide{width:100%;justify-content:center}
-
-    .prices{margin-top:14px;padding:12px;background:linear-gradient(180deg,#fff,#fbfdff)}
-    .price-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed rgba(10,25,50,0.03)}
-
-    /* MIDDLE */
-    main .card > h2.section-title{margin:0 0 8px 0;font-size:1rem;color:#0f1724}
-    .description{color:#112;white-space:pre-wrap}
-
-    .map-card{height:280px;border-radius:10px;overflow:hidden;border:1px solid rgba(10,25,50,0.04);background:linear-gradient(180deg,#fbfcff,#f7fbff);display:flex;align-items:center;justify-content:center;color:var(--muted)}
-
-    .photos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-top:12px}
-    .thumb{width:100%;height:110px;overflow:hidden;border-radius:10px;border:1px solid rgba(10,25,50,0.03);background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
-    .thumb img{width:100%;height:100%;object-fit:cover;display:block}
-
-    /* Rating */
-    .rating-row{display:flex;align-items:center;gap:12px;margin-top:8px}
-    .avg-num{font-size:1.5rem;font-weight:800;color:var(--accent)}
-    .avg-meta{color:var(--muted);font-size:0.95rem}
-    .stars{position:relative;display:inline-block;font-size:18px;line-height:1;letter-spacing:2px}
-    .stars::before{content:'★★★★★';color:#e5e7eb}
-    .stars::after{content:'★★★★★';color:#fbbf24;position:absolute;left:0;top:0;white-space:nowrap;overflow:hidden;width:var(--percent,0%)}
-
-    /* Reviews */
-    .review-card{background:linear-gradient(180deg,#fff,#fcfeff);border-radius:10px;padding:12px;border:1px solid rgba(10,25,50,0.04);margin-bottom:10px}
-    .review-meta{display:flex;align-items:center;gap:10px}
-    .review-name{font-weight:800}
-    .review-time{color:var(--muted);font-size:0.88rem;margin-left:6px}
-    .review-comment{margin-top:8px;color:#111}
-    .review-actions{margin-left:auto;display:flex;gap:8px}
-    .btn-small{padding:6px 8px;border-radius:8px;background:#fff;border:1px solid rgba(10,25,50,0.04);cursor:pointer;font-weight:700}
-
-    .reply-indicator{font-size:0.95rem;color:var(--muted);margin-bottom:8px;display:flex;gap:8px;align-items:center}
-
-    .input{width:100%;border:1px solid rgba(10,25,50,0.06);border-radius:10px;padding:10px 12px;font-size:14px;box-sizing:border-box}
-    textarea.input{min-height:90px;max-height:220px;line-height:1.4;resize:vertical}
-
-    /* Staff */
-    .staff-card{background:linear-gradient(180deg,#fff,#fbfdff);border:1px solid rgba(10,25,50,0.04);border-radius:12px;padding:12px;display:flex;gap:12px;align-items:flex-start}
-    .staff-photo{width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid rgba(10,25,50,0.04);background:#fff}
-    .staff-name{font-weight:800}
-    .staff-pos{color:var(--muted);font-size:0.92rem;margin-top:2px}
-
-    /* Lightbox */
-    .lb-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.7);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}
-    .lb-overlay.active{display:flex}
-    .lb-img{max-width:calc(100% - 40px);max-height:calc(100% - 40px);box-shadow:0 12px 50px rgba(2,6,23,0.6);border-radius:8px}
-    .lb-close{position:absolute;top:18px;right:18px;background:#fff;border-radius:6px;padding:8px 10px;cursor:pointer;font-weight:700;border:0}
-
-    footer.site-footer{padding:20px;text-align:center;color:var(--muted);font-size:0.9rem;margin-top:20px}
-
-    @media(max-width:1100px){.container{padding:14px}.svc-grid{grid-template-columns:1fr}.logo{height:200px}.map-card{height:240px}}
-  </style>
+  <!-- Подключаем внешний CSS -->
+  <link rel="stylesheet" href="/mehanik/assets/css/service.css">
 </head>
 <body>
 <?php include __DIR__ . '/header.php'; ?>
@@ -352,7 +724,6 @@ function toPublicUrl($rel){
           <?php if (!empty($service['address'])): ?><div><strong>Адрес:</strong> <?= htmlspecialchars($service['address']) ?></div><?php endif; ?>
         </div>
 
-        <!-- Кнопка записи -->
         <a class="btn btn-wide" href="booking.php?service_id=<?= $id ?>">Записаться</a>
 
         <?php if (!empty($prices)): ?>
@@ -373,6 +744,21 @@ function toPublicUrl($rel){
       <!-- MIDDLE -->
       <main>
         <div class="card">
+          <!-- Rating moved above description -->
+          <div class="rating-row" style="justify-content:space-between;align-items:center;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div id="avgStars" class="stars" style="--percent:<?= ($avgRating > 0) ? (($avgRating/10)*100) . '%' : '0%'; ?>" aria-hidden="true"></div>
+              <div>
+                <div id="avgNum"><?= number_format($avgRating, 1) ?></div>
+                <div id="avgMeta"><?= $reviewsCount ?> отзывов</div>
+              </div>
+            </div>
+
+            <div>
+              <div id="service-star-input" aria-hidden="true"></div>
+            </div>
+          </div>
+
           <h2 class="section-title">Описание</h2>
           <p class="description"><?= nl2br(htmlspecialchars($service['description'])) ?></p>
 
@@ -407,222 +793,54 @@ function toPublicUrl($rel){
         <!-- Reviews & Rating -->
         <section class="card" id="reviews" style="margin-top:18px;">
           <?php
-            // Render reviews tree (we will render interactive buttons with JS)
-            function render_tree_for_display($nodes, $userId, $isAdmin) {
-                $out = '';
+            // find user's review (if any)
+            function find_user_review_in_tree($nodes, $uid) {
                 foreach ($nodes as $n) {
-                    $rid = (int)$n['id'];
-                    $userName = htmlspecialchars($n['user_name'] ?? 'Гость');
-                    $time = htmlspecialchars(date('d.m.Y H:i', strtotime($n['created_at'])));
-                    $commentHtml = nl2br(htmlspecialchars($n['comment']));
-                    $canManage = false;
-                    if ($isAdmin) $canManage = true;
-                    elseif ($userId > 0 && isset($n['user_id']) && (int)$n['user_id'] === $userId) $canManage = true;
-                    $out .= '<div class="review-card" id="review-' . $rid . '">';
-                    $out .= '<div class="review-meta">';
-                    $out .= '<div><span class="review-name">' . $userName . '</span> <span class="review-time">' . $time . '</span></div>';
-                    $out .= '<div class="review-actions">';
-                    $out .= '<button class="btn-small" type="button" onclick="startReply(' . $rid . ', ' . json_encode($userName) . ')">Ответить</button>';
-                    if ($canManage) {
-                        $out .= '<button class="btn-small" type="button" onclick="startEdit(' . $rid . ')">Изменить</button>';
-                        $out .= '<form method="post" style="display:inline-block;margin:0;"><input type="hidden" name="action" value="delete_review"><input type="hidden" name="review_id" value="' . $rid . '"><button type="submit" class="btn-small" onclick="return confirm(\'Удалить отзыв?\')">Удалить</button></form>';
+                    if (!empty($n['user_id']) && (int)$n['user_id'] === (int)$uid) {
+                        return [
+                            'id' => (int)$n['id'],
+                            'rating' => isset($n['rating']) ? (float)$n['rating'] : 0,
+                            'comment' => $n['comment'] ?? ''
+                        ];
                     }
-                    $out .= '</div></div>';
-                    $out .= '<div class="review-comment">' . $commentHtml . '</div>';
                     if (!empty($n['children'])) {
-                        $out .= '<div style="margin-left:18px; margin-top:8px;">' . render_tree_for_display($n['children'], $userId, $isAdmin) . '</div>';
+                        $found = find_user_review_in_tree($n['children'], $uid);
+                        if ($found) return $found;
                     }
-                    $out .= '</div>';
                 }
-                return $out;
+                return null;
             }
 
-            
-// --- вставьте перед выводом блока отзывов ---
-// Функция ищет отзыв текущего пользователя в дереве отзывов
-function find_user_review_in_tree($nodes, $uid) {
-    foreach ($nodes as $n) {
-        if (!empty($n['user_id']) && (int)$n['user_id'] === (int)$uid) {
-            return [
-                'id' => (int)$n['id'],
-                'rating' => isset($n['rating']) ? (float)$n['rating'] : 0,
-                'comment' => $n['comment'] ?? ''
-            ];
-        }
-        if (!empty($n['children'])) {
-            $found = find_user_review_in_tree($n['children'], $uid);
-            if ($found) return $found;
-        }
-    }
-    return null;
-}
+            $userReview = ($userId > 0) ? find_user_review_in_tree($reviews, $userId) : null;
+          ?>
 
-$userReview = ($userId > 0) ? find_user_review_in_tree($reviews, $userId) : null;
-?>
+          <!-- Top area: 10-star picker -->
+          <div class="review-card" style="margin-bottom:12px;">
+            <label style="display:block;font-weight:700;margin-bottom:8px;">Оцените сервис (1–10)</label>
+            <div style="display:flex; gap:12px; align-items:center;">
+              <div id="ten-star-picker" role="radiogroup" aria-label="10-star rating">
+                <?php for ($s = 1; $s <= 10; $s++): $idStar = 'pick-' . $s; ?>
+                  <input type="radio" id="<?= $idStar ?>" name="first_rating" value="<?= $s ?>">
+                  <label for="<?= $idStar ?>" data-value="<?= $s ?>" title="<?= $s ?>"><?= '★' ?></label>
+                <?php endfor; ?>
+              </div>
 
-<?php if (empty($reviews)): ?>
-  <div class="review-card">
-    <!-- 10-star picker (слева направо) + умная кнопка Отправить -->
-    <div style="margin-bottom:12px;">
-      <label style="display:block;font-weight:700;margin-bottom:8px;">Оцените сервис (1–10)</label>
+              <button id="ten-star-apply" class="btn btn-small" type="button">Отправить</button>
+              <button id="ten-star-send-rating" class="btn btn-small" type="button" style="margin-left:6px;">Отправить рейтинг</button>
+            </div>
+          </div>
 
-      <style>
-        /* локальные стили для 10-звёздного пикера */
-        #ten-star-picker { display:flex; gap:6px; align-items:center; }
-        #ten-star-picker input[type="radio"]{ display:none; }
-        #ten-star-picker label{
-          cursor:pointer;
-          font-size:22px;
-          color:#e5e7eb;
-          user-select:none;
-          transition: color 120ms ease;
-        }
-        #ten-star-picker label.active { color:#fbbf24; }
-        #ten-star-picker label.preview { color:#ffd966; } /* hover preview */
-      </style>
+          <?php if (empty($reviews)): ?>
+            <div class="review-card">
+              <div>Пока нет отзывов — будьте первым!</div>
+            </div>
+          <?php else: ?>
 
-      <div style="display:flex; gap:12px; align-items:center;">
-        <div id="ten-star-picker" role="radiogroup" aria-label="10-star rating">
-          <?php for ($s = 1; $s <= 10; $s++): $idStar = 'pick-' . $s; ?>
-            <input type="radio" id="<?= $idStar ?>" name="first_rating" value="<?= $s ?>">
-            <label for="<?= $idStar ?>" data-value="<?= $s ?>" title="<?= $s ?>"><?= '★' ?></label>
-          <?php endfor; ?>
-        </div>
+            <?php
+              echo render_reviews_tree($reviews, 0, $userId);
+            ?>
 
-        <button id="ten-star-apply" class="btn btn-small" type="button">Отправить</button>
-      </div>
-    </div>
-
-    <div>Пока нет отзывов — будьте первым!</div>
-  </div>
-
-  <script>
-    (function(){
-      const picker = document.getElementById('ten-star-picker');
-      const labels = Array.from(picker.querySelectorAll('label[data-value]'));
-      const radios = Array.from(picker.querySelectorAll('input[type=radio]'));
-      const applyBtn = document.getElementById('ten-star-apply');
-      // Информация о существующем отзыве текущего пользователя (если есть)
-      const existingReview = <?= json_encode($userReview ?? null, JSON_UNESCAPED_UNICODE) ?>;
-
-      // Установим поведение: hover - предпросмотр, click - выбор
-      labels.forEach(lbl => {
-        const v = parseInt(lbl.getAttribute('data-value'), 10);
-
-        lbl.addEventListener('mouseenter', () => {
-          // пометить все <= v классом preview
-          labels.forEach(l => {
-            const lv = parseInt(l.getAttribute('data-value'),10);
-            l.classList.toggle('preview', lv <= v);
-          });
-        });
-        lbl.addEventListener('mouseleave', () => {
-          labels.forEach(l => l.classList.remove('preview'));
-        });
-
-        lbl.addEventListener('click', (e) => {
-          // отметить радио и подсветить все <= выбранной
-          const value = v;
-          // check corresponding radio
-          const radio = document.getElementById('pick-' + value);
-          if (radio) radio.checked = true;
-
-          // set active class to all <= value
-          labels.forEach(l => {
-            const lv = parseInt(l.getAttribute('data-value'),10);
-            l.classList.toggle('active', lv <= value);
-          });
-        });
-      });
-
-      // Если у пользователя уже есть отзыв — подсветим его рейтинг
-      if (existingReview && existingReview.rating) {
-        const r = Math.round(existingReview.rating); // rating может быть десятичным
-        const radio = document.getElementById('pick-' + r);
-        if (radio) radio.checked = true;
-        labels.forEach(l => {
-          const lv = parseInt(l.getAttribute('data-value'),10);
-          l.classList.toggle('active', lv <= r);
-        });
-        // Поменяем текст кнопки: пользователь будет редактировать
-        applyBtn.textContent = 'Редактировать мой отзыв';
-      }
-
-      // Поведение кнопки: если есть существующий отзыв — заполнить форму для редактирования,
-      // иначе подставить выбранную оценку в форму для создания (и прокрутить к форме).
-      applyBtn.addEventListener('click', () => {
-        const selected = picker.querySelector('input[name="first_rating"]:checked');
-        if (!selected) {
-          alert('Пожалуйста, выберите рейтинг (1–10).');
-          return;
-        }
-        const val = selected.value;
-
-        const form = document.getElementById('reviewForm');
-        if (!form) {
-          alert('Форма добавления отзыва не найдена.');
-          return;
-        }
-
-        // Поле review_rating (скрытое) — создаём, если нет
-        let hidden = form.querySelector('input[name="review_rating"][type="hidden"]');
-        if (!hidden) {
-          hidden = document.createElement('input');
-          hidden.type = 'hidden';
-          hidden.name = 'review_rating';
-          form.appendChild(hidden);
-        }
-        hidden.value = val;
-
-        // Если у пользователя уже есть отзыв — заполним форму данными и поставим editing id
-        if (existingReview && existingReview.id) {
-          // подставим id в editing_review_id
-          const editIdEl = form.querySelector('#editing_review_id');
-          if (editIdEl) editIdEl.value = existingReview.id;
-
-          // подставим комментарий если есть
-          const commentEl = form.querySelector('#comment');
-          if (commentEl && existingReview.comment) commentEl.value = existingReview.comment;
-
-          // поменяем название формы
-          const titleEl = document.getElementById('formTitle');
-          if (titleEl) titleEl.textContent = 'Редактировать отзыв';
-
-          // прокрутить к форме
-          form.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          // подсказка
-          if (commentEl) commentEl.focus();
-          alert('У вас уже есть отзыв — отредактируйте его и нажмите «Отправить».');
-        } else {
-          // Новый отзыв: убедимся, что editing id = '', parent=0
-          const editIdEl = form.querySelector('#editing_review_id');
-          const parentIdEl = form.querySelector('#parent_id');
-          if (editIdEl) editIdEl.value = '';
-          if (parentIdEl) parentIdEl.value = '0';
-
-          // прокрутить к форме и сфокусировать комментарий
-          const commentEl = form.querySelector('#comment');
-          form.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          if (commentEl) {
-            commentEl.focus();
-            commentEl.placeholder = 'Вы выбрали ' + val + ' звезд(ы). Напишите комментарий и нажмите «Отправить».';
-          }
-        }
-      });
-
-    })();
-  </script>
-
-<?php else: ?>
-
-  <?php
-    // Если уже есть отзывы — показываем дерево (оставляем прежнюю функцию/логику)
-    echo render_reviews_tree($reviews);
-  ?>
-
-<?php endif; ?>
-
-
+          <?php endif; ?>
 
           <!-- Add / edit form -->
           <div class="review-card" style="margin-top:12px;">
@@ -647,6 +865,7 @@ $userReview = ($userId > 0) ? find_user_review_in_tree($reviews, $userId) : null
 
               <input type="hidden" id="editing_review_id" name="editing_review_id" value="">
               <input type="hidden" id="parent_id" name="parent_id" value="0">
+              <input type="hidden" id="review_rating_hidden" name="review_rating" value="">
 
               <div style="margin-top:8px; display:flex; gap:8px; justify-content:flex-end;">
                 <input type="hidden" name="action" value="upsert_review">
@@ -673,6 +892,7 @@ $userReview = ($userId > 0) ? find_user_review_in_tree($reviews, $userId) : null
               $stPos  = htmlspecialchars($s['position'] ?? '');
               $stRating = isset($s['rating']) ? (float)$s['rating'] : 0.0;
               $stPercent = max(0, min(100, ($stRating/5)*100));
+              $staffIdLocal = (int)($s['id'] ?? 0);
             ?>
               <div class="staff-card">
                 <?php if ($stUrl): ?>
@@ -680,13 +900,29 @@ $userReview = ($userId > 0) ? find_user_review_in_tree($reviews, $userId) : null
                 <?php else: ?>
                   <div class="staff-photo" style="display:flex;align-items:center;justify-content:center;color:#9aa3af;">—</div>
                 <?php endif; ?>
-                <div>
-                  <div class="staff-name"><?= $stName ?></div>
-                  <?php if ($stPos): ?><div class="staff-pos"><?= $stPos ?></div><?php endif; ?>
-                  <div class="staff-rating">
-                    <span class="stars" style="--percent:<?= $stPercent ?>%;" title="Рейтинг сотрудника: <?= number_format($stRating,1) ?>"></span>
-                    <span style="margin-left:6px; font-weight:700;"><?= number_format($stRating,1) ?></span>
+                <div style="flex:1">
+                  <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div>
+                      <div class="staff-name"><?= $stName ?></div>
+                      <?php if ($stPos): ?><div class="staff-pos"><?= $stPos ?></div><?php endif; ?>
+                    </div>
+                    <div style="text-align:right;">
+                      <div class="staff-rating" style="display:flex;align-items:center;gap:8px;">
+                        <span class="stars" style="--percent:<?= $stPercent ?>%;" title="Рейтинг сотрудника: <?= number_format($stRating,1) ?>"></span>
+                        <span style="font-weight:700"><?= number_format($stRating,1) ?></span>
+                      </div>
+                    </div>
                   </div>
+
+                  <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+                    <div id="staff-picker-<?= $staffIdLocal ?>" style="display:flex; gap:6px; align-items:center;">
+                      <?php for ($si=1;$si<=5;$si++): ?>
+                        <button type="button" class="btn-small" onclick="sendStaffRating(<?= $staffIdLocal ?>, <?= $si ?>)"><?= $si ?></button>
+                      <?php endfor; ?>
+                    </div>
+                    <div style="margin-left:auto; color:var(--muted); font-size:0.9rem;">Оцените сотрудника</div>
+                  </div>
+
                 </div>
               </div>
             <?php endforeach; ?>
@@ -699,50 +935,24 @@ $userReview = ($userId > 0) ? find_user_review_in_tree($reviews, $userId) : null
 
 <footer class="site-footer">&copy; <?= date('Y') ?> Mehanik</footer>
 
-<!-- Google Maps init (replaces Leaflet) -->
+<!-- Перед подключением общего JS пробросим в window нужные данные -->
 <script>
-function initMap() {
-  try {
-    var mapEl = document.getElementById('map');
-    var center = { lat: 37.95, lng: 58.38 };
-    <?php if ($service && !empty($service['latitude']) && !empty($service['longitude'])): ?>
-      center = { lat: <?= (float)$service['latitude'] ?>, lng: <?= (float)$service['longitude'] ?> };
-    <?php endif; ?>
+  // user review (null если нет)
+  window.__USER_REVIEW__ = <?= json_encode($userReview ?? null, JSON_UNESCAPED_UNICODE) ?>;
 
-    var map = new google.maps.Map(mapEl, {
-      center: center,
-      zoom: <?= ($service && !empty($service['latitude']) && !empty($service['longitude'])) ? 15 : 13 ?>,
-      streetViewControl: false
-    });
-
-    <?php if ($service && !empty($service['latitude']) && !empty($service['longitude'])): ?>
-      var marker = new google.maps.Marker({ position: center, map: map });
-      var infow = new google.maps.InfoWindow({ content: '<?= addslashes(htmlspecialchars($service['name'])) ?>' });
-      marker.addListener('click', function(){ infow.open(map, marker); });
-      infow.open(map, marker);
-    <?php endif; ?>
-
-  } catch (err) {
-    console.warn('Google Maps init error:', err);
-    var mapEl = document.getElementById('map');
-    if (mapEl) mapEl.innerHTML = '<div style="padding:18px;color:#444">Карта недоступна.</div>';
-  }
-}
-setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps === 'undefined') { console.warn('Google Maps not available'); var mapEl = document.getElementById('map'); if (mapEl) mapEl.innerHTML = '<div style="padding:18px;color:#444">Карта недоступна.</div>'; } }, 6000);
+  // SERVICE_LOCATION для initMap (lat/lng may be empty)
+  window.SERVICE_LOCATION = {
+    lat: <?= ($service && !empty($service['latitude'])) ? (float)$service['latitude'] : 37.95 ?>,
+    lng: <?= ($service && !empty($service['longitude'])) ? (float)$service['longitude'] : 58.38 ?>,
+    zoom: <?= ($service && !empty($service['latitude']) && !empty($service['longitude'])) ? 15 : 13 ?>,
+    name: <?= json_encode($service['name'] ?? '', JSON_UNESCAPED_UNICODE) ?>
+  };
 </script>
 
-<!-- Lightbox + reviews helpers (unchanged) -->
-<script>
-function openLightbox(src){ const lb=document.getElementById('lb'); const img=document.getElementById('lbImg'); img.src=src; lb.classList.add('active'); }
-function closeLightbox(e){ if (!e || e.target.id==='lb' || (e.target.classList && e.target.classList.contains('lb-close'))) { const lb=document.getElementById('lb'); lb.classList.remove('active'); document.getElementById('lbImg').src=''; } }
+<!-- Подключаем внешний JS (в котором реализованы все интерактивы) -->
+<script src="/mehanik/assets/js/service.js"></script>
 
-// Review edit / reply helpers (same as before)
-function startEdit(id){ try { const card = document.getElementById('review-' + id); if (!card) return; const commentNode = card.querySelector('.review-comment'); const nameNode = card.querySelector('.review-name'); const commentText = commentNode ? commentNode.innerText.trim() : ''; const userNameText = nameNode ? nameNode.innerText.trim() : ''; const form = document.getElementById('reviewForm'); const commentEl = document.getElementById('comment'); const nameEl = document.getElementById('user_name'); const editIdEl = document.getElementById('editing_review_id'); const parentIdEl = document.getElementById('parent_id'); const formTitle = document.getElementById('formTitle'); const replyInd = document.getElementById('replyIndicator'); if (commentEl) commentEl.value = commentText; if (nameEl && userNameText) nameEl.value = userNameText; if (editIdEl) editIdEl.value = id; if (parentIdEl) parentIdEl.value = 0; if (formTitle) formTitle.textContent = 'Редактировать отзыв'; if (replyInd) replyInd.style.display = 'none'; form.scrollIntoView({behavior:'smooth', block:'center'}); if (commentEl) commentEl.focus(); } catch (e) { console.error('startEdit error', e); } }
-function startReply(id, userName){ try { const form = document.getElementById('reviewForm'); const commentEl = document.getElementById('comment'); const nameEl = document.getElementById('user_name'); const parentIdEl = document.getElementById('parent_id'); const editIdEl = document.getElementById('editing_review_id'); const formTitle = document.getElementById('formTitle'); const replyInd = document.getElementById('replyIndicator'); const replyToText = document.getElementById('replyToText'); if (editIdEl) editIdEl.value = ''; if (parentIdEl) parentIdEl.value = id; if (formTitle) formTitle.textContent = 'Ответить на отзыв'; if (replyInd && replyToText) { replyToText.textContent = 'Ответ пользователю: ' + (userName || 'Гость'); replyInd.style.display = 'flex'; } form.scrollIntoView({behavior:'smooth', block:'center'}); if (commentEl) { commentEl.placeholder = 'Ваш ответ...'; commentEl.focus(); } } catch (e) { console.error('startReply error', e); } }
-function cancelReply(){ const parentIdEl = document.getElementById('parent_id'); const editIdEl = document.getElementById('editing_review_id'); const formTitle = document.getElementById('formTitle'); const replyInd = document.getElementById('replyIndicator'); const commentEl = document.getElementById('comment'); if (parentIdEl) parentIdEl.value = 0; if (editIdEl) editIdEl.value = ''; if (formTitle) formTitle.textContent = 'Оставить отзыв'; if (replyInd) replyInd.style.display = 'none'; if (commentEl) commentEl.placeholder = 'Поделитесь впечатлением...'; }
-function resetReviewForm(){ const f=document.getElementById('reviewForm'); if (!f) return; f.reset(); const editIdEl = document.getElementById('editing_review_id'); const parentIdEl = document.getElementById('parent_id'); const formTitle = document.getElementById('formTitle'); const replyInd = document.getElementById('replyIndicator'); if (editIdEl) editIdEl.value = ''; if (parentIdEl) parentIdEl.value = 0; if (formTitle) formTitle.textContent = 'Оставить отзыв'; if (replyInd) replyInd.style.display = 'none'; }
-</script>
-
+<!-- Google Maps (вызовет initMap из service.js). Замените YOUR_GOOGLE_API_KEY -->
 <script async defer src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_API_KEY&callback=initMap"></script>
 
 </body>

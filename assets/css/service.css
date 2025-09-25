@@ -1,0 +1,135 @@
+/* public/assets/css/service.css
+   Вынесённые стили из service.php — сохраните как mehanik/assets/css/service.css */
+
+/* --- Minimal reset --- */
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:#f3f6f9;color:#0f1724;line-height:1.4}
+
+/* Theme variables */
+:root{
+  --bg:#f3f6f9;
+  --card:#ffffff;
+  --muted:#6b7280;
+  --accent:#0b57a4;
+  --radius:12px;
+  --glass: rgba(255,255,255,0.85);
+  --shadow: 0 10px 30px rgba(12,20,30,0.06);
+  --max-width:1200px;
+}
+
+/* Basic elements */
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+.container{max-width:var(--max-width);margin:28px auto;padding:18px}
+
+/* Layout grid */
+.svc-grid{display:grid;grid-template-columns:320px 1fr 300px;gap:24px;align-items:start}
+
+/* card */
+.card{background:var(--card);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);border:1px solid rgba(10,25,50,0.04)}
+
+/* LEFT */
+.logo{width:100%;height:180px;object-fit:cover;border-radius:10px;border:1px solid rgba(15,23,36,0.04);background:linear-gradient(180deg,#ffffff,#fafcff);display:block}
+.logo--placeholder{display:flex;align-items:center;justify-content:center;height:180px;border-radius:10px;background:linear-gradient(180deg,#fbfdff,#f7fbff);color:#9aa3af;font-weight:700;border:1px dashed rgba(11,87,164,0.08)}
+h1.title{margin:12px 0 6px;font-size:1.25rem;color:var(--accent);letter-spacing:-0.2px}
+.contact-list{margin-top:10px;display:flex;flex-direction:column;gap:8px;font-size:0.96rem;color:var(--muted)}
+.contact-list strong{color:#111;font-weight:700}
+
+.btn{display:inline-flex;align-items:center;gap:10px;padding:10px 14px;border-radius:999px;border:0;background:var(--accent);color:#fff;font-weight:700;cursor:pointer}
+.btn-ghost{display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border-radius:999px;border:1px solid rgba(11,87,164,0.12);background:transparent;color:var(--accent);font-weight:700;cursor:pointer}
+.btn-wide{width:100%;justify-content:center}
+
+.prices{margin-top:14px;padding:12px;background:linear-gradient(180deg,#fff,#fbfdff)}
+.price-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed rgba(10,25,50,0.03)}
+
+/* MIDDLE */
+main .card > h2.section-title{margin:0 0 8px 0;font-size:1rem;color:#0f1724}
+.description{color:#112;white-space:pre-wrap}
+
+.map-card{height:280px;border-radius:10px;overflow:hidden;border:1px solid rgba(10,25,50,0.04);background:linear-gradient(180deg,#fbfcff,#f7fbff);display:flex;align-items:center;justify-content:center;color:var(--muted)}
+
+.photos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-top:12px}
+.thumb{width:100%;height:110px;overflow:hidden;border-radius:10px;border:1px solid rgba(10,25,50,0.03);background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+
+/* Rating */
+.rating-row{display:flex;align-items:center;gap:12px;margin-top:8px}
+.avg-num{font-size:1.5rem;font-weight:800;color:var(--accent)}
+.avg-meta{color:var(--muted);font-size:0.95rem}
+/* Generic star band used for avg and staff rating */
+.stars{position:relative;display:inline-block;font-size:18px;line-height:1;letter-spacing:2px}
+.stars::before{content:'★★★★★';color:#e5e7eb;display:block}
+.stars::after{content:'★★★★★';color:#fbbf24;position:absolute;left:0;top:0;white-space:nowrap;overflow:hidden;width:var(--percent,0%)}
+
+/* Reviews */
+.review-card{background:linear-gradient(180deg,#fff,#fcfeff);border-radius:10px;padding:12px;border:1px solid rgba(10,25,50,0.04);margin-bottom:10px}
+.review-meta{display:flex;align-items:center;gap:10px}
+.review-name{font-weight:800}
+.review-time{color:var(--muted);font-size:0.88rem;margin-left:6px}
+.review-comment{margin-top:8px;color:#111}
+.review-actions{margin-left:auto;display:flex;gap:8px}
+.btn-small{padding:6px 8px;border-radius:8px;background:#fff;border:1px solid rgba(10,25,50,0.04);cursor:pointer;font-weight:700}
+
+.reply-indicator{font-size:0.95rem;color:var(--muted);margin-bottom:8px;display:flex;gap:8px;align-items:center}
+
+.input{width:100%;border:1px solid rgba(10,25,50,0.06);border-radius:10px;padding:10px 12px;font-size:14px;box-sizing:border-box}
+textarea.input{min-height:90px;max-height:220px;line-height:1.4;resize:vertical}
+
+/* Staff */
+.staff-card{background:linear-gradient(180deg,#fff,#fbfdff);border:1px solid rgba(10,25,50,0.04);border-radius:12px;padding:12px;display:flex;gap:12px;align-items:flex-start}
+.staff-photo{width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid rgba(10,25,50,0.04);background:#fff}
+.staff-name{font-weight:800}
+.staff-pos{color:var(--muted);font-size:0.92rem;margin-top:2px}
+
+/* Lightbox */
+.lb-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.7);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}
+.lb-overlay.active{display:flex}
+.lb-img{max-width:calc(100% - 40px);max-height:calc(100% - 40px);box-shadow:0 12px 50px rgba(2,6,23,0.6);border-radius:8px}
+.lb-close{position:absolute;top:18px;right:18px;background:#fff;border-radius:6px;padding:8px 10px;cursor:pointer;font-weight:700;border:0}
+
+/* ---------- Видимые стили для 10-star picker ---------- */
+#ten-star-picker { display: flex; gap: 8px; align-items: center; direction: ltr !important; -webkit-user-select: none; -moz-user-select: none; user-select: none; padding: 2px 0; }
+#ten-star-picker input[type="radio"] { display: none; }
+#ten-star-picker label { font-size: 22px; line-height: 1; cursor: pointer; color: #e5e7eb; transition: color .12s ease, transform .08s ease; display: inline-block; text-shadow: 0 1px 0 rgba(255,255,255,0.02); transform-origin: center; user-select: none; }
+#ten-star-picker label:hover, #ten-star-picker label.preview { color: #ffd966; transform: translateY(-2px) scale(1.05); }
+#ten-star-picker label.active { color: #fbbf24; transform: translateY(-1px); text-shadow: 0 2px 6px rgba(251,191,36,0.12); }
+#ten-star-picker input[type="radio"]:focus + label { outline: 3px solid rgba(11,87,164,0.12); outline-offset: 4px; border-radius: 6px; }
+#ten-star-apply, #ten-star-send-rating { --btn-bg: #0b57a4; --btn-bg-hover: #094a88; --btn-color: #fff; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 1px solid rgba(2,6,23,0.08); background: var(--btn-bg); color: var(--btn-color); font-weight: 700; cursor: pointer; transition: background .12s ease, transform .06s ease, box-shadow .12s ease; box-shadow: 0 6px 18px rgba(11,87,164,0.08); white-space: nowrap; }
+#ten-star-apply:hover, #ten-star-send-rating:hover { background: var(--btn-bg-hover); transform: translateY(-1px); box-shadow: 0 10px 24px rgba(11,87,164,0.12); }
+#ten-star-apply:active, #ten-star-send-rating:active { transform: translateY(0); }
+#ten-star-apply:focus, #ten-star-send-rating:focus { outline: 3px solid rgba(11,87,164,0.14); outline-offset: 3px; }
+#ten-star-apply.btn-small, #ten-star-send-rating.btn-small { padding: 6px 10px; min-height: 32px; font-size: 0.92rem; }
+
+/* ---------- 5-star (service-star-input) рядом со средней оценкой ---------- */
+#service-star-input { display:flex; gap:6px; align-items:center; direction:ltr !important; }
+#service-star-input input[type="radio"]{ display:none; }
+#service-star-input .srv-star { font-size: 20px; cursor: pointer; color: #e5e7eb; transition: color .12s ease, transform .06s ease; user-select: none; }
+#service-star-input .srv-star:hover { color: #ffd966; transform: translateY(-2px) scale(1.02); }
+#service-star-input input[type="radio"]:checked + .srv-star, #service-star-input .srv-star.active { color: #fbbf24; transform: translateY(-1px); }
+
+/* ---------- Средний рейтинг (avg) — ярче ---------- */
+#avgStars { font-size: 20px; display:inline-block; vertical-align:middle; margin-right:8px; }
+#avgNum { font-size: 1.45rem; font-weight:800; color: #0b57a4; }
+#avgMeta { color: #6b7280; font-size: .92rem; }
+
+.review-card { position: relative; z-index: 1; } /* чтобы кнопки не перекрывались */
+#ten-star-picker label[title] { -webkit-tap-highlight-color: transparent; }
+
+/* Footer */
+footer.site-footer{padding:20px;text-align:center;color:var(--muted);font-size:0.9rem;margin-top:20px}
+
+/* Responsive */
+@media (max-width:600px){
+  #ten-star-picker label { font-size: 18px; }
+  #ten-star-apply, #ten-star-send-rating { padding: 8px 10px; font-size: 0.9rem; }
+  #service-star-input .srv-star { font-size: 18px; }
+}
+
+@media(max-width:1100px){
+  .container{padding:14px}
+  .svc-grid{grid-template-columns:1fr}
+  .logo{height:200px}
+  .map-card{height:240px}
+}
