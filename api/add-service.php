@@ -1,5 +1,9 @@
 <?php
 // mehanik/api/add-service.php
+// Исправлена привязка типов (address — string)
+// Обработка: multipart/form-data (файлы + поля формы)
+// Автор: ChatGPT (патч для проекта mehanik)
+
 session_start();
 require_once __DIR__ . '/../middleware.php';
 require_once __DIR__ . '/../db.php';
@@ -73,11 +77,14 @@ try {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', NOW(), ?)";
     if (!$stmt = $mysqli->prepare($sql)) throw new Exception('DB prepare failed: ' . $mysqli->error);
 
-    // bind lat/lng as doubles; if null set to 0.0 (DB might be numeric)
+    // bind lat/lng as doubles; if null set to 0.0 (DB numeric columns)
     $latVal = $lat === null ? 0.0 : $lat;
     $lngVal = $lng === null ? 0.0 : $lng;
-    // types: s s s s s s d d i  -> but mysqli bind_param types use 's' for strings and 'd' for double, 'i' for int
-    $stmt->bind_param('sssssddsi', $name, $contact_name, $description, $phone, $email, $address, $latVal, $lngVal, $userId);
+
+    // CORRECTED types:
+    // name (s), contact_name (s), description (s), phone (s), email (s), address (s),
+    // latitude (d), longitude (d), user_id (i)
+    $stmt->bind_param('ssssssddi', $name, $contact_name, $description, $phone, $email, $address, $latVal, $lngVal, $userId);
     if (!$stmt->execute()) throw new Exception('DB execute failed: ' . $stmt->error);
     $serviceId = $mysqli->insert_id;
     $stmt->close();
@@ -88,7 +95,7 @@ try {
 
     // process logo
     $logoRel = '';
-    if (!empty($_FILES['logo']['name']) && is_uploaded_file($_FILES['logo']['tmp_name'])) {
+    if (!empty($_FILES['logo']['name']) && isset($_FILES['logo']['tmp_name']) && is_uploaded_file($_FILES['logo']['tmp_name'])) {
         if ($_FILES['logo']['size'] > $maxSize) throw new Exception('Логотип слишком большой');
         $mime = mime_content_type($_FILES['logo']['tmp_name']);
         if (!in_array($mime, $allowedMime, true)) throw new Exception('Неподдерживаемый формат логотипа');
@@ -109,11 +116,11 @@ try {
 
     // process photos (max 10)
     $insertedPhotos = [];
-    if (!empty($_FILES['photos']['name']) && is_array($_FILES['photos']['name']) && $haveServicePhotos) {
+    if (isset($_FILES['photos']) && !empty($_FILES['photos']['name']) && is_array($_FILES['photos']['name']) && $haveServicePhotos) {
         $count = count($_FILES['photos']['name']);
         $photoIndex = 0;
         for ($i=0; $i<$count && $photoIndex < $maxPhotos; $i++) {
-            if (!is_uploaded_file($_FILES['photos']['tmp_name'][$i])) continue;
+            if (!isset($_FILES['photos']['tmp_name'][$i]) || !is_uploaded_file($_FILES['photos']['tmp_name'][$i])) continue;
             $photoIndex++;
             if ($_FILES['photos']['size'][$i] > $maxSize) throw new Exception('Одно из фото слишком большое');
             $mime = mime_content_type($_FILES['photos']['tmp_name'][$i]);
@@ -172,7 +179,7 @@ try {
 
                 $photoRel = null;
                 // check file for this index in staff_photo[]
-                if (!empty($_FILES['staff_photo']['name']) && isset($_FILES['staff_photo']['tmp_name'][$i]) && is_uploaded_file($_FILES['staff_photo']['tmp_name'][$i])) {
+                if (isset($_FILES['staff_photo']) && !empty($_FILES['staff_photo']['name']) && isset($_FILES['staff_photo']['tmp_name'][$i]) && is_uploaded_file($_FILES['staff_photo']['tmp_name'][$i])) {
                     if ($_FILES['staff_photo']['size'][$i] > $maxSize) throw new Exception("Фото сотрудника '{$sname}' слишком большое");
                     $mime = mime_content_type($_FILES['staff_photo']['tmp_name'][$i]);
                     if (!in_array($mime, $allowedMime, true)) throw new Exception("Неподдерживаемый формат фото сотрудника '{$sname}'");
@@ -187,7 +194,7 @@ try {
                     $photoRel = 'uploads/services/' . $serviceId . '/staff/' . $photoFile;
                 }
 
-                // insert staff row (photo can be NULL)
+                // insert staff row (photo can be empty string)
                 $photoToInsert = $photoRel ?? '';
                 $stmtS->bind_param('isssd', $serviceId, $photoToInsert, $sname, $spos, $srate);
                 $stmtS->execute();

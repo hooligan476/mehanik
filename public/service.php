@@ -950,7 +950,7 @@ function toPublicUrl($rel){
 </script>
 
 <!-- Подключаем внешний JS (в котором реализованы все интерактивы) -->
-<script src="/mehanik/assets/js/service.js"></script>
+<script defer src="/mehanik/assets/js/service.js"></script>
 
 <!-- Google Maps (вызовет initMap из service.js). Замените YOUR_GOOGLE_API_KEY -->
 <script async defer src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_API_KEY&callback=initMap"></script>
