@@ -59,9 +59,46 @@ main .card > h2.section-title{margin:0 0 8px 0;font-size:1rem;color:#0f1724}
 .avg-num{font-size:1.5rem;font-weight:800;color:var(--accent)}
 .avg-meta{color:var(--muted);font-size:0.95rem}
 /* Generic star band used for avg and staff rating */
-.stars{position:relative;display:inline-block;font-size:18px;line-height:1;letter-spacing:2px}
-.stars::before{content:'★★★★★';color:#e5e7eb;display:block}
-.stars::after{content:'★★★★★';color:#fbbf24;position:absolute;left:0;top:0;white-space:nowrap;overflow:hidden;width:var(--percent,0%)}
+/* Звёзды: не выходят за рамку контейнера */
+.stars{
+  position: relative;
+  display: inline-block;
+  font-size: 18px;
+  line-height: 1;
+  letter-spacing: 2px;
+
+  /* Ключевые свойства */
+  white-space: nowrap;   /* все звёзды в одну линию */
+  overflow: hidden;      /* ОБРЕЗАЕМ всё, что выходит за контейнер */
+  box-sizing: border-box;
+  max-width: 100%;       /* не вылезет за родителя на мобильных */
+}
+
+/* псевдоэлементы теперь занимают ширину контейнера */
+.stars::before,
+.stars::after {
+  content: '★★★★★';
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.stars::before {
+  color: #e5e7eb;
+}
+
+.stars::after {
+  color: #fbbf24;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--percent, 0%); /* заполнение по переменной */
+  overflow: hidden;
+}
 
 /* Reviews */
 .review-card{background:linear-gradient(180deg,#fff,#fcfeff);border-radius:10px;padding:12px;border:1px solid rgba(10,25,50,0.04);margin-bottom:10px}
@@ -76,12 +113,6 @@ main .card > h2.section-title{margin:0 0 8px 0;font-size:1rem;color:#0f1724}
 
 .input{width:100%;border:1px solid rgba(10,25,50,0.06);border-radius:10px;padding:10px 12px;font-size:14px;box-sizing:border-box}
 textarea.input{min-height:90px;max-height:220px;line-height:1.4;resize:vertical}
-
-/* Staff */
-.staff-card{background:linear-gradient(180deg,#fff,#fbfdff);border:1px solid rgba(10,25,50,0.04);border-radius:12px;padding:12px;display:flex;gap:12px;align-items:flex-start}
-.staff-photo{width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid rgba(10,25,50,0.04);background:#fff}
-.staff-name{font-weight:800}
-.staff-pos{color:var(--muted);font-size:0.92rem;margin-top:2px}
 
 /* Lightbox */
 .lb-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.7);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}
@@ -120,16 +151,28 @@ textarea.input{min-height:90px;max-height:220px;line-height:1.4;resize:vertical}
 /* Footer */
 footer.site-footer{padding:20px;text-align:center;color:var(--muted);font-size:0.9rem;margin-top:20px}
 
-/* Responsive */
-@media (max-width:600px){
-  #ten-star-picker label { font-size: 18px; }
-  #ten-star-apply, #ten-star-send-rating { padding: 8px 10px; font-size: 0.9rem; }
-  #service-star-input .srv-star { font-size: 18px; }
+/* Avatar (left column) */
+.staff-photo {
+  width: 64px !important;
+  height: 64px !important;
+  flex: 0 0 64px !important;
+  border-radius: 50% !important;
+  object-fit: cover !important;
+  border: 1px solid rgba(10,25,50,0.04) !important;
+  background: linear-gradient(180deg,#fff,#fafcff);
+  display: block !important;
+  box-shadow: 0 4px 10px rgba(2,6,23,0.03) inset;
 }
-
-@media(max-width:1100px){
-  .container{padding:14px}
-  .svc-grid{grid-template-columns:1fr}
-  .logo{height:200px}
-  .map-card{height:240px}
+/* Name and position */
+.staff-name {
+  font-weight: 800;
+  font-size: 1rem;
+  color: #0f1724;
+  line-height: 1.05;
+  word-break: break-word;
+}
+.staff-pos {
+  color: var(--muted);
+  font-size: 0.92rem;
+  margin-top: 2px;
 }
