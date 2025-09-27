@@ -33,7 +33,7 @@ function normalizeToUiRating(raw) {
   if (s === '') return '';
   const n = Number(s);
   if (Number.isNaN(n)) return '';
-  // if it's likely DB scale 0.1..5.0 (has decimal <=5) convert *2
+  // if it's likely DB scale 0.1..5.0 convert *2
   if (n > 0 && n <= 5) {
     // round to nearest 0.5 then *2 to get UI integer (0.5->1,1.0->2 etc)
     const ui = Math.round(n * 2);

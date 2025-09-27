@@ -667,22 +667,93 @@ if ($id > 0) {
 }
 
 /* Helper to render reviews recursively (server-side) */
+/**
+ * Рендер дерева отзывов (рекурсивно).
+ * Показывает рядом с именем автора пятизвёздочную шкалу, только если у отзыва есть рейтинг.
+ * Рейтинг может храниться в двух формах:
+ *  - UI 1..10 (например 7 или 7.0)  -> отображаем как numeric 7.0 и переводим в 5* через /2
+ *  - DB 0.5..5.0 (например 3.5)    -> переводим в UI: 3.5*2 = 7.0 и в 5* через округление
+ */
 function render_reviews_tree(array $nodes, $level = 0, $currentUserId = 0) {
     $html = '';
     foreach ($nodes as $n) {
-        $id = (int)$n['id'];
-        $userName = htmlspecialchars($n['user_name'] ?? 'Гость');
-        $time = htmlspecialchars(date('d.m.Y H:i', strtotime($n['created_at'])));
-        $commentEsc = nl2br(htmlspecialchars($n['comment']));
+        $id = (int)($n['id'] ?? 0);
+        $userName = htmlspecialchars($n['user_name'] ?? 'Гость', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $time = htmlspecialchars(date('d.m.Y H:i', strtotime($n['created_at'] ?? '')), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $commentEsc = nl2br(htmlspecialchars($n['comment'] ?? '', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
         $hasChildren = !empty($n['children']);
         $indent = max(0, $level * 18);
+
+        // Rating handling: show stars only when rating present and valid
+        $ratingRaw = null;
+        if (array_key_exists('rating', $n) && $n['rating'] !== null && $n['rating'] !== '') {
+            // accept numeric strings too
+            if (is_numeric($n['rating'])) {
+                $ratingRaw = (float)$n['rating'];
+            } else {
+                // try to clean (e.g. "null" or other) -> treat as no rating
+                $ratingRaw = null;
+            }
+        }
+
+        $starsHtml = '';
+        $ratingNumericDisplay = ''; // numeric in UI scale 1..10 (e.g. "7.0")
+        $ratingDataAttr = ''; // data-rating attribute (store raw as was in DB for JS)
+        if ($ratingRaw !== null) {
+            // Determine DB-like 0..5 scale from stored value:
+            // if stored value looks like UI (>5) treat as 1..10, else treat as 0.5..5.0
+            if ($ratingRaw > 5.0) {
+                // stored as 1..10
+                $uiVal = $ratingRaw;
+                $dbScale = $uiVal / 2.0;
+                $ratingNumericDisplay = number_format($uiVal, 1, '.', '');
+                $ratingDataAttr = htmlspecialchars((string)$ratingRaw, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            } else {
+                // stored as 0.5..5.0
+                $dbScale = $ratingRaw;
+                // convert to UI 1..10 for display numeric
+                $uiVal = $dbScale * 2.0;
+                $ratingNumericDisplay = number_format($uiVal, 1, '.', '');
+                $ratingDataAttr = htmlspecialchars((string)$ratingRaw, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            }
+
+            // clamp dbScale between 0 and 5
+            $dbScale = max(0.0, min(5.0, (float)$dbScale));
+            // convert to whole star count (round to nearest integer as requested)
+            $filledStars = (int) round($dbScale);
+            if ($filledStars < 0) $filledStars = 0;
+            if ($filledStars > 5) $filledStars = 5;
+
+            // build stars html (5 stars total)
+            $starsHtml .= '<span class="review-stars" aria-hidden="true">';
+            for ($si = 1; $si <= 5; $si++) {
+                if ($si <= $filledStars) {
+                    $starsHtml .= '<span class="star filled">★</span>';
+                } else {
+                    $starsHtml .= '<span class="star">☆</span>';
+                }
+            }
+            $starsHtml .= '</span>';
+            // add numeric next to it (with data-rating attribute preserving original raw value)
+            $starsHtml .= ' <span class="review-rating-value" data-rating="' . $ratingDataAttr . '" title="Оценка автора">' . htmlspecialchars($ratingNumericDisplay) . '</span>';
+        }
+
         $html .= '<div class="review-card" id="review-' . $id . '" style="margin-left:' . $indent . 'px;margin-top:10px;">';
         $html .= '<div class="review-meta">';
-        $html .= '<div><span class="review-name">' . $userName . '</span> <span class="review-time">' . $time . '</span></div>';
-        $html .= '<div class="review-actions">';
-        $html .= '<button class="btn-small" type="button" onclick="startReply(' . $id . ', ' . json_encode($userName) . ')">Ответить</button>';
+        // left: name + stars
+        $html .= '<div>';
+        $html .= '<span class="review-name">' . $userName . '</span>';
+        if ($starsHtml !== '') {
+            $html .= ' <span class="review-stars-wrap">' . $starsHtml . '</span>';
+        }
+        $html .= ' <span class="review-time">' . $time . '</span>';
+        $html .= '</div>';
 
-        // only review author can edit/delete
+        // actions (reply/edit/delete)
+        $html .= '<div class="review-actions">';
+        $html .= '<button class="btn-small" type="button" onclick="startReply(' . $id . ', ' . json_encode($userName, JSON_UNESCAPED_UNICODE) . ')">Ответить</button>';
+
+        // only author can edit/delete
         $canManage = ($currentUserId > 0 && isset($n['user_id']) && (int)$n['user_id'] === (int)$currentUserId);
         if ($canManage) {
             $html .= '<button class="btn-small" type="button" onclick="startEdit(' . $id . ')">Изменить</button>';
@@ -693,15 +764,19 @@ function render_reviews_tree(array $nodes, $level = 0, $currentUserId = 0) {
             $html .= '</form>';
         }
 
-        $html .= '</div></div>';
+        $html .= '</div></div>'; // .review-meta
+
         $html .= '<div class="review-comment">' . $commentEsc . '</div>';
+
         if ($hasChildren) {
-            $html .= '<div style="margin-left:18px; margin-top:8px;">' . render_reviews_tree($n['children'], $level+1, $currentUserId) . '</div>';
+            $html .= '<div style="margin-left:18px; margin-top:8px;">' . render_reviews_tree($n['children'], $level + 1, $currentUserId) . '</div>';
         }
-        $html .= '</div>';
+
+        $html .= '</div>'; // .review-card
     }
     return $html;
 }
+
 
 /* helper toPublicUrl for simple relative -> public mapping */
 function toPublicUrl($rel){
