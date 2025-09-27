@@ -176,3 +176,11 @@ footer.site-footer{padding:20px;text-align:center;color:var(--muted);font-size:0
   font-size: 0.92rem;
   margin-top: 2px;
 }
+
+/* review stars near reviewer name */
+.review-stars { display:inline-block; vertical-align:middle; margin-left:8px; }
+.review-stars .star { font-size:14px; line-height:1; margin-right:2px; color:#cfcfd0; } /* empty star color */
+.review-stars .star.filled { color:#f5b301; } /* filled star (gold) */
+.review-rating-num { margin-left:6px; font-weight:700; font-size:0.95rem; color:#0b57a4; }
+.review-name { font-weight:700; }
+.review-time { margin-left:8px; color:#7b8790; font-size:0.9rem; }

@@ -78,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'dele
     exit;
 }
 
-// ======= upsert_review (замена) =======
+// ======= upsert_review (обновлённый, безопасный) =======
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upsert_review')) {
     // входные данные
     $editingId = isset($_POST['editing_review_id']) ? (int)$_POST['editing_review_id'] : 0;
@@ -88,14 +88,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
     $postedName = trim((string)($_POST['user_name'] ?? ''));
     $ratingRaw = $_POST['review_rating'] ?? null;
 
-    // нормализуем рейтинг: допустим только числа 1..10
-    $reviewRating = null;
+    // normalize UI rating (expected from client as 1..10) - keep as float or null
+    $reviewRatingUi = null;
     if ($ratingRaw !== null && $ratingRaw !== '') {
         if (is_numeric($ratingRaw)) {
-            $rv = (float)$ratingRaw;
-            if ($rv >= 1 && $rv <= 10) $reviewRating = $rv;
-            // иначе оставляем null — не включаем в INSERT
+            $rv = (float)str_replace(',', '.', $ratingRaw);
+            if ($rv >= 1 && $rv <= 10) $reviewRatingUi = $rv;
         }
+    }
+
+    // compute DB rating for service_reviews: convert UI(1..10) -> DB(0.5..5.0) and round to nearest 0.5
+    $reviewRatingDb = null;
+    if ($reviewRatingUi !== null) {
+        $tmp = $reviewRatingUi / 2.0; // 1..10 -> 0.5..5.0 (raw)
+        // round to nearest 0.5:
+        $tmp = round($tmp * 2.0) / 2.0;
+        // clamp to 0.1..5.0 just in case (DB constraint)
+        $tmp = max(0.1, min(5.0, $tmp));
+        $reviewRatingDb = $tmp;
     }
 
     // простая валидация
@@ -118,12 +128,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
         $userNameToSave = $postedName;
     }
 
-    // helper для динамического bind_param
+    // helper для динамического bind_param (как в вашем коде)
     function stmt_bind_params($stmt, $types, $params) {
-        if ($params === []) {
-            // нет параметров
-            return;
-        }
+        if ($params === []) return;
         $refs = [];
         $refs[] = &$types;
         foreach ($params as $k => $v) $refs[] = &$params[$k];
@@ -158,7 +165,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
             exit;
         }
 
-        // Собираем части UPDATE динамически (включаем rating только если валиден)
+        // Собираем части UPDATE динамически
         $sets = [];
         $params = [];
         $types = '';
@@ -166,9 +173,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
         $sets[] = "comment = ?";
         $params[] = $comment; $types .= 's';
 
-        if ($reviewRating !== null) {
+        if ($reviewRatingDb !== null) {
             $sets[] = "rating = ?";
-            $params[] = $reviewRating; $types .= 'd';
+            $params[] = $reviewRatingDb; $types .= 'd';
         } else {
             $sets[] = "rating = NULL";
         }
@@ -209,6 +216,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
             } else {
                 throw new Exception('Prepare failed: ' . $mysqli->error);
             }
+
+            // Если пользователь авторизован и отправил рейтинг в UI (1..10), обновляем/вставляем в service_ratings
+            if ($reviewRatingUi !== null && $uid) {
+                $sqlUp = "INSERT INTO service_ratings (service_id, user_id, rating, created_at)
+                          VALUES (?, ?, ?, NOW())
+                          ON DUPLICATE KEY UPDATE rating = VALUES(rating), updated_at = NOW()";
+                if ($stR = $mysqli->prepare($sqlUp)) {
+                    $stR->bind_param('iid', $id, $uid, $reviewRatingUi);
+                    $stR->execute();
+                    $stR->close();
+                }
+            }
+
         } catch (Exception $ex) {
             if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
                 header('Content-Type: application/json; charset=utf-8');
@@ -229,25 +249,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
         exit;
     }
 
-    // --- Вставка новой записи (INSERT) ---
+    // --- INSERT new review ---
     // Построим INSERT динамически: включаем только колонки с корректными значениями
     $cols = ['service_id','user_name','comment','created_at']; // created_at via NOW()
     $placeholders = ['?','?','?','NOW()'];
     $params = [$id, $userNameToSave, $comment];
     $types = 'iss';
 
-    if ($reviewRating !== null) {
-        // добавляем rating
-        // поместим rating перед created_at (гораздо удобнее)
-        array_splice($cols, 2, 0, 'rating'); // ставим rating на 3-е место
+    // rating in DB-scale (0.5..5.0) for service_reviews
+    if ($reviewRatingDb !== null) {
+        // insert rating before created_at
+        array_splice($cols, 2, 0, 'rating');
         array_splice($placeholders, 2, 0, '?');
-        array_splice($params, 2, 0, $reviewRating);
-        $types = 'isd' . substr($types, 2); // получится 'isd' + 's' -> 'isds' -> но проще перестроим
-        // перестроим types корректно:
-        // current params are: [id(int), userName(string), reviewRating(double), comment(string)]
-        $types = 'isd s';
-        $types = str_replace(' ', '', $types); // 'isds'
-        // but we will recompute types after assembly below to be safe
+        array_splice($params, 2, 0, $reviewRatingDb);
+        // rebuild types (int, string, double, string) -> we'll rebuild below
     }
 
     // user_id (если есть и определён)
@@ -264,7 +279,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
         $params[] = $parentId;
     }
 
-    // Теперь аккуратно составим строку типов (по порядку параметров в $params)
+    // Now build types string based on $params order
     $types = '';
     foreach ($params as $p) {
         if (is_int($p)) $types .= 'i';
@@ -277,7 +292,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
     try {
         if ($ins = $mysqli->prepare($sql)) {
             if ($types !== '') {
-                // bind динамически
                 $refs = [];
                 $refs[] = &$types;
                 foreach ($params as $k => $v) $refs[] = &$params[$k];
@@ -288,11 +302,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
                 throw new Exception('DB error: ' . $ins->error);
             }
             $ins->close();
+
+            // If user is logged in and provided UI rating, upsert into service_ratings (UI 1..10)
+            if ($reviewRatingUi !== null && $uid) {
+                $sqlUp = "INSERT INTO service_ratings (service_id, user_id, rating, created_at)
+                          VALUES (?, ?, ?, NOW())
+                          ON DUPLICATE KEY UPDATE rating = VALUES(rating), updated_at = NOW()";
+                if ($stR = $mysqli->prepare($sqlUp)) {
+                    $stR->bind_param('iid', $id, $uid, $reviewRatingUi);
+                    $stR->execute();
+                    $stR->close();
+                }
+            }
+
         } else {
             throw new Exception('Prepare failed: ' . $mysqli->error);
         }
     } catch (Exception $ex) {
-        // Вернём детальную ошибку в JSON при AJAX (временная отладочная помощь)
         if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
             header('Content-Type: application/json; charset=utf-8');
             echo json_encode(['ok'=>false, 'error' => $ex->getMessage()]);
@@ -312,7 +338,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
     header('Location: service.php?id=' . $id . '#reviews');
     exit;
 }
-// ======= end upsert_review replacement =======
+// ======= end upsert_review =======
 
 
 /* -- SUBMIT STAFF RATING -- */
@@ -865,6 +891,7 @@ function toPublicUrl($rel){
 
               <input type="hidden" id="editing_review_id" name="editing_review_id" value="">
               <input type="hidden" id="parent_id" name="parent_id" value="0">
+              <!-- hidden holds UI scale 1..10 when user selected via apply -->
               <input type="hidden" id="review_rating_hidden" name="review_rating" value="">
 
               <div style="margin-top:8px; display:flex; gap:8px; justify-content:flex-end;">
