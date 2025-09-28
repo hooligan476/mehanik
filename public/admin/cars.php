@@ -15,8 +15,95 @@ if (!isset($mysqli) || !($mysqli instanceof mysqli)) {
 // Create helper sanitize
 function s_post($k){ return isset($_POST[$k]) ? trim((string)$_POST[$k]) : ''; }
 
-// Ensure vehicle_types and vehicle_bodies exist (best-effort) + create fuel_types, gearboxes, vehicle_years
+// Ensure vehicle_types and vehicle_bodies exist (best-effort) + create fuel_types, gearboxes, vehicle_years and new lookup tables
 try {
+  // ---------- new lookup tables (best-effort create) ----------
+$mysqli->query("
+  CREATE TABLE IF NOT EXISTS car_colors (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(191) NOT NULL,
+    `key` VARCHAR(100) DEFAULT NULL,
+    `order` INT NOT NULL DEFAULT 0,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+");
+
+$mysqli->query("
+  CREATE TABLE IF NOT EXISTS engine_volumes (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    label VARCHAR(64) NOT NULL,
+    `order` INT NOT NULL DEFAULT 0,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+");
+
+$mysqli->query("
+  CREATE TABLE IF NOT EXISTS passenger_counts (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    cnt SMALLINT UNSIGNED NOT NULL,
+    label VARCHAR(64) DEFAULT NULL,
+    `order` INT NOT NULL DEFAULT 0,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY ux_cnt (cnt)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+");
+
+$mysqli->query("
+  CREATE TABLE IF NOT EXISTS interior_colors (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(191) NOT NULL,
+    `order` INT NOT NULL DEFAULT 0,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+");
+
+$mysqli->query("
+  CREATE TABLE IF NOT EXISTS upholstery_types (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(191) NOT NULL,
+    `order` INT NOT NULL DEFAULT 0,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+");
+
+$mysqli->query("
+  CREATE TABLE IF NOT EXISTS ignition_types (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(64) NOT NULL,
+    `key` VARCHAR(64) DEFAULT NULL,
+    `order` INT NOT NULL DEFAULT 0,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+");
+
+$mysqli->query("
+  CREATE TABLE IF NOT EXISTS regions (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(191) NOT NULL,
+    `order` INT NOT NULL DEFAULT 0,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+");
+
+$mysqli->query("
+  CREATE TABLE IF NOT EXISTS districts (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    region_id INT UNSIGNED NOT NULL,
+    name VARCHAR(191) NOT NULL,
+    `order` INT NOT NULL DEFAULT 0,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX (region_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+");
+
     // vehicle_types
     $mysqli->query("
         CREATE TABLE IF NOT EXISTS vehicle_types (
@@ -28,7 +115,7 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
-    // vehicle_bodies
+    // vehicle_bodies (no FK constraint declared to avoid compatibility issues)
     $mysqli->query("
         CREATE TABLE IF NOT EXISTS vehicle_bodies (
           id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -37,8 +124,7 @@ try {
           `key` VARCHAR(100) DEFAULT NULL,
           `order` INT NOT NULL DEFAULT 0,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          INDEX (vehicle_type_id),
-          CONSTRAINT IF NOT EXISTS fk_vehicle_bodies_type FOREIGN KEY (vehicle_type_id) REFERENCES vehicle_types(id) ON DELETE CASCADE
+          INDEX (vehicle_type_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
@@ -81,10 +167,103 @@ try {
     // ignore creation errors silently
 }
 
-// POST handling for brands/models, parts/components, types/bodies, and new helpers: fuel_types, gearboxes, years
+// POST handling for brands/models, parts/components, types/bodies, and new helpers: fuel_types, gearboxes, years, colors, etc.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     try {
+        // ----------------- new lookup handlers -----------------
+
+        // Car colors
+        if ($action === 'add_color' && s_post('color_name') !== '') {
+            $name = s_post('color_name'); $key = s_post('color_key') ?: null; $order = (int)s_post('color_order');
+            $st = $mysqli->prepare("INSERT INTO car_colors (`key`, name, `order`, active) VALUES (?, ?, ?, 1)");
+            $st->bind_param('ssi', $key, $name, $order); $st->execute(); $st->close();
+        } elseif ($action === 'edit_color') {
+            $id = (int)s_post('id'); $name = s_post('name'); $key = s_post('key') ?: null; $order = (int)s_post('order');
+            if ($id>0) { $st = $mysqli->prepare("UPDATE car_colors SET `key`=?, name=?, `order`=? WHERE id=?"); $st->bind_param('ssii',$key,$name,$order,$id); $st->execute(); $st->close(); }
+        } elseif ($action === 'delete_color') {
+            $id = (int)s_post('id'); if ($id>0) { $st=$mysqli->prepare("DELETE FROM car_colors WHERE id=?"); $st->bind_param('i',$id); $st->execute(); $st->close(); }
+        } elseif ($action === 'toggle_color') {
+            $id = (int)s_post('id'); $val = (int)s_post('value') ? 1:0; if ($id>0) { $st=$mysqli->prepare("UPDATE car_colors SET active=? WHERE id=?"); $st->bind_param('ii',$val,$id); $st->execute(); $st->close(); }
+        }
+
+        // Engine volumes
+        if ($action === 'add_engine' && s_post('engine_label') !== '') {
+            $label = s_post('engine_label'); $order = (int)s_post('engine_order');
+            $st = $mysqli->prepare("INSERT INTO engine_volumes (label, `order`, active) VALUES (?, ?, 1)");
+            $st->bind_param('si', $label, $order); $st->execute(); $st->close();
+        } elseif ($action === 'edit_engine') {
+            $id=(int)s_post('id'); $label=s_post('label'); $order=(int)s_post('order');
+            if ($id>0) { $st=$mysqli->prepare("UPDATE engine_volumes SET label=?, `order`=? WHERE id=?"); $st->bind_param('sii',$label,$order,$id); $st->execute(); $st->close(); }
+        } elseif ($action === 'delete_engine') {
+            $id=(int)s_post('id'); if ($id>0){ $st=$mysqli->prepare("DELETE FROM engine_volumes WHERE id=?"); $st->bind_param('i',$id); $st->execute(); $st->close(); }
+        } elseif ($action === 'toggle_engine') {
+            $id=(int)s_post('id'); $val=(int)s_post('value')?1:0; if ($id>0){ $st=$mysqli->prepare("UPDATE engine_volumes SET active=? WHERE id=?"); $st->bind_param('ii',$val,$id); $st->execute(); $st->close(); }
+        }
+
+        // Passenger counts
+        if ($action === 'add_passenger' && s_post('pc_cnt') !== '') {
+            $cnt = (int)s_post('pc_cnt'); $label = s_post('pc_label') ?: null; $order = (int)s_post('pc_order');
+            $st = $mysqli->prepare("INSERT IGNORE INTO passenger_counts (cnt, label, `order`, active) VALUES (?, ?, ?, 1)");
+            $st->bind_param('isi', $cnt, $label, $order); $st->execute(); $st->close();
+        } elseif ($action === 'edit_passenger') {
+            $id=(int)s_post('id'); $cnt=(int)s_post('cnt'); $label=s_post('label'); $order=(int)s_post('order');
+            if($id>0){ $st=$mysqli->prepare("UPDATE passenger_counts SET cnt=?, label=?, `order`=? WHERE id=?"); $st->bind_param('isii',$cnt,$label,$order,$id); $st->execute(); $st->close(); }
+        } elseif ($action === 'delete_passenger') {
+            $id=(int)s_post('id'); if($id>0){ $st=$mysqli->prepare("DELETE FROM passenger_counts WHERE id=?"); $st->bind_param('i',$id); $st->execute(); $st->close(); }
+        } elseif ($action === 'toggle_passenger') {
+            $id=(int)s_post('id'); $val=(int)s_post('value')?1:0; if($id>0){ $st=$mysqli->prepare("UPDATE passenger_counts SET active=? WHERE id=?"); $st->bind_param('ii',$val,$id); $st->execute(); $st->close(); }
+        }
+
+        // Interior colors
+        if ($action === 'add_interior' && s_post('interior_name') !== '') {
+            $name=s_post('interior_name'); $order=(int)s_post('interior_order');
+            $st=$mysqli->prepare("INSERT INTO interior_colors (name, `order`, active) VALUES (?, ?, 1)"); $st->bind_param('si',$name,$order); $st->execute(); $st->close();
+        } elseif ($action === 'edit_interior') { $id=(int)s_post('id'); $name=s_post('name'); $order=(int)s_post('order'); if($id>0){ $st=$mysqli->prepare("UPDATE interior_colors SET name=?, `order`=? WHERE id=?"); $st->bind_param('sii',$name,$order,$id); $st->execute(); $st->close(); } }
+        elseif ($action === 'delete_interior') { $id=(int)s_post('id'); if($id>0){ $st=$mysqli->prepare("DELETE FROM interior_colors WHERE id=?"); $st->bind_param('i',$id); $st->execute(); $st->close(); } }
+        elseif ($action === 'toggle_interior') { $id=(int)s_post('id'); $val=(int)s_post('value')?1:0; if($id>0){ $st=$mysqli->prepare("UPDATE interior_colors SET active=? WHERE id=?"); $st->bind_param('ii',$val,$id); $st->execute(); $st->close(); } }
+
+        // Upholstery types
+        if ($action === 'add_upholstery' && s_post('upholstery_name') !== '') {
+            $name=s_post('upholstery_name'); $order=(int)s_post('upholstery_order');
+            $st=$mysqli->prepare("INSERT INTO upholstery_types (name, `order`, active) VALUES (?, ?, 1)"); $st->bind_param('si',$name,$order); $st->execute(); $st->close();
+        } elseif ($action === 'edit_upholstery') { $id=(int)s_post('id'); $name=s_post('name'); $order=(int)s_post('order'); if($id>0){ $st=$mysqli->prepare("UPDATE upholstery_types SET name=?, `order`=? WHERE id=?"); $st->bind_param('sii',$name,$order,$id); $st->execute(); $st->close(); } }
+        elseif ($action === 'delete_upholstery') { $id=(int)s_post('id'); if($id>0){ $st=$mysqli->prepare("DELETE FROM upholstery_types WHERE id=?"); $st->bind_param('i',$id); $st->execute(); $st->close(); } }
+        elseif ($action === 'toggle_upholstery') { $id=(int)s_post('id'); $val=(int)s_post('value')?1:0; if($id>0){ $st=$mysqli->prepare("UPDATE upholstery_types SET active=? WHERE id=?"); $st->bind_param('ii',$val,$id); $st->execute(); $st->close(); } }
+
+        // Ignition types
+        if ($action === 'add_ignition' && s_post('ignition_name') !== '') {
+            $name=s_post('ignition_name'); $key=s_post('ignition_key')?:null; $order=(int)s_post('ignition_order');
+            $st=$mysqli->prepare("INSERT INTO ignition_types (`key`, name, `order`, active) VALUES (?, ?, ?, 1)"); $st->bind_param('ssi',$key,$name,$order); $st->execute(); $st->close();
+        } elseif ($action === 'edit_ignition') { $id=(int)s_post('id'); $name=s_post('name'); $key=s_post('key')?:null; $order=(int)s_post('order'); if($id>0){ $st=$mysqli->prepare("UPDATE ignition_types SET `key`=?, name=?, `order`=? WHERE id=?"); $st->bind_param('ssii',$key,$name,$order,$id); $st->execute(); $st->close(); } }
+        elseif ($action === 'delete_ignition') { $id=(int)s_post('id'); if($id>0){ $st=$mysqli->prepare("DELETE FROM ignition_types WHERE id=?"); $st->bind_param('i',$id); $st->execute(); $st->close(); } }
+        elseif ($action === 'toggle_ignition') { $id=(int)s_post('id'); $val=(int)s_post('value')?1:0; if($id>0){ $st=$mysqli->prepare("UPDATE ignition_types SET active=? WHERE id=?"); $st->bind_param('ii',$val,$id); $st->execute(); $st->close(); } }
+
+        // Regions / Districts
+        if ($action === 'add_region' && s_post('region_name') !== '') {
+            $name=s_post('region_name'); $order=(int)s_post('region_order');
+            $st=$mysqli->prepare("INSERT INTO regions (name, `order`, active) VALUES (?, ?, 1)"); $st->bind_param('si',$name,$order); $st->execute(); $st->close();
+        } elseif ($action === 'edit_region') {
+            $id=(int)s_post('id'); $name=s_post('name'); $order=(int)s_post('order');
+            if($id>0){ $st=$mysqli->prepare("UPDATE regions SET name=?, `order`=? WHERE id=?"); $st->bind_param('sii',$name,$order,$id); $st->execute(); $st->close(); }
+        } elseif ($action === 'delete_region') {
+            $id=(int)s_post('id'); if($id>0){ $st=$mysqli->prepare("DELETE FROM regions WHERE id=?"); $st->bind_param('i',$id); $st->execute(); $st->close(); }
+        } elseif ($action === 'toggle_region') {
+            $id=(int)s_post('id'); $val=(int)s_post('value')?1:0; if($id>0){ $st=$mysqli->prepare("UPDATE regions SET active=? WHERE id=?"); $st->bind_param('ii',$val,$id); $st->execute(); $st->close(); }
+        }
+
+        // Districts (need region_id)
+        if ($action === 'add_district' && s_post('district_name') !== '' && s_post('district_region_id') !== '') {
+            $name=s_post('district_name'); $rid=(int)s_post('district_region_id'); $order=(int)s_post('district_order');
+            if ($rid>0) { $st=$mysqli->prepare("INSERT INTO districts (region_id, name, `order`, active) VALUES (?, ?, ?, 1)"); $st->bind_param('isi',$rid,$name,$order); $st->execute(); $st->close(); }
+        } elseif ($action === 'edit_district') {
+            $id=(int)s_post('id'); $name=s_post('name'); $order=(int)s_post('order'); if($id>0){ $st=$mysqli->prepare("UPDATE districts SET name=?, `order`=? WHERE id=?"); $st->bind_param('sii',$name,$order,$id); $st->execute(); $st->close(); }
+        } elseif ($action === 'delete_district') {
+            $id=(int)s_post('id'); if($id>0){ $st=$mysqli->prepare("DELETE FROM districts WHERE id=?"); $st->bind_param('i',$id); $st->execute(); $st->close(); }
+        } elseif ($action === 'toggle_district') {
+            $id=(int)s_post('id'); $val=(int)s_post('value')?1:0; if($id>0){ $st=$mysqli->prepare("UPDATE districts SET active=? WHERE id=?"); $st->bind_param('ii',$val,$id); $st->execute(); $st->close(); }
+        }
+
         // Brands
         if ($action === 'add_brand' && s_post('brand') !== '') {
             $stmt = $mysqli->prepare("INSERT INTO brands(name) VALUES(?)");
@@ -257,6 +436,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Fetch lists for display
 $brands = []; $parts = []; $types = []; $bodiesByType = [];
 $fuel_types = []; $gearboxes = []; $vehicle_years = [];
+$car_colors = []; $engine_volumes = []; $passenger_counts = [];
+$interior_colors = []; $upholstery_types = []; $ignition_types = [];
+$regions = []; $districts = [];
 try {
     $res = $mysqli->query("SELECT * FROM brands ORDER BY name");
     while ($r = $res->fetch_assoc()) $brands[] = $r;
@@ -271,8 +453,6 @@ try {
     while ($b = $res->fetch_assoc()) {
         $bodiesByType[(int)$b['vehicle_type_id']][] = $b;
     }
-
-    // new lists
     $res = $mysqli->query("SELECT * FROM fuel_types ORDER BY `order` ASC, name ASC");
     while ($r = $res->fetch_assoc()) $fuel_types[] = $r;
 
@@ -281,6 +461,30 @@ try {
 
     $res = $mysqli->query("SELECT * FROM vehicle_years ORDER BY `order` ASC, `year` ASC");
     while ($r = $res->fetch_assoc()) $vehicle_years[] = $r;
+
+    $res = $mysqli->query("SELECT * FROM car_colors ORDER BY `order` ASC, name ASC");
+    while($r = $res->fetch_assoc()) $car_colors[] = $r;
+
+    $res = $mysqli->query("SELECT * FROM engine_volumes ORDER BY `order` ASC, label ASC");
+    while($r = $res->fetch_assoc()) $engine_volumes[] = $r;
+
+    $res = $mysqli->query("SELECT * FROM passenger_counts ORDER BY `order` ASC, cnt ASC");
+    while($r = $res->fetch_assoc()) $passenger_counts[] = $r;
+
+    $res = $mysqli->query("SELECT * FROM interior_colors ORDER BY `order` ASC, name ASC");
+    while($r = $res->fetch_assoc()) $interior_colors[] = $r;
+
+    $res = $mysqli->query("SELECT * FROM upholstery_types ORDER BY `order` ASC, name ASC");
+    while($r = $res->fetch_assoc()) $upholstery_types[] = $r;
+
+    $res = $mysqli->query("SELECT * FROM ignition_types ORDER BY `order` ASC, name ASC");
+    while($r = $res->fetch_assoc()) $ignition_types[] = $r;
+
+    $res = $mysqli->query("SELECT * FROM regions ORDER BY `order` ASC, name ASC");
+    while($r = $res->fetch_assoc()) $regions[] = $r;
+
+    $res = $mysqli->query("SELECT * FROM districts ORDER BY region_id ASC, `order` ASC, name ASC");
+    while($r = $res->fetch_assoc()) $districts[] = $r;
 
 } catch (Throwable $e) {
     // ignore
@@ -524,9 +728,257 @@ function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES|ENT_SUBSTITUTE, '
     </div>
   </div>
 
-  <!-- Extras: years, fuel_types, gearboxes -->
+  <!-- Extras: years, fuel_types, gearboxes and new lookups -->
   <div id="panel-extras" class="tab-panel">
     <h2>Дополнительные параметры</h2>
+
+    <!-- New extras: colors, engine volumes, passengers, interior, upholstery, ignition, regions/districts -->
+<div class="cols" style="margin-top:16px;">
+
+  <!-- Colors -->
+  <div>
+    <h3>Цвета авто</h3>
+    <form method="post" class="inline" style="margin-bottom:10px;">
+      <input type="text" name="color_name" placeholder="Название цвета" style="min-width:160px;">
+      <input type="text" name="color_key" placeholder="ключ" style="width:120px;">
+      <input type="number" name="color_order" placeholder="порядок" style="width:86px;">
+      <button name="action" value="add_color" class="btn-add">Добавить</button>
+    </form>
+
+    <ul>
+      <?php foreach ($car_colors as $c): ?>
+        <li class="item">
+          <form method="post" class="inline">
+            <input type="hidden" name="id" value="<?= (int)$c['id'] ?>">
+            <input type="text" name="name" value="<?= h($c['name']) ?>" style="min-width:160px;">
+            <input type="text" name="key" value="<?= h($c['key'] ?? '') ?>" style="width:120px;">
+            <input type="number" name="order" value="<?= (int)$c['order'] ?>" style="width:86px;">
+            <button name="action" value="edit_color" class="btn-save">Сохранить</button>
+            <button name="action" value="delete_color" class="btn-del" onclick="return confirm('Удалить цвет?')">Удалить</button>
+          </form>
+          <form method="post" style="display:inline;">
+            <input type="hidden" name="id" value="<?= (int)$c['id'] ?>">
+            <input type="hidden" name="value" value="<?= $c['active'] ? '0' : '1' ?>">
+            <button name="action" value="toggle_color" class="btn-toggle"><?= $c['active'] ? 'Откл.' : 'Вкл.' ?></button>
+            <span class="toggle-ind"><?= $c['active'] ? 'активен' : 'выключен' ?></span>
+          </form>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+  </div>
+
+  <!-- Engine volumes -->
+  <div>
+    <h3>Объёмы двигателя</h3>
+    <form method="post" class="inline" style="margin-bottom:10px;">
+      <input type="text" name="engine_label" placeholder="1.6 / 2.0T" style="min-width:160px;">
+      <input type="number" name="engine_order" placeholder="порядок" style="width:86px;">
+      <button name="action" value="add_engine" class="btn-add">Добавить</button>
+    </form>
+
+    <ul>
+      <?php foreach ($engine_volumes as $ev): ?>
+        <li class="item">
+          <form method="post" class="inline">
+            <input type="hidden" name="id" value="<?= (int)$ev['id'] ?>">
+            <input type="text" name="label" value="<?= h($ev['label']) ?>" style="min-width:160px;">
+            <input type="number" name="order" value="<?= (int)$ev['order'] ?>" style="width:86px;">
+            <button name="action" value="edit_engine" class="btn-save">Сохранить</button>
+            <button name="action" value="delete_engine" class="btn-del" onclick="return confirm('Удалить?')">Удалить</button>
+          </form>
+          <form method="post" style="display:inline;">
+            <input type="hidden" name="id" value="<?= (int)$ev['id'] ?>">
+            <input type="hidden" name="value" value="<?= $ev['active'] ? '0' : '1' ?>">
+            <button name="action" value="toggle_engine" class="btn-toggle"><?= $ev['active'] ? 'Откл.' : 'Вкл.' ?></button>
+            <span class="toggle-ind"><?= $ev['active'] ? 'активен' : 'выключен' ?></span>
+          </form>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+  </div>
+
+  <!-- Passengers -->
+  <div>
+    <h3>Количество пассажиров</h3>
+    <form method="post" class="inline" style="margin-bottom:10px;">
+      <input type="number" name="pc_cnt" placeholder="5" style="width:96px;">
+      <input type="text" name="pc_label" placeholder="5 мест" style="min-width:120px;">
+      <input type="number" name="pc_order" placeholder="порядок" style="width:86px;">
+      <button name="action" value="add_passenger" class="btn-add">Добавить</button>
+    </form>
+
+    <ul>
+      <?php foreach ($passenger_counts as $pc): ?>
+        <li class="item">
+          <form method="post" class="inline">
+            <input type="hidden" name="id" value="<?= (int)$pc['id'] ?>">
+            <input type="number" name="cnt" value="<?= (int)$pc['cnt'] ?>" style="width:86px;">
+            <input type="text" name="label" value="<?= h($pc['label'] ?? '') ?>" style="min-width:120px;">
+            <input type="number" name="order" value="<?= (int)$pc['order'] ?>" style="width:86px;">
+            <button name="action" value="edit_passenger" class="btn-save">Сохранить</button>
+            <button name="action" value="delete_passenger" class="btn-del" onclick="return confirm('Удалить?')">Удалить</button>
+          </form>
+          <form method="post" style="display:inline;">
+            <input type="hidden" name="id" value="<?= (int)$pc['id'] ?>">
+            <input type="hidden" name="value" value="<?= $pc['active'] ? '0' : '1' ?>">
+            <button name="action" value="toggle_passenger" class="btn-toggle"><?= $pc['active'] ? 'Откл.' : 'Вкл.' ?></button>
+            <span class="toggle-ind"><?= $pc['active'] ? 'активен' : 'выключен' ?></span>
+          </form>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+  </div>
+
+  <!-- Interior & Upholstery (stacked) -->
+  <div>
+    <h3>Цвета салона</h3>
+    <form method="post" class="inline" style="margin-bottom:10px;">
+      <input type="text" name="interior_name" placeholder="Чёрный / Бежевый" style="min-width:160px;">
+      <input type="number" name="interior_order" placeholder="порядок" style="width:86px;">
+      <button name="action" value="add_interior" class="btn-add">Добавить</button>
+    </form>
+    <ul>
+      <?php foreach($interior_colors as $ic): ?>
+        <li class="item">
+          <form method="post" class="inline">
+            <input type="hidden" name="id" value="<?= (int)$ic['id'] ?>">
+            <input type="text" name="name" value="<?= h($ic['name']) ?>" style="min-width:160px;">
+            <input type="number" name="order" value="<?= (int)$ic['order'] ?>" style="width:86px;">
+            <button name="action" value="edit_interior" class="btn-save">Сохранить</button>
+            <button name="action" value="delete_interior" class="btn-del" onclick="return confirm('Удалить?')">Удалить</button>
+          </form>
+          <form method="post" style="display:inline;">
+            <input type="hidden" name="id" value="<?= (int)$ic['id'] ?>">
+            <input type="hidden" name="value" value="<?= $ic['active'] ? '0' : '1' ?>">
+            <button name="action" value="toggle_interior" class="btn-toggle"><?= $ic['active'] ? 'Откл.' : 'Вкл.' ?></button>
+            <span class="toggle-ind"><?= $ic['active'] ? 'активен' : 'выключен' ?></span>
+          </form>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+
+    <h3 style="margin-top:14px;">Обшивка</h3>
+    <form method="post" class="inline" style="margin-bottom:10px;">
+      <input type="text" name="upholstery_name" placeholder="Ткань / Кожа" style="min-width:160px;">
+      <input type="number" name="upholstery_order" placeholder="порядок" style="width:86px;">
+      <button name="action" value="add_upholstery" class="btn-add">Добавить</button>
+    </form>
+    <ul>
+      <?php foreach($upholstery_types as $up): ?>
+        <li class="item">
+          <form method="post" class="inline">
+            <input type="hidden" name="id" value="<?= (int)$up['id'] ?>">
+            <input type="text" name="name" value="<?= h($up['name']) ?>" style="min-width:160px;">
+            <input type="number" name="order" value="<?= (int)$up['order'] ?>" style="width:86px;">
+            <button name="action" value="edit_upholstery" class="btn-save">Сохранить</button>
+            <button name="action" value="delete_upholstery" class="btn-del" onclick="return confirm('Удалить?')">Удалить</button>
+          </form>
+          <form method="post" style="display:inline;">
+            <input type="hidden" name="id" value="<?= (int)$up['id'] ?>">
+            <input type="hidden" name="value" value="<?= $up['active'] ? '0' : '1' ?>">
+            <button name="action" value="toggle_upholstery" class="btn-toggle"><?= $up['active'] ? 'Откл.' : 'Вкл.' ?></button>
+            <span class="toggle-ind"><?= $up['active'] ? 'активен' : 'выключен' ?></span>
+          </form>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+  </div>
+
+  <!-- Ignition types -->
+  <div>
+    <h3>Типы зажигания</h3>
+    <form method="post" class="inline" style="margin-bottom:10px;">
+      <input type="text" name="ignition_name" placeholder="Ключевой / Кнопочный / Пульт" style="min-width:160px;">
+      <input type="text" name="ignition_key" placeholder="ключ" style="width:120px;">
+      <input type="number" name="ignition_order" placeholder="порядок" style="width:86px;">
+      <button name="action" value="add_ignition" class="btn-add">Добавить</button>
+    </form>
+
+    <ul>
+      <?php foreach($ignition_types as $it): ?>
+        <li class="item">
+          <form method="post" class="inline">
+            <input type="hidden" name="id" value="<?= (int)$it['id'] ?>">
+            <input type="text" name="name" value="<?= h($it['name']) ?>" style="min-width:160px;">
+            <input type="text" name="key" value="<?= h($it['key'] ?? '') ?>" style="width:120px;">
+            <input type="number" name="order" value="<?= (int)$it['order'] ?>" style="width:86px;">
+            <button name="action" value="edit_ignition" class="btn-save">Сохранить</button>
+            <button name="action" value="delete_ignition" class="btn-del" onclick="return confirm('Удалить?')">Удалить</button>
+          </form>
+          <form method="post" style="display:inline;">
+            <input type="hidden" name="id" value="<?= (int)$it['id'] ?>">
+            <input type="hidden" name="value" value="<?= $it['active'] ? '0' : '1' ?>">
+            <button name="action" value="toggle_ignition" class="btn-toggle"><?= $it['active'] ? 'Откл.' : 'Вкл.' ?></button>
+            <span class="toggle-ind"><?= $it['active'] ? 'активен' : 'выключен' ?></span>
+          </form>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+  </div>
+
+  <!-- Regions & Districts -->
+  <div>
+    <h3>Велаят / Этрапы</h3>
+    <form method="post" class="inline" style="margin-bottom:10px;">
+      <input type="text" name="region_name" placeholder="Новый велаят" style="min-width:160px;">
+      <input type="number" name="region_order" placeholder="порядок" style="width:86px;">
+      <button name="action" value="add_region" class="btn-add">Добавить</button>
+    </form>
+
+    <ul>
+      <?php foreach ($regions as $r): ?>
+        <li class="item">
+          <form method="post" class="inline">
+            <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+            <input type="text" name="name" value="<?= h($r['name']) ?>" style="min-width:160px;">
+            <input type="number" name="order" value="<?= (int)$r['order'] ?>" style="width:86px;">
+            <button name="action" value="edit_region" class="btn-save">Сохранить</button>
+            <button name="action" value="delete_region" class="btn-del" onclick="return confirm('Удалить велаят?')">Удалить</button>
+          </form>
+          <form method="post" style="display:inline;">
+            <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+            <input type="hidden" name="value" value="<?= $r['active'] ? '0' : '1' ?>">
+            <button name="action" value="toggle_region" class="btn-toggle"><?= $r['active'] ? 'Откл.' : 'Вкл.' ?></button>
+            <span class="toggle-ind"><?= $r['active'] ? 'активен' : 'выключен' ?></span>
+          </form>
+
+          <!-- add district under this region -->
+          <div style="margin-top:8px;">
+            <form method="post" class="inline">
+              <input type="hidden" name="district_region_id" value="<?= (int)$r['id'] ?>">
+              <input type="text" name="district_name" placeholder="Новый этрап" style="min-width:140px;">
+              <input type="number" name="district_order" placeholder="порядок" style="width:86px;">
+              <button name="action" value="add_district" class="btn-add">Добавить этрап</button>
+            </form>
+
+            <ul style="margin-top:8px;">
+              <?php foreach ($districts as $d): ?>
+                <?php if ((int)$d['region_id'] === (int)$r['id']): ?>
+                  <li style="margin-top:6px;">
+                    <form method="post" class="inline">
+                      <input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+                      <input type="text" name="name" value="<?= h($d['name']) ?>" style="min-width:140px;">
+                      <input type="number" name="order" value="<?= (int)$d['order'] ?>" style="width:86px;">
+                      <button name="action" value="edit_district" class="btn-save">Сохранить</button>
+                      <button name="action" value="delete_district" class="btn-del" onclick="return confirm('Удалить этрап?')">Удалить</button>
+                    </form>
+                    <form method="post" style="display:inline;">
+                      <input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+                      <input type="hidden" name="value" value="<?= $d['active'] ? '0' : '1' ?>">
+                      <button name="action" value="toggle_district" class="btn-toggle"><?= $d['active'] ? 'Откл.' : 'Вкл.' ?></button>
+                      <span class="toggle-ind"><?= $d['active'] ? 'активен' : 'выключен' ?></span>
+                    </form>
+                  </li>
+                <?php endif; ?>
+              <?php endforeach; ?>
+            </ul>
+          </div>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+  </div>
+
+</div>
 
     <div class="cols">
       <!-- Years -->
@@ -622,37 +1074,12 @@ function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES|ENT_SUBSTITUTE, '
           <?php endforeach; ?>
         </ul>
       </div>
-
     </div>
   </div>
-
+            
 </div>
 
-<script>
-// Tab switching with hash support
-(function(){
-  const buttons = document.querySelectorAll('.tab-btn');
-  const panels = {
-    brands: document.getElementById('panel-brands'),
-    parts: document.getElementById('panel-parts'),
-    types: document.getElementById('panel-types'),
-    extras: document.getElementById('panel-extras')
-  };
-
-  function activate(tab) {
-    buttons.forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-    Object.keys(panels).forEach(k => {
-      if (!panels[k]) return;
-      panels[k].classList.toggle('active', k === tab);
-    });
-    history.replaceState(null, '', '#' + tab);
-  }
-
-  buttons.forEach(btn => btn.addEventListener('click', () => activate(btn.dataset.tab)));
-
-  const preferred = (location.hash || '#brands').replace('#','');
-  if (!panels[preferred]) activate('brands'); else activate(preferred);
-})();
-</script>
+<!-- подключаем внешний js -->
+<script src="/mehanik/assets/js/admin-lookups.js"></script>
 </body>
 </html>

@@ -312,7 +312,7 @@ function isActiveLink(string $link, string $currentPath, bool $strict = false): 
             ['href' => $base . '/admin/services.php', 'label' => 'Сервисы/Услуги', 'badge' => $pendingServices, 'class' => ''],
             ['href' => $base . '/admin/products.php', 'label' => 'Запчасти', 'badge' => $pendingProducts, 'class' => ''],
             ['href' => $base . '/admin/chats.php', 'label' => 'Чаты', 'badge' => 0, 'class' => ''],
-            ['href' => $base . '/admin/cars.php', 'label' => 'Бренд/Модель', 'badge' => 0, 'class' => ''],
+            ['href' => $base . '/admin/cars.php', 'label' => 'Селекты', 'badge' => 0, 'class' => ''],
             ['href' => $base . '/admin/cars_moderation.php', 'label' => 'Авто', 'badge' => $pendingCars, 'class' => 'btn-catalog'],
             ['href' => $base . '/admin/notifications.php', 'label' => 'Уведомления', 'badge' => 0, 'class' => ''],
             ['href' => $base . '/admin/accounting.php', 'label' => 'Бухгалтерия', 'badge' => 0, 'class' => ''],

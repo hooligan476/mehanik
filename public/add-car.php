@@ -36,28 +36,79 @@ try {
     $brands = [];
 }
 
-// ---------- load lookup tables: years, fuel_types, gearboxes ----------
+// ---------- load new lookups ----------
+$car_colors = [];
+$engine_volumes = [];
+$passenger_counts = [];
+$interior_colors = [];
+$upholstery_types = [];
+$ignition_types = [];
+$regions = [];
+$districts_by_region = [];
+
+// NEW: lookups for years, gearboxes, fuel types
 $vehicle_years = [];
-$fuel_types = [];
 $gearboxes = [];
+$fuel_types = [];
+
 try {
     if (isset($mysqli) && $mysqli instanceof mysqli) {
-        // years
-        $r = $mysqli->query("SELECT id, year, `order`, active FROM vehicle_years ORDER BY `order` DESC, year DESC");
+        $r = $mysqli->query("SELECT id, name, `key`, `order`, active FROM car_colors ORDER BY `order` ASC, name ASC");
+        if ($r) while ($row = $r->fetch_assoc()) $car_colors[] = $row;
+
+        $r = $mysqli->query("SELECT id, label, `order`, active FROM engine_volumes ORDER BY `order` ASC, label ASC");
+        if ($r) while ($row = $r->fetch_assoc()) $engine_volumes[] = $row;
+
+        $r = $mysqli->query("SELECT id, cnt, label, `order`, active FROM passenger_counts ORDER BY `order` ASC, cnt ASC");
+        if ($r) while ($row = $r->fetch_assoc()) $passenger_counts[] = $row;
+
+        $r = $mysqli->query("SELECT id, name, `order`, active FROM interior_colors ORDER BY `order` ASC, name ASC");
+        if ($r) while ($row = $r->fetch_assoc()) $interior_colors[] = $row;
+
+        $r = $mysqli->query("SELECT id, name, `order`, active FROM upholstery_types ORDER BY `order` ASC, name ASC");
+        if ($r) while ($row = $r->fetch_assoc()) $upholstery_types[] = $row;
+
+        $r = $mysqli->query("SELECT id, name, `key`, `order`, active FROM ignition_types ORDER BY `order` ASC, name ASC");
+        if ($r) while ($row = $r->fetch_assoc()) $ignition_types[] = $row;
+
+        // regions + districts
+        $r = $mysqli->query("SELECT id, name, `order`, active FROM regions ORDER BY `order` ASC, name ASC");
+        if ($r) while ($row = $r->fetch_assoc()) $regions[] = $row;
+
+        $r = $mysqli->query("SELECT id, region_id, name FROM districts ORDER BY region_id ASC, `order` ASC, name ASC");
+        if ($r) while ($row = $r->fetch_assoc()) {
+            $districts_by_region[(int)$row['region_id']][] = $row;
+        }
+
+        // vehicle_years
+        $r = $mysqli->query("SELECT `year`, `active` FROM vehicle_years ORDER BY `year` DESC");
         if ($r) while ($row = $r->fetch_assoc()) $vehicle_years[] = $row;
-        // fuels
-        $r = $mysqli->query("SELECT id, name, `key`, `order`, active FROM fuel_types ORDER BY `order` ASC, name ASC");
-        if ($r) while ($row = $r->fetch_assoc()) $fuel_types[] = $row;
-        // gearboxes
-        $r = $mysqli->query("SELECT id, name, `key`, `order`, active FROM gearboxes ORDER BY `order` ASC, name ASC");
+
+        // gearboxes (transmissions)
+        $r = $mysqli->query("SELECT id, name, `order`, active FROM gearboxes ORDER BY `order` ASC, name ASC");
         if ($r) while ($row = $r->fetch_assoc()) $gearboxes[] = $row;
+
+        // fuel types
+        $r = $mysqli->query("SELECT id, name, `order`, active FROM fuel_types ORDER BY `order` ASC, name ASC");
+        if ($r) while ($row = $r->fetch_assoc()) $fuel_types[] = $row;
+
     } elseif (isset($pdo) && $pdo instanceof PDO) {
-        $vehicle_years = $pdo->query("SELECT id, year, `order`, active FROM vehicle_years ORDER BY `order` DESC, year DESC")->fetchAll(PDO::FETCH_ASSOC);
-        $fuel_types = $pdo->query("SELECT id, name, `key`, `order`, active FROM fuel_types ORDER BY `order` ASC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
-        $gearboxes = $pdo->query("SELECT id, name, `key`, `order`, active FROM gearboxes ORDER BY `order` ASC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $car_colors = $pdo->query("SELECT id, name, `key`, `order`, active FROM car_colors ORDER BY `order` ASC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $engine_volumes = $pdo->query("SELECT id, label, `order`, active FROM engine_volumes ORDER BY `order` ASC, label ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $passenger_counts = $pdo->query("SELECT id, cnt, label, `order`, active FROM passenger_counts ORDER BY `order` ASC, cnt ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $interior_colors = $pdo->query("SELECT id, name, `order`, active FROM interior_colors ORDER BY `order` ASC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $upholstery_types = $pdo->query("SELECT id, name, `order`, active FROM upholstery_types ORDER BY `order` ASC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $ignition_types = $pdo->query("SELECT id, name, `key`, `order`, active FROM ignition_types ORDER BY `order` ASC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $regions = $pdo->query("SELECT id, name, `order`, active FROM regions ORDER BY `order` ASC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $pdo->query("SELECT id, region_id, name FROM districts ORDER BY region_id ASC, `order` ASC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $r) $districts_by_region[(int)$r['region_id']][] = $r;
+
+        $vehicle_years = $pdo->query("SELECT `year`, `active` FROM vehicle_years ORDER BY `year` DESC")->fetchAll(PDO::FETCH_ASSOC);
+        $gearboxes = $pdo->query("SELECT id, name, `order`, active FROM gearboxes ORDER BY `order` ASC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $fuel_types = $pdo->query("SELECT id, name, `order`, active FROM fuel_types ORDER BY `order` ASC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
     }
 } catch (Throwable $e) {
-    error_log("add-car: load lookups error: " . $e->getMessage());
+    error_log("add-car: load new lookups error: " . $e->getMessage());
 }
 
 // ---------- vehicle types & bodies (existing code) ----------
@@ -153,7 +204,7 @@ if ($use_db_types && count($types_from_db) > 0) {
 $errors = [];
 $success = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // collect fields (same as before)
+    // collect fields
     $brand_id = isset($_POST['brand_id']) && $_POST['brand_id'] !== '' ? (int)$_POST['brand_id'] : null;
     $model_id = isset($_POST['model_id']) && $_POST['model_id'] !== '' ? (int)$_POST['model_id'] : null;
     $brand_text = trim($_POST['brand'] ?? '');
@@ -195,8 +246,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $description = trim($_POST['description'] ?? '');
     $contact_phone = trim($_POST['contact_phone'] ?? $user_phone);
     $vin = trim($_POST['vin'] ?? '');
+    // new fields
+    $color = trim($_POST['color'] ?? '');
+    $engine_volume = trim($_POST['engine_volume'] ?? '');
+    $passengers = isset($_POST['passengers']) && $_POST['passengers'] !== '' ? (int)$_POST['passengers'] : null;
+    $interior_color = trim($_POST['interior_color'] ?? '');
+    $upholstery = trim($_POST['upholstery'] ?? '');
+    $ignition_type = trim($_POST['ignition_type'] ?? '');
+    $region_id = isset($_POST['region_id']) && $_POST['region_id'] !== '' ? (int)$_POST['region_id'] : null;
+    $district_id = isset($_POST['district_id']) && $_POST['district_id'] !== '' ? (int)$_POST['district_id'] : null;
 
-    // convert vehicle type/body same as before...
+    // optionally resolve region/district names to save
+    $region_save = '';
+    $district_save = '';
+    if ($region_id) {
+        foreach ($regions as $r) if ((int)$r['id'] === (int)$region_id) { $region_save = $r['name']; break; }
+    }
+    if ($district_id && is_array($districts_by_region[$region_id] ?? [])) {
+        foreach ($districts_by_region[$region_id] as $d) if ((int)$d['id'] === (int)$district_id) { $district_save = $d['name']; break; }
+    }
+
+    // convert vehicle type/body
     $vehicle_type_save = '';
     $body_save = '';
     if ($use_db_types) {
@@ -301,9 +371,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errors)) {
         try {
             // --- build columns/values dynamically (exclude created_at, we'll use NOW()) ---
+            // NOTE: new fields (color, engine_volume, passengers, interior_color, upholstery,
+            // ignition_type, region, district) are included here so they are saved.
             $cols = [
-                'user_id','brand','model','year','body','mileage','transmission','fuel','price','photo','description','contact_phone'
+                'user_id','brand','model','year','body','mileage','transmission','fuel','price','photo','description','contact_phone',
+                'color','engine_volume','passengers','interior_color','upholstery','ignition_type','region','district'
             ];
+
             // note: photo will be empty now; we'll update after moving files
             $savedMain = ''; // placeholder, will update after moving
             $values = [
@@ -318,7 +392,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $price,
                 $savedMain,
                 $description,
-                $contact_phone
+                $contact_phone,
+                $color,
+                $engine_volume,
+                $passengers,
+                $interior_color,
+                $upholstery,
+                $ignition_type,
+                $region_save,
+                $district_save
             ];
 
             // optional vin / vehicle_type columns
@@ -588,6 +670,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <link rel="stylesheet" href="/mehanik/assets/css/header.css">
   <link rel="stylesheet" href="/mehanik/assets/css/style.css">
   <style>
+    /* (стили как у вас) */
     .page { max-width:1100px; margin:18px auto; padding:14px; box-sizing:border-box; }
     .card { background:#fff; border-radius:10px; box-shadow:0 8px 24px rgba(2,6,23,0.06); overflow:hidden; }
     .card-body { padding:18px; }
@@ -673,10 +756,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <option value="<?= (int)$y['year'] ?>"><?= (int)$y['year'] ?></option>
                   <?php endif; ?>
                 <?php endforeach; ?>
-              <?php else: ?>
-                <?php for ($y = $currentYear; $y >= $minYear; $y--): ?>
-                  <option value="<?= $y ?>"><?= $y ?></option>
-                <?php endfor; ?>
               <?php endif; ?>
             </select>
             <div class="small">Допустимый диапазон: <?= $minYear ?> — <?= $currentYear ?></div>
@@ -700,11 +779,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php foreach ($gearboxes as $g): if ((int)($g['active'] ?? 1) !== 1) continue; ?>
                   <option value="<?= h($g['name']) ?>"><?= h($g['name']) ?></option>
                 <?php endforeach; ?>
-              <?php else: ?>
-                <option value="Механика">Механика</option>
-                <option value="Автомат">Автомат</option>
-                <option value="Вариатор">Вариатор</option>
-                <option value="Робот">Робот</option>
               <?php endif; ?>
             </select>
           </div>
@@ -717,14 +791,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php foreach ($fuel_types as $f): if ((int)($f['active'] ?? 1) !== 1) continue; ?>
                   <option value="<?= h($f['name']) ?>"><?= h($f['name']) ?></option>
                 <?php endforeach; ?>
-              <?php else: ?>
-                <option value="Бензин">Бензин</option>
-                <option value="Дизель">Дизель</option>
-                <option value="Гибрид">Гибрид</option>
-                <option value="Электро">Электро</option>
               <?php endif; ?>
             </select>
           </div>
+
+          <!-- Цвет авто -->
+<div>
+  <label class="block">Цвет авто</label>
+  <select name="color" id="color">
+    <option value="">— выберите цвет —</option>
+    <?php foreach ($car_colors as $c): if ((int)($c['active'] ?? 1) !== 1) continue; ?>
+      <option value="<?= h($c['name']) ?>"><?= h($c['name']) ?></option>
+    <?php endforeach; ?>
+  </select>
+</div>
+
+<!-- Объем двигателя -->
+<div>
+  <label class="block">Объём двигателя</label>
+  <select name="engine_volume" id="engine_volume">
+    <option value="">— выберите объём —</option>
+    <?php foreach ($engine_volumes as $ev): if ((int)($ev['active'] ?? 1) !== 1) continue; ?>
+      <option value="<?= h($ev['label']) ?>"><?= h($ev['label']) ?></option>
+    <?php endforeach; ?>
+  </select>
+</div>
+
+<!-- Кол-во пассажиров -->
+<div>
+  <label class="block">Количество пассажиров</label>
+  <select name="passengers" id="passengers">
+    <option value="">— выберите —</option>
+    <?php foreach ($passenger_counts as $pc): if ((int)($pc['active'] ?? 1) !== 1) continue; ?>
+      <option value="<?= (int)$pc['cnt'] ?>"><?= h($pc['label'] ?: ($pc['cnt'].' мест')) ?></option>
+    <?php endforeach; ?>
+  </select>
+</div>
+
+<!-- Салон: цвет и обшивка -->
+<div>
+  <label class="block">Цвет салона</label>
+  <select name="interior_color" id="interior_color">
+    <option value="">— выберите —</option>
+    <?php foreach ($interior_colors as $ic): if ((int)($ic['active'] ?? 1) !== 1) continue; ?>
+      <option value="<?= h($ic['name']) ?>"><?= h($ic['name']) ?></option>
+    <?php endforeach; ?>
+  </select>
+</div>
+
+<div>
+  <label class="block">Обшивка салона</label>
+  <select name="upholstery" id="upholstery">
+    <option value="">— выберите —</option>
+    <?php foreach ($upholstery_types as $up): if ((int)($up['active'] ?? 1) !== 1) continue; ?>
+      <option value="<?= h($up['name']) ?>"><?= h($up['name']) ?></option>
+    <?php endforeach; ?>
+  </select>
+</div>
+
+<!-- Тип зажигания -->
+<div>
+  <label class="block">Тип зажигания</label>
+  <select name="ignition_type" id="ignition_type">
+    <option value="">— выберите —</option>
+    <?php foreach ($ignition_types as $it): if ((int)($it['active'] ?? 1) !== 1) continue; ?>
+      <option value="<?= h($it['name']) ?>"><?= h($it['name']) ?></option>
+    <?php endforeach; ?>
+  </select>
+</div>
+
+<!-- Адрес: Велаят / Этрапы -->
+<div>
+  <label class="block">Местоположение</label>
+  <select name="region_id" id="region_id">
+    <option value="">— выберите город/велаят —</option>
+    <?php foreach ($regions as $r): if ((int)($r['active'] ?? 1) !== 1) continue; ?>
+      <option value="<?= (int)$r['id'] ?>"><?= h($r['name']) ?></option>
+    <?php endforeach; ?>
+  </select>
+</div>
+
+<div>
+  <label class="block">Этрапы/Город</label>
+  <select name="district_id" id="district_id">
+    <option value="">— выберите этрап —</option>
+  </select>
+</div>
 
           <div>
             <label class="block">Цена (TMT)</label>
@@ -762,175 +914,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   </div>
 </div>
 
+<!-- конфиг для внешнего скрипта; обязательно перед подключением add-car.js -->
 <script>
-(function(){
-  window.VEHICLE_BODIES_BY_TYPE = <?= json_encode($vehicle_bodies_js, JSON_UNESCAPED_UNICODE) ?>;
-  const brandEl = document.getElementById('brand');
-  const modelEl = document.getElementById('model');
-  const vehicleTypeEl = document.getElementById('vehicle_type');
-  const bodyEl = document.getElementById('body_type');
-  const fuelEl = document.getElementById('fuel');
-  const transEl = document.getElementById('transmission');
-
-  async function loadModels(brandId) {
-    modelEl.innerHTML = '<option value="">Загрузка...</option>';
-    if (!brandId) { modelEl.innerHTML = '<option value="">— выберите модель —</option>'; return; }
-    try {
-      const res = await fetch(`/mehanik/api/get-models.php?brand_id=${encodeURIComponent(brandId)}`);
-      if (!res.ok) throw new Error('network');
-      const data = await res.json();
-      modelEl.innerHTML = '<option value="">— выберите модель —</option>';
-      (Array.isArray(data) ? data : []).forEach(m => {
-        const o = document.createElement('option'); o.value = m.id; o.textContent = m.name;
-        modelEl.appendChild(o);
-      });
-    } catch (e) {
-      console.error('Ошибка загрузки моделей', e);
-      modelEl.innerHTML = '<option value="">— выберите модель —</option>';
-    }
-  }
-
-  function populateBodiesFor(typeValue) {
-    bodyEl.innerHTML = '<option value="">— выберите кузов —</option>';
-    if (!typeValue) return;
-    const items = window.VEHICLE_BODIES_BY_TYPE[typeValue] || [];
-    if (items.length === 0) {
-      fetch(`/mehanik/api/get-bodies.php?vehicle_type=${encodeURIComponent(typeValue)}`)
-        .then(r => r.ok ? r.json() : Promise.reject('no') )
-        .then(data => {
-          (Array.isArray(data) ? data : []).forEach(b => {
-            const o = document.createElement('option'); o.value = b.id ?? b.key ?? b.name; o.textContent = b.name ?? b.label ?? b.value;
-            bodyEl.appendChild(o);
-          });
-        })
-        .catch(()=>{ /* ignore */ });
-      return;
-    }
-    items.forEach(b => {
-      const o = document.createElement('option'); o.value = b.id ?? b.key ?? b.name; o.textContent = b.name;
-      bodyEl.appendChild(o);
-    });
-  }
-
-  if (brandEl) brandEl.addEventListener('change', () => loadModels(brandEl.value));
-  if (vehicleTypeEl) vehicleTypeEl.addEventListener('change', () => populateBodiesFor(vehicleTypeEl.value));
-
-  // photos uploader + AJAX submit
-  const dropzone = document.getElementById('dropzone');
-  const photosInput = document.getElementById('p_photos');
-  const previews = document.getElementById('previews');
-  const MAX = 10; // increased from 6
-  const ALLOWED = ['image/jpeg','image/png','image/webp'];
-  let files = [];
-  let mainIndex = null;
-
-  function render() {
-    previews.innerHTML = '';
-    files.forEach((f, idx) => {
-      const w = document.createElement('div'); w.className = 'preview-item';
-      const img = document.createElement('img'); w.appendChild(img);
-      const fr = new FileReader(); fr.onload = e => img.src = e.target.result; fr.readAsDataURL(f);
-
-      const actions = document.createElement('div'); actions.className = 'actions';
-      const btnMain = document.createElement('button'); btnMain.type='button'; btnMain.textContent='★'; btnMain.title='Сделать главным';
-      const btnDel = document.createElement('button'); btnDel.type='button'; btnDel.textContent='✕'; btnDel.title='Удалить';
-      actions.appendChild(btnMain); actions.appendChild(btnDel);
-      w.appendChild(actions);
-
-      if (idx === mainIndex) {
-        const badge = document.createElement('div'); badge.className = 'main-badge'; badge.textContent = 'Главное'; w.appendChild(badge);
-      }
-
-      btnMain.addEventListener('click', () => { mainIndex = idx; render(); });
-      btnDel.addEventListener('click', () => {
-        files.splice(idx,1);
-        if (mainIndex !== null) {
-          if (idx === mainIndex) mainIndex = null;
-          else if (idx < mainIndex) mainIndex--;
-        }
-        render();
-      });
-
-      previews.appendChild(w);
-    });
-  }
-
-  function addIncoming(list) {
-    const inc = Array.from(list || []);
-    if (files.length + inc.length > MAX) { alert('Максимум ' + MAX + ' фото'); return; }
-    for (let f of inc) {
-      if (!ALLOWED.includes(f.type)) { alert('Неподдерживаемый формат: ' + f.name); continue; }
-      files.push(f);
-    }
-    if (mainIndex === null && files.length) mainIndex = 0;
-    render();
-  }
-
-  dropzone.addEventListener('click', () => photosInput.click());
-  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
-  dropzone.addEventListener('dragleave', e => { e.preventDefault(); dropzone.classList.remove('dragover'); });
-  dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('dragover'); addIncoming(e.dataTransfer.files); });
-
-  photosInput.addEventListener('change', (e) => { addIncoming(e.target.files); photosInput.value=''; });
-
-  // on submit -> build FormData and send (XHR) so photos included properly
-  const form = document.getElementById('addCarForm');
-  form.addEventListener('submit', function(e){
-    // front validation
-    const brand = document.getElementById('brand').value;
-    const model = document.getElementById('model').value;
-    const year = parseInt(document.getElementById('year').value || '0', 10);
-    const minY = <?= json_encode($minYear) ?>;
-    const maxY = <?= json_encode($currentYear) ?>;
-    const fuel = fuelEl.value;
-    const trans = transEl.value;
-    if (!brand || !model) { e.preventDefault(); alert('Пожалуйста выберите бренд и модель'); return false; }
-    if (!year || year < minY || year > maxY) { e.preventDefault(); alert('Выберите корректный год'); return false; }
-    if (!fuel) { e.preventDefault(); alert('Пожалуйста выберите тип топлива'); return false; }
-    if (!trans) { e.preventDefault(); alert('Пожалуйста выберите коробку передач'); return false; }
-
-    e.preventDefault();
-    const fd = new FormData();
-    Array.from(form.elements).forEach(el => {
-      if (!el.name) return;
-      if (el.type === 'file') return;
-      if ((el.type === 'checkbox' || el.type === 'radio') && !el.checked) return;
-      fd.append(el.name, el.value);
-    });
-
-    // append files: main -> photo, others -> photos[]
-    files.forEach((f, idx) => {
-      if (idx === mainIndex) fd.append('photo', f, f.name);
-      else fd.append('photos[]', f, f.name);
-    });
-
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', form.action, true);
-    xhr.setRequestHeader('X-Requested-With','XMLHttpRequest');
-
-    xhr.onreadystatechange = function() {
-      if (xhr.readyState !== 4) return;
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const j = JSON.parse(xhr.responseText || '{}');
-          if (j && j.ok) {
-            window.location.href = '<?= $basePublic ?>/my-cars.php';
-            return;
-          } else if (j && j.error) {
-            alert('Ошибка: ' + j.error);
-            return;
-          }
-        } catch (err) {
-          location.reload();
-        }
-      } else {
-        alert('Ошибка сервера при сохранении');
-      }
-    };
-    xhr.send(fd);
-  });
-})();
+window.ADD_CAR_CONFIG = {
+  VEHICLE_BODIES_BY_TYPE: <?= json_encode($vehicle_bodies_js, JSON_UNESCAPED_UNICODE) ?>,
+  DISTRICTS_BY_REGION: <?= json_encode($districts_by_region, JSON_UNESCAPED_UNICODE) ?>,
+  MIN_YEAR: <?= json_encode($minYear) ?>,
+  MAX_YEAR: <?= json_encode($currentYear) ?>,
+  BASE_PUBLIC: <?= json_encode($basePublic) ?>
+};
 </script>
+<script defer src="/mehanik/assets/js/add-car.js"></script>
 
 </body>
 </html>

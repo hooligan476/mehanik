@@ -350,8 +350,21 @@ $noPhoto = $baseUrl . '/assets/no-photo.png'; // fallback
       <div class="specs" role="list">
         <div class="spec"><strong>VIN</strong><div class="muted"><?= esc($car['vin'] ?: '—') ?></div></div>
         <div class="spec"><strong>Пробег</strong><div class="muted"><?= $car['mileage'] ? number_format((int)$car['mileage']) . ' км' : '—' ?></div></div>
+
         <div class="spec"><strong>Коробка</strong><div class="muted"><?= esc($car['transmission'] ?: '—') ?></div></div>
         <div class="spec"><strong>Топливо</strong><div class="muted"><?= esc($car['fuel'] ?: '—') ?></div></div>
+
+        <div class="spec"><strong>Цвет</strong><div class="muted"><?= esc($car['color'] ?: '—') ?></div></div>
+        <div class="spec"><strong>Объём двигателя</strong><div class="muted"><?= esc($car['engine_volume'] ?: '—') ?></div></div>
+
+        <div class="spec"><strong>Пассажиры</strong><div class="muted"><?= (!empty($car['passengers']) ? (int)$car['passengers'] . ' мест' : '—') ?></div></div>
+        <div class="spec"><strong>Цвет салона</strong><div class="muted"><?= esc($car['interior_color'] ?: '—') ?></div></div>
+
+        <div class="spec"><strong>Обшивка</strong><div class="muted"><?= esc($car['upholstery'] ?: '—') ?></div></div>
+        <div class="spec"><strong>Тип зажигания</strong><div class="muted"><?= esc($car['ignition_type'] ?: '—') ?></div></div>
+
+        <div class="spec"><strong>Города/Велаяты</strong><div class="muted"><?= esc($car['region'] ?: '—') ?></div></div>
+        <div class="spec"><strong>Этрапы/Города</strong><div class="muted"><?= esc($car['district'] ?: '—') ?></div></div>
       </div>
 
       <div class="sku">
@@ -365,6 +378,7 @@ $noPhoto = $baseUrl . '/assets/no-photo.png'; // fallback
       </div>
 
       <?php if (!empty($car['description'])): ?>
+        <strong>Описание:</strong>
         <div class="desc"><?= nl2br(esc($car['description'])) ?></div>
       <?php endif; ?>
 
