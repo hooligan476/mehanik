@@ -67,49 +67,65 @@ if ($statusNormalized !== 'approved' && !$is_owner && !$is_admin) {
     exit;
 }
 
-// base URL (site prefix). Example: '/mehanik' or full URL 'https://site.com/mehanik'
-$baseUrl = rtrim($config['base_url'] ?? '/mehanik', '/');
+// base URL from config (may be like '/mehanik' or '/mehanik/public' - normalize to site root)
+$cfgBase = rtrim($config['base_url'] ?? '/mehanik', '/');
 
-// helper to normalize/resolve image path -> absolute URL or site-root path
-function resolve_image_path($p, $baseUrl) {
+// remove trailing '/public' if present to get site root (this fixes URLs like /mehanik/public/uploads/... -> /mehanik/uploads/...)
+$siteRoot = preg_replace('#/public$#i', '', $cfgBase);
+if ($siteRoot === '') $siteRoot = '/';
+
+// make sure it begins with slash and has no trailing slash (except single '/')
+if ($siteRoot !== '/') $siteRoot = '/' . ltrim($siteRoot, '/');
+$siteRoot = rtrim($siteRoot, '/');
+
+// Debug flag (включите/выключите)
+$DEBUG_IMG = $config['debug_images'] ?? true;
+
+// helper to normalize/resolve image path -> absolute URL path (starting with '/') or full absolute URL
+function resolve_image_path($p, $siteRoot) {
     $p = trim((string)$p);
     if ($p === '') return null;
 
     // already absolute URL
     if (preg_match('~^https?://~i', $p)) return $p;
 
-    // already absolute root path like "/uploads/..."
+    // ensure siteRoot normalized: starts with slash, no trailing slash (except '/')
+    if ($siteRoot !== '/') $siteRoot = '/' . ltrim($siteRoot, '/');
+    $siteRoot = rtrim($siteRoot, '/');
+
+    // if path already starts with slash -> treat as site-root path
     if (strpos($p, '/') === 0) {
-        // collapse multiple slashes
         return preg_replace('#/+#','/',$p);
     }
 
-    // if contains uploads/cars/ somewhere, prefer tail after last occurrence
-    $marker = 'uploads/cars/';
+    // if path starts with 'mehanik/uploads/...' or '<project>/uploads/...' -> remove possible project prefix and prefix with siteRoot
+    if (preg_match('~^[^/]+/uploads/~i', $p)) {
+        // remove leading folder (like mehanik/)
+        $after = preg_replace('~^[^/]+/~', '', $p);
+        return preg_replace('#/+#','/',$siteRoot . '/' . $after);
+    }
+
+    // if path starts with 'uploads/' -> prefix with siteRoot
+    if (stripos($p, 'uploads/') === 0) {
+        return preg_replace('#/+#','/',$siteRoot . '/' . $p);
+    }
+
+    // if uploads appears later inside string, take tail
+    $marker = 'uploads/';
     $pos = stripos($p, $marker);
     if ($pos !== false) {
-        $tail = substr($p, $pos + strlen($marker));
-        $tail = ltrim($tail, '/');
-        return rtrim($baseUrl, '/') . '/' . $marker . $tail;
+        $tail = substr($p, $pos);
+        return preg_replace('#/+#','/',$siteRoot . '/' . $tail);
     }
 
-    // if contains uploads/ somewhere, use tail
-    $marker2 = 'uploads/';
-    $pos2 = stripos($p, $marker2);
-    if ($pos2 !== false) {
-        $tail = substr($p, $pos2);
-        $tail = '/' . ltrim($tail, '/');
-        return preg_replace('#/+#','/',$tail);
-    }
-
-    // otherwise treat as relative path and prefix with baseUrl
-    return rtrim($baseUrl, '/') . '/' . ltrim($p, '/');
+    // fallback: prefix with siteRoot
+    return preg_replace('#/+#','/',$siteRoot . '/' . $p);
 }
 
 // assemble main photo
 $mainPhoto = null;
 if (!empty($car['photo'])) {
-    $mainPhoto = resolve_image_path($car['photo'], $baseUrl);
+    $mainPhoto = resolve_image_path($car['photo'], $siteRoot);
 }
 
 // load extra photos from car_photos.file_path (robust detection)
@@ -117,18 +133,15 @@ $gallery = [];
 try {
     $check = $mysqli->query("SHOW TABLES LIKE 'car_photos'");
     if ($check && $check->num_rows > 0) {
-        // detect column name for path
         $colRes = $mysqli->query("SHOW COLUMNS FROM car_photos");
         $cols = [];
         while ($cr = $colRes->fetch_assoc()) $cols[] = $cr['Field'];
 
         $useCol = null;
-        // common names in order of preference (include 'photo' as well)
         $prefer = ['file_path','file','filepath','filename','path','photo','url'];
         foreach ($prefer as $cname) {
             if (in_array($cname, $cols, true)) { $useCol = $cname; break; }
         }
-        // fallback: pick first non-meta column
         if ($useCol === null) {
             foreach ($cols as $cname) {
                 if (!in_array($cname, ['id','car_id','created_at','created','updated','updated_at','user_id'], true)) {
@@ -148,36 +161,52 @@ try {
                     $p = trim((string)($row['path'] ?? ''));
                     if ($p === '') continue;
 
-                    // try to resolve URL
-                    $resolved = resolve_image_path($p, $baseUrl);
+                    $resolved = resolve_image_path($p, $siteRoot);
 
                     // server-side existence checks & fallbacks
                     if (!preg_match('~^https?://~i', $resolved)) {
-                        // get path portion (works for "/mehanik/uploads/..." or "/uploads/...")
                         $urlPath = parse_url($resolved, PHP_URL_PATH) ?: $resolved;
-                        $candidateFs = realpath(__DIR__ . '/..' . $urlPath);
-                        if (!$candidateFs || !file_exists($candidateFs)) {
-                            // try with leading slash version of original p
-                            $alt = '/' . ltrim($p, '/');
-                            $altFs = realpath(__DIR__ . '/..' . $alt);
-                            if ($altFs && file_exists($altFs)) {
-                                $resolved = $alt;
+                        if (strpos($urlPath, '/') !== 0) $urlPath = '/' . $urlPath;
+
+                        // Candidate 1: project root + urlPath
+                        $candidateFs1 = realpath(__DIR__ . '/..' . $urlPath);
+                        // Candidate 2: project root + original DB value
+                        $candidateFs2 = realpath(__DIR__ . '/../' . ltrim($p, '/'));
+
+                        if (!empty($GLOBALS['DEBUG_IMG'])) {
+                            error_log("car.php: resolve debug for car_id={$id} p='{$p}' resolved='{$resolved}' urlPath='{$urlPath}' candidateFs1=" . var_export($candidateFs1, true) . " candidateFs2=" . var_export($candidateFs2, true));
+                        }
+
+                        if ($candidateFs1 && file_exists($candidateFs1)) {
+                            // use URL path (like '/mehanik/uploads/...')
+                            $resolved = $urlPath;
+                        } elseif ($candidateFs2 && file_exists($candidateFs2)) {
+                            // build URL using tail inside project root
+                            $projectRoot = realpath(__DIR__ . '/..');
+                            if ($projectRoot !== false && strpos($candidateFs2, $projectRoot) === 0) {
+                                $tail = substr($candidateFs2, strlen($projectRoot));
+                                $resolved = preg_replace('#/+#','/',$siteRoot . '/' . ltrim($tail, '/'));
                             } else {
-                                // try with baseUrl + '/' + original p
-                                $alt2 = rtrim($baseUrl, '/') . '/' . ltrim($p, '/');
-                                $urlPath2 = parse_url($alt2, PHP_URL_PATH) ?: $alt2;
-                                $altFs2 = realpath(__DIR__ . '/..' . $urlPath2);
-                                if ($altFs2 && file_exists($altFs2)) {
-                                    $resolved = $alt2;
+                                $posUploads = stripos($p, 'uploads/');
+                                if ($posUploads !== false) {
+                                    $tail = substr($p, $posUploads);
+                                    $resolved = preg_replace('#/+#','/',$siteRoot . '/' . ltrim($tail, '/'));
                                 } else {
-                                    // last resort: use $resolved as-is (may be inaccessible)
-                                    // log for debugging
-                                    error_log("car.php: image path not found on disk: tried '{$resolved}', '{$alt}', '{$alt2}'");
+                                    if (!empty($GLOBALS['DEBUG_IMG'])) {
+                                        error_log("car.php: candidateFs2 found but not under project root for car_id={$id}");
+                                    }
                                 }
                             }
+                        } else {
+                            if (!empty($GLOBALS['DEBUG_IMG'])) {
+                                error_log("car.php: image not found on disk for car_id={$id}, tried: {$candidateFs1}, {$candidateFs2}, resolved='{$resolved}'");
+                            }
+                            // keep resolved as-is; browser may still attempt to load it
                         }
                     }
 
+                    // normalize repeated slashes
+                    $resolved = preg_replace('#/+#','/',$resolved);
                     $gallery[] = $resolved;
                 }
                 $st->close();
@@ -185,16 +214,15 @@ try {
         }
     }
 } catch (Throwable $e) {
-    // ignore gallery errors but log if you want
     error_log("car.php: gallery read failed: " . $e->getMessage());
 }
 
 // ensure main photo is first and unique
 if ($mainPhoto) {
+    $mainPhoto = preg_replace('#/+#','/',$mainPhoto);
     array_unshift($gallery, $mainPhoto);
 }
 if (!empty($gallery)) {
-    // remove duplicates while preserving order
     $seen = [];
     $uniq = [];
     foreach ($gallery as $g) {
@@ -203,11 +231,9 @@ if (!empty($gallery)) {
     }
     $gallery = $uniq;
     if (empty($mainPhoto)) {
-        // set main as first gallery if not set earlier
         $mainPhoto = $gallery[0] ?? null;
     }
 } else {
-    // no gallery at all
     $gallery = [];
     if (!$mainPhoto) $mainPhoto = null;
 }
@@ -217,14 +243,21 @@ function esc($v) { return htmlspecialchars((string)($v ?? ''), ENT_QUOTES | ENT_
 
 $rejectReason = $car['reject_reason'] ?? '';
 $car_sku = trim((string)($car['sku'] ?? ''));
-$noPhoto = $baseUrl . '/assets/no-photo.png'; // fallback
+
+// fallback no-photo URL
+$noPhoto = preg_replace('#/+#','/', $siteRoot . '/assets/no-photo.png');
+
 ?>
 <!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <title><?= esc($car['brand'] ?? $car['name'] ?? 'Автомобиль') ?> — <?= esc($config['site_name'] ?? 'Mehanik') ?></title>
-<link rel="stylesheet" href="/mehanik/assets/css/style.css">
+
+<!-- стили: используем siteRoot чтобы не ссылаться на /mehanik/public/... -->
+<link rel="stylesheet" href="<?= esc($siteRoot) ?>/assets/css/style.css">
+<link rel="stylesheet" href="<?= esc($siteRoot) ?>/assets/css/header.css">
+
 <style>
 /* Container */
 .container { max-width:1200px; margin:22px auto; padding:18px; font-family:Inter, system-ui, Arial, sans-serif; color:#0f172a; }
@@ -289,14 +322,17 @@ $noPhoto = $baseUrl . '/assets/no-photo.png'; // fallback
 </style>
 </head>
 <body>
-<?php require_once __DIR__ . '/header.php'; ?>
+<?php
+// Если в header.php есть абсолютные ссылки, возможно их тоже надо править.
+// Но мы всё равно включаем header, чтобы навигация была как раньше.
+require_once __DIR__ . '/header.php';
+?>
 
 <div class="container">
   <div class="header-row">
     <h1 class="title"><?= esc($car['brand'] ?: $car['model'] ?: 'Автомобиль') ?> <?= esc($car['model'] ?: '') ?> <?php if ($car['year']): ?><small style="font-weight:600;color:#374151"> (<?= (int)$car['year'] ?>)</small><?php endif; ?></h1>
     <div>
-      <a href="/mehanik/public/my-cars.php" class="btn ghost">← К списку</a>
-      <!-- Редактирование и удаление скрыты по требованию -->
+      <a href="<?= esc($siteRoot) ?>/public/my-cars.php" class="btn ghost">← К списку</a>
     </div>
   </div>
 
@@ -334,6 +370,7 @@ $noPhoto = $baseUrl . '/assets/no-photo.png'; // fallback
     </div>
 
     <div class="info">
+      <!-- (информация о машине — без изменений) -->
       <div class="badges">
         <?php if (!empty($car['brand'])): ?><div class="badge"><?= esc($car['brand']) ?></div><?php endif; ?>
         <?php if (!empty($car['model'])): ?><div class="badge"><?= esc($car['model']) ?></div><?php endif; ?>
@@ -413,7 +450,6 @@ $noPhoto = $baseUrl . '/assets/no-photo.png'; // fallback
   const mainImg = document.getElementById('mainPhotoImg');
   const thumbs = document.getElementById('thumbs');
 
-  // Thumbnail click -> swap main
   if (thumbs && mainImg) {
     thumbs.addEventListener('click', function(e){
       const t = e.target.closest('.thumb');
@@ -428,7 +464,6 @@ $noPhoto = $baseUrl . '/assets/no-photo.png'; // fallback
     });
   }
 
-  // Click main image -> open lightbox
   const lb = document.getElementById('lightbox');
   const lbImg = document.getElementById('lightboxImg');
   const lbClose = document.getElementById('lightboxClose');
@@ -445,16 +480,13 @@ $noPhoto = $baseUrl . '/assets/no-photo.png'; // fallback
       lbImg.src = '';
     });
     lb.addEventListener('click', (e) => {
-      if (e.target === lb) {
-        lbClose.click();
-      }
+      if (e.target === lb) lbClose.click();
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && lb.style.display === 'flex') lbClose.click();
     });
   }
 
-  // copy SKU
   (function(){
     const copyBtn = document.getElementById('copySkuBtn');
     const skuText = document.getElementById('skuText');

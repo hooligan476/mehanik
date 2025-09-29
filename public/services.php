@@ -99,6 +99,8 @@ function toPublicUrl($rel) {
     <?php else: ?>
       <a href="login.php" class="btn">Войти</a>
     <?php endif; ?>
+    <!-- Кнопка карты (видна всем) -->
+      <a href="services-map.php" class="btn btn-ghost">Сервисы на карте</a>
   </div>
 
   <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">

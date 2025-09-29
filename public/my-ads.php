@@ -104,9 +104,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action'])) {
                     if (!empty($row['logo'])) { $fs = __DIR__ . '/../' . ltrim($row['logo'],'/'); if (is_file($fs)) @unlink($fs); }
                 }
                 if ($st = $mysqli->prepare("DELETE FROM services WHERE id = ? LIMIT 1")) { $st->bind_param('i', $id); $st->execute(); $st->close(); }
-                // remove folder
-                $dir = __DIR__ . '/../uploads/services/' . $id;
-                if (is_dir($dir)) { $files = glob($dir . '/*'); foreach ($files as $f) if (is_file($f)) @unlink($f); @rmdir($dir); }
+
+                // RECURSIVE DIRECTORY REMOVAL (удаляет вложенные папки, например uploads/services/{id}/staff)
+                $dir = realpath(__DIR__ . '/../uploads/services/' . $id);
+                $base = realpath(__DIR__ . '/../uploads/services');
+
+                // безопасность: убедимся, что $dir реально существует и находится внутри каталога uploads/services
+                if ($dir && $base && strpos($dir, $base) === 0 && is_dir($dir)) {
+                    try {
+                        $it = new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS);
+                        $files = new RecursiveIteratorIterator($it, RecursiveIteratorIterator::CHILD_FIRST);
+                        foreach ($files as $fileinfo) {
+                            $path = $fileinfo->getRealPath();
+                            if ($fileinfo->isFile() || $fileinfo->isLink()) {
+                                @unlink($path);
+                            } elseif ($fileinfo->isDir()) {
+                                @rmdir($path);
+                            }
+                        }
+                        // удалить сам каталог
+                        @rmdir($dir);
+                    } catch (UnexpectedValueException $e) {
+                        // оставим лог в сессии, чтобы понять причину
+                        $_SESSION['flash_error'] = 'Не удалось рекурсивно удалить папку с файлами: ' . $e->getMessage();
+                    }
+                }
 
             } elseif ($type === 'car') {
                 if ($st = $mysqli->prepare("SELECT photo FROM cars WHERE id = ? LIMIT 1")) {

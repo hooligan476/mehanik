@@ -1,4 +1,4 @@
-// assets/js/chat.js (use this exact file)
+// assets/js/chat.js (updated)
 (function () {
   'use strict';
 
@@ -23,7 +23,7 @@
   const POLL_MS = 2500;
 
   function esc(s) { return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]); }
-  function fmtMsg(m) { const cls = (m.sender === 'user') ? 'user' : 'support'; const time = esc(m.created_at || ''); const content = esc(m.content || ''); return `<div class="msg ${cls}"><div class="bubble">${content}<div class="meta">${time}</div></div></div>`; }
+  function fmtMsg(m) { const cls = (m.sender === 'user') ? 'user' : 'support'; const time = esc(m.created_at || ''); const content = esc(m.content || ''); return `<div class="msg ${cls}"><div class="bubble ${cls}">${content}<div class="meta">${time}</div></div></div>`; }
 
   async function tryParseJSON(response) {
     const text = await response.text();
@@ -31,9 +31,10 @@
   }
 
   async function load() {
-    if (!win) return;
+    // НЕ будем стучать в API если у нас нет chatId — чтобы не создавать чат автоматически.
+    if (!win || !chatId) return;
     try {
-      const url = API + '?last_id=' + encodeURIComponent(lastId) + (chatId ? '&chat_id=' + encodeURIComponent(chatId) : '');
+      const url = API + '?last_id=' + encodeURIComponent(lastId) + '&chat_id=' + encodeURIComponent(chatId);
       const res = await fetch(url, { method: 'GET', credentials: 'same-origin', cache: 'no-store' });
 
       if (res.status === 401 || res.redirected) { stopPolling(); console.warn('Not authenticated or redirected while loading chat.', res.status, res.url); return; }
@@ -78,10 +79,18 @@
       if (!parsed.json) { alert('Неправильный ответ сервера: ' + (parsed.text || 'no body')); console.error('Invalid JSON:', parsed.text); return; }
 
       if (parsed.json.ok) {
+        // Если сервер вернул chat_id (созданный сейчас) — запомним его и стартуем polling
+        if (parsed.json.chat_id && !chatId) {
+          chatId = String(parsed.json.chat_id);
+          if (container) container.dataset.chatId = chatId;
+          if (!polling) startPolling();
+        }
+
         if (parsed.json.message) {
           const m = parsed.json.message;
           if (m.id && Number(m.id) > lastId) { win.insertAdjacentHTML('beforeend', fmtMsg(m)); lastId = Number(m.id); win.scrollTop = win.scrollHeight; }
         } else {
+          // если сообщение не пришло — загрузим свежие
           await load();
         }
         return;
@@ -108,12 +117,19 @@
     } catch (e) { console.error('close chat error', e); return { ok: false, error: 'network' }; }
   }
 
-  function startPolling() { if (polling) clearInterval(polling); polling = setInterval(load, POLL_MS); }
+  function startPolling() { if (polling) clearInterval(polling); if (!chatId) return; polling = setInterval(load, POLL_MS); }
   function stopPolling() { if (polling) clearInterval(polling); polling = null; }
 
   document.addEventListener('DOMContentLoaded', function () {
     if (!win) return;
-    lastId = 0; win.innerHTML = ''; load().then(()=>win.scrollTop = win.scrollHeight); startPolling();
+    lastId = 0; win.innerHTML = '';
+
+    // Если сервер уже указал chat_id в разметке — загрузим и стартуем polling,
+    // иначе не стучим в API и ждём первой отправки сообщения.
+    if (chatId) {
+      load().then(()=>win.scrollTop = win.scrollHeight);
+      startPolling();
+    }
 
     if (form) form.addEventListener('submit', function (e) { e.preventDefault(); const v = input.value.trim(); if (!v) return; input.value = ''; sendMessage(v); input.focus(); });
 
@@ -123,6 +139,6 @@
       else { const container = document.getElementById('chatContainer'); if (container) container.style.display = 'none'; if (openBtn) openBtn.style.display = 'block'; stopPolling(); }
     });
 
-    if (openBtn) openBtn.addEventListener('click', function () { const container = document.getElementById('chatContainer'); if (container) container.style.display = 'flex'; openBtn.style.display = 'none'; lastId = 0; win.innerHTML = ''; load(); startPolling(); });
+    if (openBtn) openBtn.addEventListener('click', function () { const container = document.getElementById('chatContainer'); if (container) container.style.display = 'flex'; openBtn.style.display = 'none'; lastId = 0; win.innerHTML = ''; if (chatId) { load(); startPolling(); } });
   }, false);
 })();

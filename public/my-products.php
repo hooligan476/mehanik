@@ -66,6 +66,10 @@ html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui, Arial
 .title{font-size:1rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#0f172a}
 .product-sub,.meta{font-size:0.88rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
+/* New: title row and manufacturer */
+.title-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.product-manufacturer{font-size:0.9rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;text-align:right;font-weight:600}
+
 /* SKU link / copy */
 .sku-wrap{display:flex;align-items:center;gap:8px;margin-top:4px}
 .sku-link{font-weight:600;color:var(--accent);text-decoration:underline;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -365,8 +369,21 @@ window.fetchJSON = async function(url, opts = {}){ try{ const resp = await fetch
       // top row: left(title/meta) + right(price)
       const topRow = document.createElement('div'); topRow.className='price-row';
       const left = document.createElement('div'); left.style.flex='1'; left.style.minWidth='0';
+
+      // title and manufacturer (manufacturer shown to the right of title)
       const title = document.createElement('div'); title.className='title'; title.textContent = it.name || 'Без названия';
       title.title = it.name || '';
+
+      const titleRow = document.createElement('div'); titleRow.className = 'title-row';
+      const manufacturerVal = it.manufacturer || it.manufacturer_name || it.brand_name || it.brand || it.producer || '';
+      const manu = document.createElement('div'); manu.className = 'product-manufacturer';
+      if (manufacturerVal) {
+        manu.textContent = String(manufacturerVal);
+      } else {
+        manu.style.display = 'none';
+      }
+      titleRow.appendChild(title);
+      titleRow.appendChild(manu);
 
       // product-sub: brand / model / complex part / component
       const brandVal = it.brand_name || it.brand || it.manufacturer || '';
@@ -381,7 +398,8 @@ window.fetchJSON = async function(url, opts = {}){ try{ const resp = await fetch
       if(componentVal) parts.push(String(componentVal));
       productSub.textContent = parts.length ? parts.join(' · ') : '-';
 
-      left.appendChild(title); left.appendChild(productSub);
+      left.appendChild(titleRow);
+      left.appendChild(productSub);
 
       // SKU
       const rawSku = (it.sku || it.article || it.code || '').toString();
