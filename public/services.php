@@ -60,6 +60,11 @@ function toPublicUrl($rel) {
     if (strpos($rel, '/') === 0) return $rel;
     return '/mehanik/' . ltrim($rel, '/');
 }
+
+// compute base url for links (reliable even when script is in subfolder)
+$baseUrl = dirname($_SERVER['SCRIPT_NAME']);
+if ($baseUrl === '.' || $baseUrl === DIRECTORY_SEPARATOR) $baseUrl = '';
+$baseUrl = rtrim(str_replace('\\', '/', $baseUrl), '/'); // normalize windows backslashes
 ?>
 <!doctype html>
 <html lang="ru">
@@ -95,12 +100,12 @@ function toPublicUrl($rel) {
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <h1 style="margin:0;color:#0b57a4;">Автосервисы / Услуги</h1>
     <?php if (!empty($_SESSION['user'])): ?>
-      <a href="add-service.php" class="btn">+ Добавить Сервис/Услуги</a>
+      <a href="<?= htmlspecialchars($baseUrl) ?>/add-service.php" class="btn">+ Добавить Сервис/Услуги</a>
     <?php else: ?>
-      <a href="login.php" class="btn">Войти</a>
+      <a href="<?= htmlspecialchars($baseUrl) ?>/login.php" class="btn">Войти</a>
     <?php endif; ?>
     <!-- Кнопка карты (видна всем) -->
-      <a href="services-map.php" class="btn btn-ghost">Сервисы на карте</a>
+      <a href="<?= htmlspecialchars($baseUrl) ?>/services-map.php" class="btn btn-ghost">Сервисы на карте</a>
   </div>
 
   <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
@@ -142,7 +147,7 @@ function toPublicUrl($rel) {
       <div style="flex:1;min-width:0;">
         <div style="display:flex;align-items:center;gap:10px;justify-content:space-between">
           <div style="min-width:0;">
-            <a href="service.php?id=<?= (int)$s['id'] ?>" class="service-title"><?= htmlspecialchars($s['name']) ?></a>
+            <a href="<?= htmlspecialchars($baseUrl) ?>/service.php?id=<?= (int)$s['id'] ?>" class="service-title"><?= htmlspecialchars($s['name']) ?></a>
             <?php if ($shortDesc !== ''): ?>
               <div class="service-desc"><?= $shortDesc ?></div>
             <?php endif; ?>
@@ -162,8 +167,8 @@ function toPublicUrl($rel) {
 
         <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">
           <div class="svc-actions">
-            <a href="service.php?id=<?= (int)$s['id'] ?>" class="btn">Открыть</a>
-            <a href="appointment.php?id=<?= (int)$s['id'] ?>" class="btn btn-ghost">Записаться</a>
+            <a href="<?= htmlspecialchars($baseUrl) ?>/service.php?id=<?= (int)$s['id'] ?>" class="btn">Открыть</a>
+            <a href="<?= htmlspecialchars($baseUrl) ?>/appointment.php?id=<?= (int)$s['id'] ?>" class="btn btn-ghost">Записаться</a>
           </div>
 
           <!-- Редактирование/Удаление убраны из списка; если нужно, реализовать на service.php -->
@@ -175,12 +180,15 @@ function toPublicUrl($rel) {
 
 <script>
 (function(){
+  const base = '<?= addslashes($baseUrl) ?>';
   const search = document.getElementById('svc-search');
   const sort = document.getElementById('svc-sort');
   function reload(){
     const q = encodeURIComponent(search.value || '');
     const s = encodeURIComponent(sort.value || '');
-    window.location.href = '/mehanik/public/services.php?q=' + q + '&sort=' + s;
+    // navigate relative to base path
+    const target = (base ? base + '/services.php' : '/mehanik/public/services.php') + '?q=' + q + '&sort=' + s;
+    window.location.href = target;
   }
   search.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); reload(); }});
   sort.addEventListener('change', reload);

@@ -47,9 +47,108 @@ function normalizeToUiRating(raw) {
   return '';
 }
 
-/* Lightbox */
-function openLightbox(src) { const lb = qs('#lb'); const img = qs('#lbImg'); if (!lb || !img) return; img.src = src; lb.classList.add('active'); }
-function closeLightbox(e) { if (!e || e.target.id === 'lb' || (e.target.classList && e.target.classList.contains('lb-close'))) { const lb = qs('#lb'); if (!lb) return; lb.classList.remove('active'); const img = qs('#lbImg'); if (img) img.src = ''; } }
+/* Lightbox (image-only helper kept for backward compatibility) */
+function openLightbox(src) {
+  // backward-compatible: show image in #lb (image mode)
+  openLightboxMedia(src, 'image');
+}
+
+/* Close lightbox (improved to handle both image and video) */
+function closeLightbox(e) {
+  // allow calls without event
+  if (e && e.target && e.target.classList && e.target.classList.contains('lb-close')) {
+    // clicked close button -> proceed
+  } else if (e && e.target && e.target.id && e.target.id !== 'lb' && !(e.target.classList && e.target.classList.contains('lb-close'))) {
+    // clicked inner element — ignore
+    return;
+  }
+
+  const lb = qs('#lb');
+  if (!lb) return;
+
+  const lbImg = qs('#lbImg');
+  const lbVideo = qs('#lbVideo');
+
+  // Pause and cleanup video
+  if (lbVideo) {
+    try { lbVideo.pause(); } catch (err) {}
+    // remove sources
+    while (lbVideo.firstChild) lbVideo.removeChild(lbVideo.firstChild);
+    try { lbVideo.removeAttribute('src'); } catch (e) {}
+    try { lbVideo.load && lbVideo.load(); } catch (e) {}
+    lbVideo.style.display = 'none';
+  }
+
+  if (lbImg) {
+    lbImg.src = '';
+    lbImg.style.display = 'none';
+  }
+
+  lb.style.display = 'none';
+  lb.classList.remove('active');
+  lb.setAttribute('aria-hidden', 'true');
+  // re-enable scrolling
+  document.body.style.overflow = '';
+}
+
+/* LIGHTBOX: open image or video. Used by service.php media grid. */
+function openLightboxMedia(url, type, mime) {
+  const lb = qs('#lb');
+  if (!lb) return;
+  const lbImg = qs('#lbImg');
+  const lbVideo = qs('#lbVideo');
+
+  // cleanup previous
+  if (lbImg) { lbImg.style.display = 'none'; lbImg.src = ''; }
+  if (lbVideo) {
+    try { lbVideo.pause(); } catch (e) {}
+    while (lbVideo.firstChild) lbVideo.removeChild(lbVideo.firstChild);
+    lbVideo.style.display = 'none';
+    lbVideo.removeAttribute('src');
+  }
+
+  if (type === 'image') {
+    if (!lbImg) return;
+    lbImg.src = url;
+    lbImg.style.display = 'block';
+    if (lbVideo) lbVideo.style.display = 'none';
+  } else if (type === 'video') {
+    if (!lbVideo) return;
+    // create source element
+    const srcEl = document.createElement('source');
+    srcEl.src = url;
+    if (mime) srcEl.type = mime;
+    lbVideo.appendChild(srcEl);
+    lbVideo.style.display = 'block';
+    // try to autoplay - may be blocked by browser if not muted
+    lbVideo.muted = false;
+    lbVideo.controls = true;
+    // Attempt play, but ignore failures
+    const p = lbVideo.play();
+    if (p && typeof p.then === 'function') {
+      p.catch(function(){ /* autoplay blocked - user must press play */ });
+    }
+  } else {
+    // unknown type - try image fallback
+    if (lbImg) { lbImg.src = url; lbImg.style.display = 'block'; }
+  }
+
+  lb.style.display = 'flex';
+  lb.classList.add('active');
+  lb.setAttribute('aria-hidden', 'false');
+  // prevent body scrolling while open
+  document.body.style.overflow = 'hidden';
+}
+
+/* KEYBOARD: close on Esc; also stop video when closing via keyboard */
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape' || e.key === 'Esc') {
+    const lb = qs('#lb');
+    if (lb && (lb.style.display === 'flex' || lb.classList.contains('active'))) {
+      closeLightbox();
+    }
+  }
+});
 
 /* startEdit / startReply */
 window.startEdit = function (id) {

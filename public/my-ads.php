@@ -266,8 +266,69 @@ function pubUrl($rel) {
     .btn-edit{background:#fff7ed;color:#a16207;border:1px solid rgba(161,98,7,0.06)}
     .btn-delete{background:#fff6f6;color:#ef4444;border:0}
     .btn-super{background:linear-gradient(180deg,#fff8ed,#fff3df);border:1px solid #ffd28a}
-    .btn-prem{background:linear-gradient(180deg,#fbf7ff,#f6f1ff);border:1px solid #d7b8ff}
+    /* Красная «Premium» кнопка — яркая, крупная и заметная */
+.btn-prem {
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:10px 14px;
+  border-radius:12px;
+  font-weight:800;
+  font-size:0.95rem;
+  line-height:1;
+  color:#ffffff;
+  border: 1px solid rgba(255,120,120,0.15);
+  background: linear-gradient(180deg, #ff5a5f 0%, #d40000 60%, #b30000 100%);
+  box-shadow:
+    0 18px 40px rgba(179, 0, 0, 0.18),
+    inset 0 -3px 0 rgba(0,0,0,0.12);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.25);
+  cursor: pointer;
+  transition: transform .12s cubic-bezier(.2,.9,.3,1), box-shadow .12s ease, filter .12s ease;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* hover / focus */
+.btn-prem:hover,
+.btn-prem:focus {
+  transform: translateY(-3px);
+  box-shadow:
+    0 26px 48px rgba(179, 0, 0, 0.22),
+    inset 0 -3px 0 rgba(255,255,255,0.03);
+  outline: none;
+  filter: saturate(1.05);
+}
+
+/* active press */
+.btn-prem:active {
+  transform: translateY(0);
+  box-shadow:
+    0 10px 24px rgba(179, 0, 0, 0.16),
+    inset 0 3px 10px rgba(0,0,0,0.06);
+}
+
+/* keyboard-visible focus ring (accessibility) */
+.btn-prem:focus-visible {
+  box-shadow:
+    0 26px 48px rgba(179,0,0,0.22),
+    0 0 0 4px rgba(220,38,38,0.12);
+}
+
+/* pressed / enabled state visual */
+.btn-prem[aria-pressed="true"] {
+  background: linear-gradient(180deg, #ff7a7a 0%, #b30000 60%, #8e0a0a 100%);
+  box-shadow:
+    0 14px 36px rgba(147, 0, 0, 0.22),
+    inset 0 -2px 0 rgba(0,0,0,0.12);
+}
+
+/* small-screen tweak */
+@media (max-width: 560px) {
+  .btn-prem { padding:8px 10px; font-size:0.9rem; border-radius:10px; }
+}
+
     .tag{font-size:12px;padding:4px 8px;border-radius:999px;background:#f3f5f8;color:#334155;font-weight:700}
+
     @media(max-width:760px){ .row{flex-direction:column;align-items:stretch} .thumb{width:100%;height:200px} .actions{justify-content:flex-start} }
   </style>
 </head>

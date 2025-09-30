@@ -1,5 +1,8 @@
 <?php
-// mehanik/public/add-service.php (Google Maps + manual coords) - visually improved
+// mehanik/public/add-service.php
+// Полная страница "Добавить сервис / услугу" с Google Maps (клик + ручные координаты),
+// загрузкой логотипа, фото, до 10 видео, виджетом сотрудников и прайсов.
+// Отправка формы: /mehanik/api/add-service.php (серверную обработку нужно держать отдельно)
 session_start();
 require_once __DIR__ . '/../middleware.php';
 require_once __DIR__ . '/../db.php';
@@ -31,10 +34,9 @@ $error = $_GET['err'] ?? '';
       --soft:#eef6ff;
       --danger:#ef4444;
       --radius:12px;
-      --glass: rgba(255,255,255,0.6);
     }
     *{box-sizing:border-box}
-    body{font-family:Inter,system-ui,Arial;background:var(--bg);color:#0f1724;margin:0;-webkit-font-smoothing:antialiased}
+    body{font-family:Inter,system-ui,Arial,Helvetica,sans-serif;background:var(--bg);color:#0f1724;margin:0;-webkit-font-smoothing:antialiased}
     .page{max-width:1100px;margin:26px auto;padding:18px}
     .card{background:linear-gradient(180deg,var(--card),#fbfdff);border-radius:14px;padding:22px;box-shadow:0 12px 40px rgba(12,20,30,0.06);border:1px solid rgba(12,20,30,0.04)}
     h1{margin:0 0 12px;font-size:1.4rem}
@@ -42,16 +44,7 @@ $error = $_GET['err'] ?? '';
 
     /* Form controls */
     label.block{display:block;font-weight:700;margin-top:12px;color:#12202a}
-    .input, textarea, .file, .coord-input {
-      width:100%;
-      padding:12px 14px;
-      border-radius:10px;
-      border:1px solid #e6eef6;
-      box-sizing:border-box;
-      font-size:1rem;
-      background: #fff;
-      transition:box-shadow .12s ease, transform .06s ease;
-    }
+    .input, textarea, .coord-input { width:100%; padding:12px 14px; border-radius:10px; border:1px solid #e6eef6; box-sizing:border-box; font-size:1rem; background: #fff; transition:box-shadow .12s ease, transform .06s ease;}
     .input:focus, textarea:focus, .coord-input:focus { outline:0; box-shadow: 0 6px 18px rgba(11,87,164,0.06); transform: translateY(-1px); border-color: rgba(11,87,164,0.12); }
     textarea{min-height:140px;resize:vertical}
     .row{display:flex;gap:12px}
@@ -96,14 +89,17 @@ $error = $_GET['err'] ?? '';
     .file-picker .fp-sub{color:var(--muted);font-size:.92rem}
     .file-picker .fp-preview{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 
-    .logo-preview{
-      width:84px;height:56px;border-radius:8px;border:1px solid #eef6ff;background:#fff;display:inline-flex;align-items:center;justify-content:center;overflow:hidden;
-    }
-    .logo-preview img{width:100%;height:100%;object-fit:contain;display:block}
+    .logo-preview, .video-preview{width:84px;height:56px;border-radius:8px;border:1px solid #eef6ff;background:#fff;display:inline-flex;align-items:center;justify-content:center;overflow:hidden}
+    .logo-preview img, .video-preview video{width:100%;height:100%;object-fit:contain;display:block}
 
     .photos-preview{display:flex;gap:8px;flex-wrap:wrap}
     .photo-thumb{width:96px;height:64px;border-radius:8px;overflow:hidden;border:1px solid #e9f1fb;background:#fff;display:inline-flex;align-items:center;justify-content:center}
     .photo-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+
+    /* video grid previews */
+    .videos-preview{display:flex;gap:8px;flex-wrap:wrap;max-width:420px}
+    .video-thumb{width:120px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #e9f1fb;background:#000;display:flex;align-items:center;justify-content:center}
+    .video-thumb video{width:100%;height:100%;object-fit:cover;display:block}
 
     /* Staff / prices */
     .prices, .staff{
@@ -177,7 +173,7 @@ $error = $_GET['err'] ?? '';
       <input type="hidden" name="latitude" id="latitude">
       <input type="hidden" name="longitude" id="longitude">
 
-      <!-- Visible manual inputs (user-visible, NOT submitted directly) -->
+      <!-- Visible manual inputs (user-visible) -->
       <div class="coords-wrap">
         <label style="flex:1;min-width:160px;">Широта:
           <input class="coord-input" type="text" id="latitude_manual" placeholder="например 37.9500" />
@@ -214,6 +210,19 @@ $error = $_GET['err'] ?? '';
           <div class="fp-preview photos-preview" id="photosPreviewArea" aria-hidden="true"></div>
           <input type="file" id="photosInput" name="photos[]" accept="image/*" multiple required>
         </label>
+
+        <!-- VIDEOS: up to 10 optional videos -->
+        <label class="file-picker" for="videosInput" title="Загрузить видео (опционально до 10)">
+          <div class="fp-left">
+            <div class="fp-title">Видео (MP4/WEBM/OGG — до 10)</div>
+            <div class="fp-sub">Покажите сервис в действии (опционально). Максимум 10 файлов.</div>
+            <div class="hint">Максимальный размер и транскодинг обрабатывайте на сервере</div>
+          </div>
+          <div class="fp-preview videos-preview" id="videosPreviewArea" aria-hidden="true">
+            <span style="color:var(--muted);font-size:.9rem">Нет видео</span>
+          </div>
+          <input type="file" id="videosInput" name="videos[]" accept="video/mp4,video/webm,video/ogg,video/*" multiple>
+        </label>
       </div>
 
       <div class="staff" aria-live="polite">
@@ -244,7 +253,8 @@ $error = $_GET['err'] ?? '';
 <footer style="padding:20px;text-align:center;color:#777;font-size:.9rem;">&copy; <?= date('Y') ?> Mehanik</footer>
 
 <script>
-/* --- Map (same logic, but kept robust) --- */
+/* ====== MAP ====== */
+/* initMap: called by Google Maps API callback. If unavailable, a fallback is shown. */
 function showManualCoordsFallback() {
   var mapEl = document.getElementById('map');
   if (mapEl) {
@@ -254,9 +264,9 @@ function showManualCoordsFallback() {
 
 function initMap() {
   try {
-    var center = { lat: 37.95, lng: 58.38 };
+    var defaultCenter = { lat: 37.95, lng: 58.38 };
     var map = new google.maps.Map(document.getElementById('map'), {
-      center: center,
+      center: defaultCenter,
       zoom: 13,
       streetViewControl: false,
       mapTypeControl: false
@@ -268,6 +278,7 @@ function initMap() {
     var lngManual = document.getElementById('longitude_manual');
     var marker = null;
 
+    // if hidden fields are present and filled — set marker
     if (latHidden && lngHidden && latHidden.value && lngHidden.value) {
       var lat0 = parseFloat(latHidden.value);
       var lng0 = parseFloat(lngHidden.value);
@@ -277,16 +288,14 @@ function initMap() {
         if (latManual) latManual.value = lat0;
         if (lngManual) lngManual.value = lng0;
       }
-    } else {
-      if (latManual && lngManual && latManual.value && lngManual.value) {
-        var latm = parseFloat(latManual.value);
-        var lngm = parseFloat(lngManual.value);
-        if (!isNaN(latm) && !isNaN(lngm)) {
-          marker = new google.maps.Marker({ position: { lat: latm, lng: lngm }, map: map });
-          map.setCenter({ lat: latm, lng: lngm });
-          if (latHidden) latHidden.value = latm;
-          if (lngHidden) lngHidden.value = lngm;
-        }
+    } else if (latManual && lngManual && latManual.value && lngManual.value) {
+      var latm = parseFloat(latManual.value);
+      var lngm = parseFloat(lngManual.value);
+      if (!isNaN(latm) && !isNaN(lngm)) {
+        marker = new google.maps.Marker({ position: { lat: latm, lng: lngm }, map: map });
+        map.setCenter({ lat: latm, lng: lngm });
+        if (latHidden) latHidden.value = latm;
+        if (lngHidden) lngHidden.value = lngm;
       }
     }
 
@@ -309,7 +318,7 @@ function initMap() {
 
 setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps === 'undefined') { console.warn('Google Maps not available, showing manual fallback'); showManualCoordsFallback(); } }, 6000);
 
-/* --- Sync manual coords <-> hidden fields --- */
+/* ====== SYNC manual <-> hidden coords ====== */
 (function(){
   var latHidden = document.getElementById('latitude');
   var lngHidden = document.getElementById('longitude');
@@ -331,36 +340,30 @@ setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps =
   document.addEventListener('DOMContentLoaded', setManualFromHidden);
 })();
 
-/* --- File pickers: logo + photos preview --- */
+/* ====== FILE PREVIEWS: logo, photos, videos (up to 10) ====== */
 (function(){
   var logoInput = document.getElementById('logoInput');
   var logoPreview = document.getElementById('logoPreviewArea');
   var photosInput = document.getElementById('photosInput');
   var photosPreview = document.getElementById('photosPreviewArea');
+  var videosInput = document.getElementById('videosInput');
+  var videosPreview = document.getElementById('videosPreviewArea');
 
   function clearLogoPreview() {
     logoPreview.innerHTML = '<span style="color:var(--muted);font-size:.85rem">Нет</span>';
   }
   function setLogoPreview(src) {
     logoPreview.innerHTML = '';
-    var imgWrap = document.createElement('div');
-    imgWrap.style.width = '100%';
-    imgWrap.style.height = '100%';
-    imgWrap.style.overflow = 'hidden';
     var img = document.createElement('img');
     img.src = src;
     img.alt = 'Logo';
-    img.style.width = '100%';
-    img.style.height = '100%';
-    img.style.objectFit = 'contain';
-    imgWrap.appendChild(img);
-    logoPreview.appendChild(imgWrap);
+    logoPreview.appendChild(img);
   }
 
   function updatePhotosPreview(files) {
     photosPreview.innerHTML = '';
     var max = Math.min(files.length, 10);
-    for (var i=0;i<max;i++){
+    for (var i = 0; i < max; i++) {
       (function(f){
         var fr = new FileReader();
         fr.onload = function(ev){
@@ -380,18 +383,55 @@ setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps =
     }
   }
 
+  function updateVideosPreview(files) {
+    videosPreview.innerHTML = '';
+    if (!files || files.length === 0) {
+      videosPreview.innerHTML = '<span style="color:var(--muted);font-size:.9rem">Нет видео</span>';
+      return;
+    }
+    var max = Math.min(files.length, 10);
+    for (var i = 0; i < max; i++) {
+      (function(f){
+        if (!f.type.startsWith('video/')) {
+          var d = document.createElement('div');
+          d.style.color = 'var(--muted)';
+          d.textContent = 'Неподдерживаемый файл: ' + f.name;
+          videosPreview.appendChild(d);
+          return;
+        }
+        var fr = new FileReader();
+        fr.onload = function(ev){
+          var wrap = document.createElement('div');
+          wrap.className = 'video-thumb fade-in';
+          var v = document.createElement('video');
+          v.src = ev.target.result;
+          v.controls = true;
+          v.muted = true;
+          v.preload = 'metadata';
+          wrap.appendChild(v);
+          videosPreview.appendChild(wrap);
+        };
+        fr.readAsDataURL(f);
+      })(files[i]);
+    }
+    if (files.length > 10) {
+      var warn = document.createElement('div');
+      warn.style.color = 'var(--muted)';
+      warn.textContent = 'Отображаются первые 10 файлов (лимит).';
+      videosPreview.appendChild(warn);
+    }
+  }
+
   if (logoInput) {
     logoInput.addEventListener('change', function(){
       var f = this.files && this.files[0];
       if (!f) { clearLogoPreview(); return; }
       if (!f.type.startsWith('image/')) { alert('Только изображения допустимы для логотипа'); this.value=''; clearLogoPreview(); return; }
-      var fr = new FileReader();
-      fr.onload = function(ev){ setLogoPreview(ev.target.result); };
-      fr.readAsDataURL(f);
+      setLogoPreview(URL.createObjectURL(f));
     });
-    // initialize preview placeholder
     document.addEventListener('DOMContentLoaded', function(){ clearLogoPreview(); });
   }
+
   if (photosInput) {
     photosInput.addEventListener('change', function(){
       var files = Array.from(this.files || []);
@@ -401,9 +441,20 @@ setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps =
     });
     document.addEventListener('DOMContentLoaded', function(){ photosPreview.innerHTML = '<span style="color:var(--muted);font-size:.9rem">Нет фото</span>'; });
   }
+
+  if (videosInput) {
+    videosInput.addEventListener('change', function(){
+      var files = Array.from(this.files || []);
+      if (files.length === 0) { updateVideosPreview([]); return; }
+      if (files.length > 10) { alert('Максимум 10 видео. Выберите не более 10 файлов.'); this.value = ''; updateVideosPreview([]); return; }
+      updateVideosPreview(files);
+    });
+    document.addEventListener('DOMContentLoaded', function(){ updateVideosPreview([]); });
+  }
 })();
 
-/* --- Prices widget (improved visuals, same behavior) --- */
+/* ====== PRICES WIDGET ====== */
+// (unchanged; same as before)
 (function(){
   const rows = document.getElementById('pricesRows');
   const addBtn = document.getElementById('addPriceBtn');
@@ -432,7 +483,6 @@ setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps =
     function makeInputs(initialName, initialPrice) {
       const nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.className = 'input'; nameInput.placeholder = 'Услуга'; nameInput.value = initialName || '';
       const priceInput = document.createElement('input'); priceInput.type = 'text'; priceInput.className = 'input'; priceInput.placeholder = 'Цена'; priceInput.value = initialPrice || '';
-      // style smaller inside row
       nameInput.style.padding = '8px 10px';
       priceInput.style.padding = '8px 10px';
       priceInput.style.maxWidth = '220px';
@@ -473,24 +523,42 @@ setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps =
   addBtn.addEventListener('click', function(){ rows.appendChild(createRow('', '', true)); const last = rows.lastElementChild; if (last) last.scrollIntoView({behavior:'smooth', block:'center'}); });
   document.addEventListener('DOMContentLoaded', function(){ if (rows.children.length === 0) rows.appendChild(createRow('', '', true)); });
 
+  // ensure no editing rows left before submit
   const form = document.getElementById('serviceForm');
   form.addEventListener('submit', function(e){
     const editing = rows.querySelector('[data-editing="1"]');
-    if (editing) { const saveBtn = editing.querySelector('.p-actions .small-btn'); if (saveBtn) { saveBtn.click(); if (editing.dataset.editing === '1') { e.preventDefault(); return; } } }
+    if (editing) { alert('Сохраните изменения текущей добавляемой услуги перед отправкой.'); e.preventDefault(); return; }
     const priceNames = Array.from(document.querySelectorAll('input[name="prices[name][]"]')).map(n => n.value.trim()).filter(v => v !== '');
     if (priceNames.length === 0) { alert('Добавьте хотя бы одну услугу с названием и сохраните её.'); e.preventDefault(); return; }
 
     // required field checks
     const requiredFields = ['name','contact_name','phone','email','description','address'];
     for (let fieldName of requiredFields) { const el = document.querySelector('[name="'+fieldName+'"]'); if (!el || el.value.trim() === '') { alert('Заполните поле: ' + fieldName.replace('_',' ')); e.preventDefault(); return; } }
+
     const logoInput = document.querySelector('input[name="logo"]'); if (!logoInput || logoInput.files.length === 0) { alert('Загрузите логотип (обязательно).'); e.preventDefault(); return; }
     const photosInput = document.querySelector('input[name="photos[]"]'); if (!photosInput || photosInput.files.length === 0) { alert('Загрузите хотя бы одну фотографию (обязательно).'); e.preventDefault(); return; }
     const staffRows = document.querySelectorAll('.staff-row'); if (staffRows.length === 0) { alert('Добавьте хотя бы одного сотрудника.'); e.preventDefault(); return; }
-    for (let i = 0; i < staffRows.length; i++) { const row = staffRows[i]; const nameInput = row.querySelector('input[name="staff[name][]"]'); const posInput = row.querySelector('input[name="staff[position][]"]'); const photoInput = row.querySelector('input[name="staff_photo[]"]'); if (!nameInput || nameInput.value.trim() === '') { alert('Укажите имя для каждого сотрудника.'); e.preventDefault(); return; } if (!posInput || posInput.value.trim() === '') { alert('Укажите должность для каждого сотрудника.'); e.preventDefault(); return; } if (!photoInput || photoInput.files.length === 0) { alert('Загрузите фото для каждого сотрудника.'); e.preventDefault(); return; } }
+    for (let i = 0; i < staffRows.length; i++) {
+      const row = staffRows[i];
+      const nameInput = row.querySelector('input[name="staff[name][]"]');
+      const posInput = row.querySelector('input[name="staff[position][]"]');
+      const photoInput = row.querySelector('input[name="staff_photo[]"]');
+      if (!nameInput || nameInput.value.trim() === '') { alert('Укажите имя для каждого сотрудника.'); e.preventDefault(); return; }
+      if (!posInput || posInput.value.trim() === '') { alert('Укажите должность для каждого сотрудника.'); e.preventDefault(); return; }
+      // staff photo required - ensure file exists either as file input or (if editing scenario) some hidden indicator - here require file input
+      if (!photoInput || photoInput.files.length === 0) { alert('Загрузите фото для каждого сотрудника.'); e.preventDefault(); return; }
+    }
+
+    // videos limit check (client-side)
+    const videosInput = document.querySelector('input[name="videos[]"]');
+    if (videosInput && videosInput.files && videosInput.files.length > 10) {
+      alert('Максимум 10 видео допускается. Уберите лишние файлы.');
+      e.preventDefault(); return;
+    }
   });
 })();
 
-/* --- Staff widget (file preview for staff photos) --- */
+/* ====== STAFF WIDGET ====== */
 (function(){
   const rows = document.getElementById('staffRows');
   const addBtn = document.getElementById('addStaffBtn');
@@ -500,21 +568,27 @@ setTimeout(function(){ if (typeof google === 'undefined' || typeof google.maps =
 
     const photoWrap = document.createElement('div'); photoWrap.className = 's-photo';
     const photoInput = document.createElement('input'); photoInput.type = 'file'; photoInput.name = 'staff_photo[]'; photoInput.accept = 'image/*'; photoInput.required = true;
-    photoInput.style.opacity = 0; photoInput.style.width = '100%'; photoInput.style.height = '100%'; photoInput.style.cursor = 'pointer';
+    photoInput.style.position = 'absolute'; photoInput.style.opacity = 0; photoInput.style.width = '100%'; photoInput.style.height = '100%'; photoInput.style.left = 0; photoInput.style.top = 0; photoInput.style.cursor = 'pointer';
+    // container for image or placeholder
+    const photoPlace = document.createElement('div');
+    photoPlace.style.width = '100%'; photoPlace.style.height = '100%'; photoPlace.style.display = 'flex'; photoPlace.style.alignItems = 'center'; photoPlace.style.justifyContent = 'center';
+    photoPlace.style.color = 'var(--muted)'; photoPlace.style.fontSize = '.9rem'; photoPlace.textContent = 'Фото';
+
+    // wrapper relative for absolute input
+    photoWrap.style.position = 'relative';
     photoWrap.appendChild(photoInput);
-    const photoPlace = document.createElement('div'); photoPlace.style.width='100%'; photoPlace.style.height='100%'; photoPlace.style.display='flex'; photoPlace.style.alignItems='center'; photoPlace.style.justifyContent='center'; photoPlace.style.color = 'var(--muted)'; photoPlace.style.fontSize='.9rem'; photoPlace.textContent = 'Фото';
     photoWrap.appendChild(photoPlace);
 
     photoInput.addEventListener('change', function(){
       const f = this.files && this.files[0];
-      if (!f) { photoPlace.textContent = 'Фото'; photoPlace.style.background = ''; photoPlace.style.color = 'var(--muted)'; return; }
+      if (!f) { photoPlace.textContent = 'Фото'; photoPlace.style.background = ''; photoPlace.style.color = 'var(--muted)'; photoPlace.innerHTML = 'Фото'; return; }
       if (!f.type.startsWith('image/')) { alert('Только изображения допустимы'); this.value=''; return; }
       const fr = new FileReader();
       fr.onload = function(ev){
         photoPlace.innerHTML = '';
         const img = document.createElement('img');
         img.src = ev.target.result;
-        img.style.width='100%'; img.style.height='100%'; img.style.objectFit='cover';
+        img.style.width = '100%'; img.style.height = '100%'; img.style.objectFit = 'cover';
         photoPlace.appendChild(img);
       };
       fr.readAsDataURL(f);

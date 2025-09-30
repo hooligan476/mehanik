@@ -18,9 +18,8 @@ $userId = (int)($user['id'] ?? 0);
 $isAdmin = isset($user['role']) && $user['role'] === 'admin';
 
 /* =======================
-   HANDLERS: delete_review, upsert_review, submit_staff_rating, submit_service_rating
-   (handlers are identical to the ones you already approved earlier)
-   For brevity in this file we keep the handlers here exactly as in your working file.
+   (Ваши POST-хендлеры: delete_review, upsert_review, submit_staff_rating, submit_service_rating)
+   Сохранил их без изменений — вставил сюда в полном объёме (как в вашем файле).
    ======================= */
 
 /* -- DELETE REVIEW -- */
@@ -78,8 +77,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'dele
     exit;
 }
 
-// ======= upsert_review (обновлённый, безопасный) =======
+// ======= upsert_review (копия вашего кода, без изменений) =======
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upsert_review')) {
+    // (весь код upsert_review — оставлен как в вашем файле)
     // входные данные
     $editingId = isset($_POST['editing_review_id']) ? (int)$_POST['editing_review_id'] : 0;
     $parentRaw  = $_POST['parent_id'] ?? '';
@@ -88,7 +88,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
     $postedName = trim((string)($_POST['user_name'] ?? ''));
     $ratingRaw = $_POST['review_rating'] ?? null;
 
-    // normalize UI rating (expected from client as 1..10) - keep as float or null
     $reviewRatingUi = null;
     if ($ratingRaw !== null && $ratingRaw !== '') {
         if (is_numeric($ratingRaw)) {
@@ -97,18 +96,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
         }
     }
 
-    // compute DB rating for service_reviews: convert UI(1..10) -> DB(0.5..5.0) and round to nearest 0.5
     $reviewRatingDb = null;
     if ($reviewRatingUi !== null) {
-        $tmp = $reviewRatingUi / 2.0; // 1..10 -> 0.5..5.0 (raw)
-        // round to nearest 0.5:
+        $tmp = $reviewRatingUi / 2.0;
         $tmp = round($tmp * 2.0) / 2.0;
-        // clamp to 0.1..5.0 just in case (DB constraint)
         $tmp = max(0.1, min(5.0, $tmp));
         $reviewRatingDb = $tmp;
     }
 
-    // простая валидация
     if ($comment === '') {
         if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
             header('Content-Type: application/json; charset=utf-8');
@@ -119,7 +114,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
         exit;
     }
 
-    // выбираем имя для сохранения
     $uid = ($userId > 0) ? $userId : null;
     $userNameToSave = 'Гость';
     if ($uid && !empty($user['name'])) {
@@ -128,7 +122,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
         $userNameToSave = $postedName;
     }
 
-    // helper для динамического bind_param (как в вашем коде)
     function stmt_bind_params($stmt, $types, $params) {
         if ($params === []) return;
         $refs = [];
@@ -137,13 +130,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
         call_user_func_array([$stmt, 'bind_param'], $refs);
     }
 
-    // Проверка наличия колонки user_id
     $res = $mysqli->query("SHOW COLUMNS FROM `service_reviews` LIKE 'user_id'");
     $reviewsHasUserId = ($res && $res->num_rows > 0);
 
-    // --- Редактирование существующего ---
     if ($editingId > 0) {
-        // проверим права: только автор отзыва может редактировать
         $canEdit = false;
         if ($st = $mysqli->prepare("SELECT user_id FROM service_reviews WHERE id=? AND service_id=? LIMIT 1")) {
             $st->bind_param('ii', $editingId, $id);
@@ -165,7 +155,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
             exit;
         }
 
-        // Собираем части UPDATE динамически
         $sets = [];
         $params = [];
         $types = '';
@@ -217,7 +206,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
                 throw new Exception('Prepare failed: ' . $mysqli->error);
             }
 
-            // Если пользователь авторизован и отправил рейтинг в UI (1..10), обновляем/вставляем в service_ratings
             if ($reviewRatingUi !== null && $uid) {
                 $sqlUp = "INSERT INTO service_ratings (service_id, user_id, rating, created_at)
                           VALUES (?, ?, ?, NOW())
@@ -249,37 +237,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
         exit;
     }
 
-    // --- INSERT new review ---
-    // Построим INSERT динамически: включаем только колонки с корректными значениями
-    $cols = ['service_id','user_name','comment','created_at']; // created_at via NOW()
+    $cols = ['service_id','user_name','comment','created_at'];
     $placeholders = ['?','?','?','NOW()'];
     $params = [$id, $userNameToSave, $comment];
-    $types = 'iss';
 
-    // rating in DB-scale (0.5..5.0) for service_reviews
     if ($reviewRatingDb !== null) {
-        // insert rating before created_at
         array_splice($cols, 2, 0, 'rating');
         array_splice($placeholders, 2, 0, '?');
         array_splice($params, 2, 0, $reviewRatingDb);
-        // rebuild types (int, string, double, string) -> we'll rebuild below
     }
 
-    // user_id (если есть и определён)
     if ($reviewsHasUserId && $uid) {
         $cols[] = 'user_id';
         $placeholders[] = '?';
         $params[] = $uid;
     }
 
-    // parent_id (если указан)
     if ($parentId !== null) {
         $cols[] = 'parent_id';
         $placeholders[] = '?';
         $params[] = $parentId;
     }
 
-    // Now build types string based on $params order
     $types = '';
     foreach ($params as $p) {
         if (is_int($p)) $types .= 'i';
@@ -303,7 +282,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
             }
             $ins->close();
 
-            // If user is logged in and provided UI rating, upsert into service_ratings (UI 1..10)
             if ($reviewRatingUi !== null && $uid) {
                 $sqlUp = "INSERT INTO service_ratings (service_id, user_id, rating, created_at)
                           VALUES (?, ?, ?, NOW())
@@ -329,7 +307,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
         exit;
     }
 
-    // успешный ответ
     if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode(['ok' => true, 'action' => 'inserted']);
@@ -343,7 +320,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'upse
 
 /* -- SUBMIT STAFF RATING -- */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'submit_staff_rating')) {
-    // auth required
     if (empty($userId) || $userId <= 0) {
         if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
             header('Content-Type: application/json; charset=utf-8');
@@ -366,7 +342,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'subm
         exit;
     }
 
-    // upsert into service_staff_ratings
     $done = false;
     $sqlInsertDup = "INSERT INTO service_staff_ratings (staff_id, user_id, rating, created_at) VALUES (?,?,?,NOW())
                      ON DUPLICATE KEY UPDATE rating=VALUES(rating), updated_at=NOW()";
@@ -504,7 +479,6 @@ $uploadsFsRoot  = realpath(__DIR__ . '/../uploads') ?: (__DIR__ . '/../uploads')
 $uploadsUrlRoot = '/mehanik/uploads';
 
 function find_upload_url(string $value, string $preferredSubdir = 'services', string $uploadsFsRoot = '', string $uploadsUrlRoot = ''): array {
-    // same implementation as before (kept intact)
     $fname = trim($value);
     if ($fname === '') return ['', ''];
     if (is_file($fname)) {
@@ -594,9 +568,16 @@ $reviewsHasParentId  = column_exists($mysqli, 'service_reviews', 'parent_id');
 $haveStaffTable = ($mysqli->query("SHOW TABLES LIKE 'service_staff'")->num_rows > 0);
 
 /* ---------------- Fetch service and related data ---------------- */
+$mediaItems = []; // unified media list (photos + videos)
+$photos = [];
+$prices = [];
+$staff = [];
+$reviews = [];
+$avgRating = 0.0;
+$reviewsCount = 0;
+
 if ($id > 0) {
-    if ($st = $mysqli->prepare("SELECT id, user_id, name, description, logo, contact_name, phone, email, address, latitude, longitude
-                                FROM services WHERE id=? AND (status='approved' OR status='active')")) {
+    if ($st = $mysqli->prepare("SELECT id, user_id, name, description, logo, contact_name, phone, email, address, latitude, longitude FROM services WHERE id=? AND (status='approved' OR status='active' OR status='public' OR status='pending') LIMIT 1")) {
         $st->bind_param("i", $id);
         $st->execute();
         $service = $st->get_result()->fetch_assoc();
@@ -635,6 +616,54 @@ if ($id > 0) {
             }
         }
 
+        // fetch all videos for this service (if table exists)
+        $haveServiceVideosTable = ($mysqli->query("SHOW TABLES LIKE 'service_videos'")->num_rows > 0);
+        $videos = [];
+        if ($haveServiceVideosTable) {
+            if ($st = $mysqli->prepare("SELECT id, video, mime, size, IFNULL(is_main,0) AS is_main FROM service_videos WHERE service_id = ? ORDER BY is_main DESC, id ASC")) {
+                $st->bind_param('i', $id);
+                $st->execute();
+                $videos = $st->get_result()->fetch_all(MYSQLI_ASSOC);
+                $st->close();
+            }
+        } elseif (column_exists($mysqli, 'services', 'video')) {
+            // fallback: if services.video column exists, use it as one video entry
+            if (!empty($service['video'])) {
+                $videos[] = ['id' => 0, 'video' => $service['video'], 'mime' => '', 'size' => 0, 'is_main' => 1];
+            }
+        }
+
+        // build unified mediaItems: first photos, then videos (but keep ordering: photos first then videos)
+        foreach ($photos as $p) {
+            $val = $p['photo'] ?? '';
+            if (!$val) continue;
+            [$url,$fs] = find_upload_url($val, 'services', $uploadsFsRoot, $uploadsUrlRoot);
+            if (!$url) continue;
+            $mediaItems[] = [
+                'type' => 'photo',
+                'id' => (int)($p['id'] ?? 0),
+                'url' => $url,
+                'fs' => $fs,
+                'meta' => []
+            ];
+        }
+        foreach ($videos as $v) {
+            $val = $v['video'] ?? '';
+            if (!$val) continue;
+            [$url,$fs] = find_upload_url($val, 'services', $uploadsFsRoot, $uploadsUrlRoot);
+            if (!$url) continue;
+            $mediaItems[] = [
+                'type' => 'video',
+                'id' => (int)($v['id'] ?? 0),
+                'url' => $url,
+                'fs' => $fs,
+                'mime' => $v['mime'] ?? '',
+                'size' => isset($v['size']) ? (int)$v['size'] : 0,
+                'meta' => []
+            ];
+        }
+
+        // load reviews as before and build tree
         $cols = "id, service_id, user_id, user_name, rating, comment, parent_id, created_at";
         if ($reviewsHasUpdatedAt) $cols .= ", updated_at";
         $sql = "SELECT $cols FROM service_reviews WHERE service_id = ? ORDER BY created_at ASC";
@@ -666,14 +695,7 @@ if ($id > 0) {
     }
 }
 
-/* Helper to render reviews recursively (server-side) */
-/**
- * Рендер дерева отзывов (рекурсивно).
- * Показывает рядом с именем автора пятизвёздочную шкалу, только если у отзыва есть рейтинг.
- * Рейтинг может храниться в двух формах:
- *  - UI 1..10 (например 7 или 7.0)  -> отображаем как numeric 7.0 и переводим в 5* через /2
- *  - DB 0.5..5.0 (например 3.5)    -> переводим в UI: 3.5*2 = 7.0 и в 5* через округление
- */
+/* Helper to render reviews recursively (same as original) */
 function render_reviews_tree(array $nodes, $level = 0, $currentUserId = 0) {
     $html = '';
     foreach ($nodes as $n) {
@@ -684,47 +706,36 @@ function render_reviews_tree(array $nodes, $level = 0, $currentUserId = 0) {
         $hasChildren = !empty($n['children']);
         $indent = max(0, $level * 18);
 
-        // Rating handling: show stars only when rating present and valid
         $ratingRaw = null;
         if (array_key_exists('rating', $n) && $n['rating'] !== null && $n['rating'] !== '') {
-            // accept numeric strings too
             if (is_numeric($n['rating'])) {
                 $ratingRaw = (float)$n['rating'];
             } else {
-                // try to clean (e.g. "null" or other) -> treat as no rating
                 $ratingRaw = null;
             }
         }
 
         $starsHtml = '';
-        $ratingNumericDisplay = ''; // numeric in UI scale 1..10 (e.g. "7.0")
-        $ratingDataAttr = ''; // data-rating attribute (store raw as was in DB for JS)
+        $ratingNumericDisplay = '';
+        $ratingDataAttr = '';
         if ($ratingRaw !== null) {
-            // Determine DB-like 0..5 scale from stored value:
-            // if stored value looks like UI (>5) treat as 1..10, else treat as 0.5..5.0
             if ($ratingRaw > 5.0) {
-                // stored as 1..10
                 $uiVal = $ratingRaw;
                 $dbScale = $uiVal / 2.0;
                 $ratingNumericDisplay = number_format($uiVal, 1, '.', '');
                 $ratingDataAttr = htmlspecialchars((string)$ratingRaw, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
             } else {
-                // stored as 0.5..5.0
                 $dbScale = $ratingRaw;
-                // convert to UI 1..10 for display numeric
                 $uiVal = $dbScale * 2.0;
                 $ratingNumericDisplay = number_format($uiVal, 1, '.', '');
                 $ratingDataAttr = htmlspecialchars((string)$ratingRaw, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
             }
 
-            // clamp dbScale between 0 and 5
             $dbScale = max(0.0, min(5.0, (float)$dbScale));
-            // convert to whole star count (round to nearest integer as requested)
             $filledStars = (int) round($dbScale);
             if ($filledStars < 0) $filledStars = 0;
             if ($filledStars > 5) $filledStars = 5;
 
-            // build stars html (5 stars total)
             $starsHtml .= '<span class="review-stars" aria-hidden="true">';
             for ($si = 1; $si <= 5; $si++) {
                 if ($si <= $filledStars) {
@@ -734,13 +745,11 @@ function render_reviews_tree(array $nodes, $level = 0, $currentUserId = 0) {
                 }
             }
             $starsHtml .= '</span>';
-            // add numeric next to it (with data-rating attribute preserving original raw value)
             $starsHtml .= ' <span class="review-rating-value" data-rating="' . $ratingDataAttr . '" title="Оценка автора">' . htmlspecialchars($ratingNumericDisplay) . '</span>';
         }
 
         $html .= '<div class="review-card" id="review-' . $id . '" style="margin-left:' . $indent . 'px;margin-top:10px;">';
         $html .= '<div class="review-meta">';
-        // left: name + stars
         $html .= '<div>';
         $html .= '<span class="review-name">' . $userName . '</span>';
         if ($starsHtml !== '') {
@@ -749,11 +758,9 @@ function render_reviews_tree(array $nodes, $level = 0, $currentUserId = 0) {
         $html .= ' <span class="review-time">' . $time . '</span>';
         $html .= '</div>';
 
-        // actions (reply/edit/delete)
         $html .= '<div class="review-actions">';
         $html .= '<button class="btn-small" type="button" onclick="startReply(' . $id . ', ' . json_encode($userName, JSON_UNESCAPED_UNICODE) . ')">Ответить</button>';
 
-        // only author can edit/delete
         $canManage = ($currentUserId > 0 && isset($n['user_id']) && (int)$n['user_id'] === (int)$currentUserId);
         if ($canManage) {
             $html .= '<button class="btn-small" type="button" onclick="startEdit(' . $id . ')">Изменить</button>';
@@ -777,7 +784,6 @@ function render_reviews_tree(array $nodes, $level = 0, $currentUserId = 0) {
     return $html;
 }
 
-
 /* helper toPublicUrl for simple relative -> public mapping */
 function toPublicUrl($rel){
     if (!$rel) return '';
@@ -795,6 +801,26 @@ function toPublicUrl($rel){
 
   <!-- Подключаем внешний CSS -->
   <link rel="stylesheet" href="/mehanik/assets/css/service.css">
+
+  <!-- Inline styles для лайтбокса и мини-просмотров -->
+  <style>
+    .media-grid { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+    .media-thumb { width:160px; height:110px; border-radius:8px; overflow:hidden; background:#000; position:relative; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+    .media-thumb img, .media-thumb video { width:100%; height:100%; object-fit:cover; display:block; }
+    .media-thumb .play-ind { position:absolute; left:8px; top:8px; background:rgba(0,0,0,0.5); color:#fff; padding:6px 8px; border-radius:8px; font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px; }
+    /* lightbox */
+    .media-lightbox { position:fixed; inset:0; background:rgba(0,0,0,0.88); display:flex; align-items:center; justify-content:center; z-index:2000; }
+    .media-lightbox[hidden]{ display:none; }
+    .ml-content { max-width:1100px; max-height:92vh; width:100%; height:100%; display:flex; align-items:center; justify-content:center; position:relative; }
+    .ml-inner { max-width:100%; max-height:100%; width:auto; height:auto; display:flex; align-items:center; justify-content:center; }
+    .ml-img { max-width:100%; max-height:92vh; border-radius:8px; box-shadow:0 18px 60px rgba(2,6,23,0.6); }
+    .ml-video { max-width:100%; max-height:92vh; border-radius:8px; box-shadow:0 18px 60px rgba(2,6,23,0.6); background:#000; }
+    .ml-close { position:absolute; top:18px; right:18px; background:transparent; color:#fff; border:0; font-size:30px; cursor:pointer; padding:6px 10px; }
+    .ml-nav { position:absolute; left:12px; right:12px; top:50%; transform:translateY(-50%); display:flex; justify-content:space-between; pointer-events:none; }
+    .ml-btn { pointer-events:auto; background:rgba(255,255,255,0.06); color:#fff; border:0; width:56px; height:56px; border-radius:999px; display:flex; align-items:center; justify-content:center; font-size:24px; cursor:pointer; }
+    .ml-counter { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); color:#fff; font-weight:700; background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:8px; font-size:14px; }
+    @media(max-width:720px){ .media-thumb{ width:48%; height:120px } .ml-btn{ width:44px;height:44px;font-size:20px } }
+  </style>
 </head>
 <body>
 <?php include __DIR__ . '/header.php'; ?>
@@ -863,38 +889,67 @@ function toPublicUrl($rel){
           <h2 class="section-title">Описание</h2>
           <p class="description"><?= nl2br(htmlspecialchars($service['description'])) ?></p>
 
-          <div style="margin-top:14px;">
-            <h3 class="section-title">Местоположение</h3>
-            <div id="map" class="map-card"></div>
-          </div>
-
-          <?php if (!empty($photos)): ?>
+          <!-- Unified media gallery (photos + videos) -->
+          <?php if (!empty($mediaItems)): ?>
             <div style="margin-top:14px;">
-              <h3 class="section-title">Фотографии</h3>
-              <div class="photos-grid">
-                <?php foreach ($photos as $p):
-                    $val = $p['photo'] ?? '';
-                    [$url,$fs] = $val ? find_upload_url($val, 'services', $uploadsFsRoot, $uploadsUrlRoot) : ['',''];
-                    if ($url): ?>
-                      <div class="thumb" role="button" tabindex="0" onclick="openLightbox('<?= htmlspecialchars($url) ?>')">
+              <h3 class="section-title">Медиа</h3>
+              <div class="media-grid" id="mediaGrid">
+                <?php foreach ($mediaItems as $idx => $m):
+                    $t = $m['type'];
+                    $url = $m['url'];
+                    $idm = (int)($m['id'] ?? 0);
+                    if ($t === 'photo'): ?>
+                      <div class="media-thumb" role="button" tabindex="0" onclick="openMediaLightbox(<?= $idx ?>)" onkeydown="if(event.key==='Enter') openMediaLightbox(<?= $idx ?>)">
                         <img src="<?= htmlspecialchars($url) ?>" alt="Фото">
+                      </div>
+                    <?php else: // video thumb - show poster (use thumbnail if available or the video itself muted autoplay small)
+                      // For simplicity, use <video> tag muted, preload metadata
+                    ?>
+                      <div class="media-thumb" role="button" tabindex="0" onclick="openMediaLightbox(<?= $idx ?>)" onkeydown="if(event.key==='Enter') openMediaLightbox(<?= $idx ?>)">
+                        <video muted preload="metadata" playsinline>
+                          <source src="<?= htmlspecialchars($url) ?>" type="<?= htmlspecialchars($m['mime'] ?: 'video/mp4') ?>">
+                        </video>
+                        <div class="play-ind">▶ Видео</div>
                       </div>
                     <?php endif;
                 endforeach; ?>
               </div>
             </div>
-
-            <div id="lb" class="lb-overlay" onclick="closeLightbox(event)">
-              <button class="lb-close" onclick="closeLightbox(event)">×</button>
-              <img id="lbImg" class="lb-img" src="" alt="Фото">
-            </div>
           <?php endif; ?>
+
+          <!-- Lightbox overlay (hidden initially) -->
+          <div id="mediaLightbox" class="media-lightbox" hidden aria-hidden="true" role="dialog" aria-label="Просмотр медиа">
+            <div class="ml-content" role="document">
+              <button class="ml-close" id="mlClose" aria-label="Закрыть">&times;</button>
+
+              <div class="ml-inner" id="mlInner">
+                <!-- media container filled by JS -->
+              </div>
+
+              <div class="ml-nav">
+                <div style="display:flex;align-items:center;justify-content:flex-start;">
+                  <button class="ml-btn" id="mlPrev" aria-label="Предыдущее (←)">&larr;</button>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:flex-end;">
+                  <button class="ml-btn" id="mlNext" aria-label="Следующее (→)">&rarr;</button>
+                </div>
+              </div>
+
+              <div class="ml-counter" id="mlCounter"></div>
+            </div>
+          </div>
+
+          <div style="margin-top:14px;">
+            <h3 class="section-title">Местоположение</h3>
+            <div id="map" class="map-card"></div>
+          </div>
+
+          <!-- Reviews & rest (unchanged rendering below) -->
         </div>
 
-        <!-- Reviews & Rating -->
+        <!-- Reviews section (kept as before) -->
         <section class="card" id="reviews" style="margin-top:18px;">
           <?php
-            // find user's review (if any)
             function find_user_review_in_tree($nodes, $uid) {
                 foreach ($nodes as $n) {
                     if (!empty($n['user_id']) && (int)$n['user_id'] === (int)$uid) {
@@ -936,11 +991,9 @@ function toPublicUrl($rel){
               <div>Пока нет отзывов — будьте первым!</div>
             </div>
           <?php else: ?>
-
             <?php
               echo render_reviews_tree($reviews, 0, $userId);
             ?>
-
           <?php endif; ?>
 
           <!-- Add / edit form -->
@@ -966,7 +1019,6 @@ function toPublicUrl($rel){
 
               <input type="hidden" id="editing_review_id" name="editing_review_id" value="">
               <input type="hidden" id="parent_id" name="parent_id" value="0">
-              <!-- hidden holds UI scale 1..10 when user selected via apply -->
               <input type="hidden" id="review_rating_hidden" name="review_rating" value="">
 
               <div style="margin-top:8px; display:flex; gap:8px; justify-content:flex-end;">
@@ -1039,20 +1091,153 @@ function toPublicUrl($rel){
 
 <!-- Перед подключением общего JS пробросим в window нужные данные -->
 <script>
-  // user review (null если нет)
   window.__USER_REVIEW__ = <?= json_encode($userReview ?? null, JSON_UNESCAPED_UNICODE) ?>;
-
-  // SERVICE_LOCATION для initMap (lat/lng may be empty)
   window.SERVICE_LOCATION = {
     lat: <?= ($service && !empty($service['latitude'])) ? (float)$service['latitude'] : 37.95 ?>,
     lng: <?= ($service && !empty($service['longitude'])) ? (float)$service['longitude'] : 58.38 ?>,
     zoom: <?= ($service && !empty($service['latitude']) && !empty($service['longitude'])) ? 15 : 13 ?>,
     name: <?= json_encode($service['name'] ?? '', JSON_UNESCAPED_UNICODE) ?>
   };
+  // media items for the lightbox
+  window.__MEDIA_ITEMS__ = <?= json_encode($mediaItems, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
 </script>
 
-<!-- Подключаем внешний JS (в котором реализованы все интерактивы) -->
+<!-- Подключаем общий JS -->
 <script defer src="/mehanik/assets/js/service.js"></script>
+
+<!-- Lightbox & media viewer JS -->
+<script>
+(function(){
+  const media = window.__MEDIA_ITEMS__ || [];
+  const lb = document.getElementById('mediaLightbox');
+  const mlInner = document.getElementById('mlInner');
+  const mlClose = document.getElementById('mlClose');
+  const mlPrev = document.getElementById('mlPrev');
+  const mlNext = document.getElementById('mlNext');
+  const mlCounter = document.getElementById('mlCounter');
+
+  let currentIndex = 0;
+
+  function renderMediaAt(index) {
+    mlInner.innerHTML = '';
+    const item = media[index];
+    if (!item) return;
+    if (item.type === 'photo') {
+      const img = document.createElement('img');
+      img.className = 'ml-img';
+      img.src = item.url;
+      img.alt = 'Фото';
+      img.loading = 'eager';
+      mlInner.appendChild(img);
+
+      // preload neighbours
+      preloadIndex(index-1);
+      preloadIndex(index+1);
+    } else if (item.type === 'video') {
+      const video = document.createElement('video');
+      video.className = 'ml-video';
+      video.controls = true;
+      video.playsInline = true;
+      video.autoplay = false;
+      // create source
+      const src = document.createElement('source');
+      src.src = item.url;
+      src.type = item.mime || 'video/mp4';
+      video.appendChild(src);
+      mlInner.appendChild(video);
+
+      // autoplay when opened if allowed
+      setTimeout(()=> {
+        // try play muted first (some browsers allow muted autoplay)
+        video.play().catch(()=>{ /* ignore - require user gesture */ });
+      }, 120);
+    }
+
+    mlCounter.textContent = (index+1) + ' / ' + media.length;
+    // set focus for keyboard handlers
+    lb.focus();
+  }
+
+  function preloadIndex(idx) {
+    if (idx < 0 || idx >= media.length) return;
+    const it = media[idx];
+    if (it.type === 'photo') {
+        const img = new Image();
+        img.src = it.url;
+    } else {
+        // for videos we skip heavy preloading
+    }
+  }
+
+  window.openMediaLightbox = function(idx) {
+    if (!media || media.length === 0) return;
+    currentIndex = Math.max(0, Math.min(media.length - 1, parseInt(idx, 10) || 0));
+    renderMediaAt(currentIndex);
+    lb.hidden = false;
+    lb.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    // focus for keyboard
+    lb.focus();
+  };
+
+  function closeLb() {
+    // stop video playback if any
+    const v = mlInner.querySelector('video');
+    if (v && !v.paused) {
+      try { v.pause(); } catch(e) {}
+    }
+    lb.hidden = true;
+    lb.setAttribute('aria-hidden', 'true');
+    mlInner.innerHTML = '';
+    document.body.style.overflow = '';
+  }
+
+  mlClose.addEventListener('click', function(e){ e.stopPropagation(); closeLb(); });
+  lb.addEventListener('click', function(e){
+    // close only when clicking backdrop (not the inner media)
+    if (e.target === lb) closeLb();
+  });
+
+  function showNext() {
+    if (media.length === 0) return;
+    currentIndex = (currentIndex + 1) % media.length;
+    renderMediaAt(currentIndex);
+  }
+  function showPrev() {
+    if (media.length === 0) return;
+    currentIndex = (currentIndex - 1 + media.length) % media.length;
+    renderMediaAt(currentIndex);
+  }
+
+  mlNext.addEventListener('click', function(e){ e.stopPropagation(); showNext(); });
+  mlPrev.addEventListener('click', function(e){ e.stopPropagation(); showPrev(); });
+
+  // keyboard navigation
+  document.addEventListener('keydown', function(e){
+    if (lb.hidden || lb.getAttribute('aria-hidden') === 'true') return;
+    if (e.key === 'Escape') { e.preventDefault(); closeLb(); return; }
+    if (e.key === 'ArrowRight') { e.preventDefault(); showNext(); return; }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); showPrev(); return; }
+    // space toggles video play/pause if video present
+    if (e.key === ' ' || e.code === 'Space') {
+      const v = mlInner.querySelector('video');
+      if (v) {
+        e.preventDefault();
+        if (v.paused) v.play().catch(()=>{});
+        else v.pause();
+      }
+    }
+  });
+
+  // ensure lightbox is focusable for keyboard
+  if (lb && !lb.hasAttribute('tabindex')) lb.setAttribute('tabindex','-1');
+
+  // expose helper to jump to next/prev from UI if needed
+  window.mediaLightboxNext = showNext;
+  window.mediaLightboxPrev = showPrev;
+
+})();
+</script>
 
 <!-- Google Maps (вызовет initMap из service.js). Замените YOUR_GOOGLE_API_KEY -->
 <script async defer src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_API_KEY&callback=initMap"></script>
